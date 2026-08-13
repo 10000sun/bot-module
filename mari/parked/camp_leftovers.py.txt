@@ -1,0 +1,163 @@
+"""[보관] 캠프·명단·프로필을 떼어내면서 다른 파일에 남아 있던 조각들.
+
+⚠️ 이 파일은 봇이 불러오지 않습니다. parked/README.md 를 먼저 읽어주세요.
+
+camp.py·roster.py·profile.py는 통째로 옮겼지만, 이 세 기능은 다른 코그에도 손을
+뻗고 있었어요. 그 조각들을 원래 모습 그대로 여기 모아둡니다. 캠프 비슷한 주문이
+들어오면 이것들도 같이 꺼내야 기능이 온전해집니다.
+
+각 조각이 어디서 왔는지는 블록 제목에 적어뒀어요. 원본은 깃 히스토리의
+"서버 고유 기능을 창고로 분리" 커밋 직전 상태에서도 그대로 볼 수 있습니다.
+"""
+
+
+# ========================================================================
+# 【진단 · 권한확인의 캠프 역할 표시】
+# ========================================================================
+        if any(r.id == CAMP_LEADER_ROLE_ID for r in target.roles):
+            has.append("🏕️ 캠프장")
+        if any(r.id == JEONYUL_ROLE_ID for r in target.roles):
+            has.append("🏛️ 전율(캠프 전체 관리)")
+
+# ========================================================================
+# 【진단 · 캠프 역할 중복 소속 검사】
+# ========================================================================
+        # ③ 캠프 역할 중복 소속 검사 (한 사람이 여러 캠프 역할을 동시에 보유)
+        overlap = 0
+        for member in interaction.guild.members:
+            camp_count = sum(1 for role_id in CAMP_ROLE_IDS.values() if any(r.id == role_id for r in member.roles))
+            if camp_count >= 2:
+                overlap += 1
+        report.append(f"{'✅' if overlap == 0 else '⚠️'} 캠프 역할 중복 소속: {overlap}명")
+
+# ========================================================================
+# 【진단 · 세금환수 미리보기 명령】
+# ========================================================================
+    @test_group.command(name="세금환수미리보기", description="[관리자] 실제로 걷지 않고, 지금 세금환수하면 캠프별로 얼마씩 걷힐지 세 캠프를 한 번에 봐요.")
+    @app_commands.describe(정률="캠프별 기준 대신 전원에게 똑같은 비율(%)로 계산해볼 때만 입력하세요")
+    async def test_tax_preview(self, interaction: discord.Interaction, 정률: Optional[float] = None):
+        if not self._is_server_admin(interaction):
+            return await interaction.response.send_message("⛔ 서버 관리자 또는 테스트 관리자만 사용할 수 있어요.", ephemeral=True)
+        economy_cog = self.bot.get_cog("MariEconomy")
+        if not economy_cog:
+            return await interaction.response.send_message("❌ 경제 시스템을 찾을 수 없어요.", ephemeral=True)
+
+        # 🧾 [수정] 예전엔 세 캠프 모두에 같은 %를 곱해서 보여줬는데, 이제 캠프마다 세금 규칙이
+        # 달라서 그 숫자가 실제 징수액과 전혀 맞지 않았어요. 이제 각 캠프의 진짜 기준으로 계산합니다.
+        economy_data = economy_cog._load_raw_economy()
+        stock_cog = self.bot.get_cog("MariStock")
+        config = load_tax_config()
+
+        stock_data = {}
+        if stock_cog:
+            try:
+                stock_data = stock_cog._load_stocks()
+            except Exception as e:
+                print(f"⚠️ [세금 미리보기] 주식 평가액을 불러오지 못했어요: {type(e).__name__}: {e}")
+
+        lines = []
+        for camp_name, role_id in CAMP_ROLE_IDS.items():
+            members = [m for m in interaction.guild.members
+                       if not m.bot and any(r.id == role_id for r in m.roles)]
+            cfg = config.get(camp_name, {})
+            kind = CAMP_TAX_TYPE.get(camp_name)
+
+            total = 0
+            for m in members:
+                uid = str(m.id)
+                balance = economy_data.get(uid, 0)
+                balance = int(balance) if isinstance(balance, (int, float)) else 0
+
+                # 📈 [버그 수정] 예전엔 주식 평가액을 나래(flat_bracket)에서만 봤어요. 그런데 여백에
+                # **주식 보유세**(stock_holding_tax)가 나중에 추가되면서, 실제 /캠프 세금환수는
+                # `지갑 누진세 + 주식 보유세`를 걷는데 이 미리보기는 지갑 몫만 계산하고 있었습니다.
+                # 여백 예상액이 실제보다 적게 나와서, 미리 보는 의미가 없었어요.
+                stock_value = portfolio_value(stock_data, uid) if stock_data else 0
+
+                base = balance
+                if 정률 is None and kind == "flat_bracket" and cfg.get("include_stocks"):
+                    base = balance + stock_value
+
+                if 정률 is not None:
+                    tax = int(base * 정률 / 100) if base > 0 else 0
+                elif kind == "progressive":
+                    # 실제 징수(camp.collect_tax)와 같은 식이에요. 한쪽만 고치면 또 어긋납니다.
+                    tax = progressive_tax(cfg, balance) + stock_holding_tax(cfg, stock_value)
+                elif kind == "flat_bracket":
+                    tax = flat_bracket_tax(cfg, base)
+                elif kind == "roulette":
+                    # 룰렛은 뽑기라 매번 달라져요. 참여자 전원 기준 '평균 예상액'으로 어림잡아 보여줍니다.
+                    weights = sum(w for _, w in cfg.get("roulette", [])) or 1
+                    tax = int(sum(a * w for a, w in cfg.get("roulette", [])) / weights)
+                else:
+                    tax = 0
+                total += min(tax, balance)      # 지갑에 있는 만큼만 걷혀요
+
+            rule = f"정률 {정률:g}%" if 정률 is not None else {
+                "progressive": "초과 누진세 + 주식 보유세", "flat_bracket": "구간별 단일세율(주식 포함)",
+                "roulette": "세금 룰렛(평균 기준)",
+            }.get(kind, "기준 없음")
+            lines.append(f"🏕️ **{camp_name}캠프** · {rule}\n"
+                         f"└ {len(members)}명 대상 · 총 **{total:,} 에바** 예상")
+
+        embed = discord.Embed(
+            title="🧪 세금환수 미리보기 (실제로 걷지 않았어요)",
+            description="\n".join(lines),
+            color=discord.Color.orange(),
+        )
+        embed.set_footer(text="견학·부계정·겸직 제외는 반영되지 않은 어림값이에요. 정확한 명단은 /캠프 세금환수로 확인하세요.")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+# ========================================================================
+# 【지갑 · 캠프 선택지와 분기】
+# ========================================================================
+    @app_commands.choices(캠프=[
+        app_commands.Choice(name="악동캠프", value="악동"),
+        app_commands.Choice(name="나래캠프", value="나래"),
+        app_commands.Choice(name="여백캠프", value="여백"),
+        app_commands.Choice(name="전체 (서버 인원 전원)", value="전체"),
+    ])
+    async def check_balance_slash(self, interaction: discord.Interaction, member: discord.Member = None, 캠프: Optional[app_commands.Choice[str]] = None):
+        # 📋 캠프 옵션이 들어오면 캠프별 전체 지갑 조회 분기로 처리
+        if 캠프 is not None:
+            return await self._show_camp_wallets(interaction, 캠프)
+
+# ========================================================================
+# 【지갑 · 캠프별 권한/대상 선정】
+# ========================================================================
+        is_all = 캠프.value == "전체"
+        is_jeonyul = any(r.id == JEONYUL_ROLE_ID for r in interaction.user.roles)
+        is_admin = interaction.user.guild_permissions.administrator
+
+        # 🔐 권한
+        #  • 캠프별: 캠프장 / 전율(캠프 관리 기구) / 서버 관리자
+        #  • 전체  : 서버 관리자 / 상점주인 / 전율 — 없어진 `/랭킹`과 같은 기준이라
+        #            이번 통합으로 새로 열리거나 막히는 사람이 없어요.
+        if is_all:
+            if not (is_admin or is_jeonyul or self._is_shop_owner(interaction)):
+                return await interaction.response.send_message(
+                    "🙅‍♀️ 전체 지갑 조회는 관리자나 상점주인만 가능해요!", ephemeral=True
+                )
+        else:
+            is_leader = any(r.id == CAMP_LEADER_ROLE_ID for r in interaction.user.roles)
+            if not (is_leader or is_jeonyul or is_admin):
+                return await interaction.response.send_message(
+                    "🙅‍♀️ 캠프별 지갑 조회는 캠프장(또는 관리자)만 가능해요!", ephemeral=True
+                )
+
+        # 📨 전체 조회는 인원이 많아 임베드가 여러 장 나가므로 채널을 어지럽히지 않게
+        # 조회한 사람에게만 보여줍니다. 캠프별 조회는 지금까지처럼 공개예요.
+        await interaction.response.defer(ephemeral=is_all)
+
+        if is_all:
+            members = [m for m in interaction.guild.members if not m.bot]
+            if not members:
+                return await interaction.followup.send("❌ 조회할 인원이 없어요.", ephemeral=True)
+        else:
+            role = interaction.guild.get_role(CAMP_ROLE_IDS[캠프.value])
+            if not role:
+                return await interaction.followup.send(f"❌ '{캠프.name}' 역할을 서버에서 찾을 수 없어요.")
+
+            members = [m for m in role.members if not m.bot]
+            if not members:
+                return await interaction.followup.send(f"❌ {캠프.name}에 소속된 인원이 없어요.")

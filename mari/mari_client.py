@@ -1,39 +1,35 @@
 """봇 클라이언트 본체. 생존 감시(하트비트), 전역 에러 핸들러, 코그 등록을 담당해요."""
 
 import asyncio
+import importlib
 import os
+import traceback
 import datetime as dt
 import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 
-from mari_config import ALERT_DISCONNECT_SECONDS, HEARTBEAT_FILE, KST
+from mari_config import ALERT_DISCONNECT_SECONDS, ENABLED_MODULES, HEARTBEAT_FILE, KST
 from mari_alerts import send_alert
 from mari_utils import describe_user_error
+from modules import resolve_modules
 
-from cogs.backup import MariBackup
-from cogs.birthday import MariBirthday
-from cogs.camp import MariCamp
-from cogs.chronicle import MariChronicle
-from cogs.core import MariCore
-from cogs.diagnostics import MariTest
-from cogs.economy import MariEconomy
-from cogs.games import MariGames
-from cogs.gpt import MariGPT
-from cogs.help import MariHelp
-from cogs.profile import MariProfile
-from cogs.roster import MariRoster
-from cogs.setting import MariSetting
-from cogs.shop import MariShop, ShopPurchaseView, VisitPassCampView
-from cogs.snooze import MariSnooze
-from cogs.stock import MariStock
-from cogs.wiki import MariWiki
+# 🧩 [변경] 예전엔 여기 `from cogs.X import Y` 17줄이 있었고, setup_hook에는 add_cog 17줄이
+# 짝을 이뤄 있었어요. 기능 하나를 빼려면 두 곳을 같이 고쳐야 했고, 무엇보다 **한 코그의
+# import가 실패하면 봇이 기동조차 못 했습니다.**
+#
+# 이제 modules.py의 목록을 보고 importlib으로 하나씩 불러와요. 덕분에
+#   ① 담을 기능을 guild.json에서 고를 수 있고,
+#   ② 한 모듈이 터져도 나머지는 정상적으로 뜹니다. (무엇이 실패했는지는 크게 알려요)
 
 # ========== 🤖 봇 클라이언트 정의 ==========
 class MariBotClient(commands.Bot):
     def __init__(self, *, command_prefix: str, intents: discord.Intents):
-        super().__init__(command_prefix=command_prefix, intents=intents) 
-        self.synced_once = False 
+        super().__init__(command_prefix=command_prefix, intents=intents)
+        self.synced_once = False
+        # 🧩 이번 기동에 실제로 올라간/실패한 모듈. 진단 명령에서 확인할 수 있어요.
+        self.loaded_modules = []
+        self.failed_modules = []  # [(모듈 키, 실패 사유)]
         self.economy_lock = asyncio.Lock()
         # 🔒 [신규] settings.json은 채널/역할 설정뿐 아니라 레벨 명단 메세지 ID까지 같이
         # 들고 있는데, 여러 등록이 거의 동시에 일어나면 "읽고→고치고→저장" 과정이 겹쳐서
@@ -208,59 +204,43 @@ class MariBotClient(commands.Bot):
         except Exception as e:
             print(f"❗ 에러 메시지 전송 실패: {e}")
 
+    async def load_modules(self):
+        """modules.py 목록을 보고 코그를 하나씩 불러옵니다.
+
+        🛡️ 한 모듈이 터져도 나머지는 계속 올려요. 예전엔 정적 import라 코그 하나가
+        ImportError를 내면 봇이 통째로 안 켜졌습니다. 기능을 골라 담는 구조에서는
+        "방금 넣은 모듈 하나 때문에 전부 죽는" 게 특히 곤란해요.
+        """
+        specs, warnings = resolve_modules(ENABLED_MODULES)
+        for warning in warnings:
+            print(f"🧩 {warning}")
+
+        for spec in specs:
+            try:
+                cog_cls = getattr(importlib.import_module(spec.module), spec.cog)
+                await self.add_cog(cog_cls(self))
+                self.loaded_modules.append(spec.key)
+            except Exception as e:
+                self.failed_modules.append((spec.key, f"{type(e).__name__}: {e}"))
+                print(f"❗ '{spec.label}'({spec.key}) 모듈을 불러오지 못했어요: {type(e).__name__}: {e}")
+                traceback.print_exc()
+
+        loaded = ", ".join(self.loaded_modules) or "없음"
+        print(f"🧩 모듈 {len(self.loaded_modules)}/{len(specs)}개 로드 완료: {loaded}")
+        if self.failed_modules:
+            # 실패를 조용히 넘기면 "명령어가 왜 안 보이지"로 며칠을 헤매게 돼요.
+            print(f"🚨 실패한 모듈 {len(self.failed_modules)}개: "
+                  f"{', '.join(key for key, _ in self.failed_modules)}")
+
     async def setup_hook(self):
+        await self.load_modules()
 
-        await self.add_cog(MariSetting(self))
-        await self.add_cog(MariCore(self))
-        await self.add_cog(MariEconomy(self))  # 구동할 다른 Cog들도 여기에 추가하세요
-        await self.add_cog(MariCamp(self))
-        await self.add_cog(MariStock(self)) 
-        await self.add_cog(MariWiki(self))
-        await self.add_cog(MariGames(self))
-        await self.add_cog(MariGPT(self))
-        await self.add_cog(MariShop(self))
-        await self.add_cog(MariRoster(self))
-        await self.add_cog(MariHelp(self))
-        await self.add_cog(MariBirthday(self))
-        await self.add_cog(MariProfile(self))
-        await self.add_cog(MariTest(self))
-        await self.add_cog(MariBackup(self))
-        await self.add_cog(MariChronicle(self))
-        await self.add_cog(MariSnooze(self))
-        
-        # 2. [이동] 상점 지속성 버튼(Persistent View) 및 보드 초기화 등록
-        shop_cog = self.get_cog("MariShop")
-        if shop_cog:
-            # 🏪 [다중 매대] 매대가 채널마다 여러 개 있을 수 있으므로, 저장된 모든 매대를
-            # 순회하며 각 매대(메시지)마다 별도의 Persistent View를 등록해요.
-            try:
-                shop_data = shop_cog._load_shop()
-                registered = 0
-                for ch_id_str, board in shop_data.get("boards", {}).items():
-                    msg_id = board.get("shop_message_id")
-                    if msg_id:
-                        try:
-                            self.add_view(ShopPurchaseView(shop_cog, int(ch_id_str)), message_id=msg_id)
-                            registered += 1
-                        except Exception as e:
-                            print(f"❗ 매대(채널 {ch_id_str}) Persistent View 등록 실패: {e}")
-                print(f"🛒 상점 지속성 버튼(Persistent View) {registered}개 매대 등록 완료!")
-            except Exception as e:
-                print(f"❗ 상점 매대 목록 로드 실패: {e}")
+        # 🗑️ [정리] 예전엔 여기에 상점 지속성 버튼(Persistent View) 등록 코드가 있었어요.
+        # 클라이언트 본체가 상점의 내부 구조(매대 목록, 견학권 DM 버튼)를 알아야 해서,
+        # 상점을 빼고 납품하면 이 코드가 갈 곳을 잃었습니다. 이제 MariShop.cog_load()가
+        # 스스로 등록해요. 클라이언트는 특정 모듈을 전혀 모릅니다.
 
-            # 🎫 견학권 구매자 DM에 붙는 캠프 선택 버튼도 지속성 View로 등록해요.
-            # 매대와 달리 메세지 ID를 지정하지 않습니다. DM은 여러 명에게 여러 장이 나가 있고,
-            # 어느 메세지에 달린 버튼이든 custom_id만 맞으면 이 View가 받아주면 되니까요.
-            # (누가 무엇을 샀는지는 shop 코그가 파일에서 DM 메세지 ID로 찾아봅니다)
-            try:
-                self.add_view(VisitPassCampView(shop_cog))
-                print("🎫 견학권 안내 DM 버튼(Persistent View) 등록 완료!")
-            except Exception as e:
-                print(f"❗ 견학권 안내 버튼 등록 실패: {e}")
-            # 🗑️ [정리] 예전엔 여기서 init_shop_board()를 따로 태스크로 띄웠어요. 지금은 상점 코그의
-            # shop_refresh_loop(tasks.loop)이 봇 준비 직후 첫 회차를 돌면서 같은 일을 하므로 필요 없어졌어요.
-
-        # 🐛 [버그 수정] 예전엔 이 동기화 블록이 위의 `if shop_cog:` 안에 들여쓰기되어 있었어요.
+        # 🐛 [버그 수정] 예전엔 이 동기화 블록이 `if shop_cog:` 안에 들여쓰기되어 있었어요.
         # 그래서 상점 코그 로드가 실패하면 상점뿐 아니라 봇의 "모든" 슬래시 명령어가
         # 통째로 동기화되지 않는 상태가 됐어요. 이제 상점과 무관하게 항상 실행됩니다.
         # 🏠 동기화 직전에 모든 명령어를 서버 전용으로 못박습니다.

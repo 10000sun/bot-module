@@ -6,15 +6,19 @@ import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 
-from mari_config import ATTENDANCE_FILE, CAMP_LEADER_ROLE_ID, CAMP_ROLE_IDS, ECONOMY_FILE, JEONYUL_ROLE_ID, KST, LEDGER_FILE, SHOP_FILE, STOCKS_FILE
+from mari_config import ATTENDANCE_FILE, ECONOMY_FILE, KST, LEDGER_FILE, SHOP_FILE, STOCKS_FILE
 from mari_alerts import report_loop_error
 from mari_storage import atomic_json_save, atomic_json_save_or_raise, safe_json_load
 from mari_settings import feature_gate, has_admin_or_role, load_settings, send_log_embed
 from mari_state import load_ledger, record_ledger, record_ledger_many
 from mari_utils import MariView, chunk_lines, describe_user_error, portfolio_value
-# 🎁 /지갑에 붙는 선물 버튼. 아이템은 상점 데이터라서 UI·로직 모두 MariShop 쪽에 있어요.
-# (shop.py는 economy.py를 import하지 않으니 순환 참조는 없습니다)
-from cogs.shop import WalletGiftView
+
+# 🧩 [정리] 예전엔 여기 `from cogs.shop import WalletGiftView`가 있었어요. /지갑에 붙는
+# 선물 버튼인데, 아이템은 상점 데이터라 UI·로직이 MariShop 쪽에 있거든요.
+#
+# 그런데 이게 코그 17개 중 **유일한 코그 간 직접 import**였고, 그 탓에 상점을 빼고
+# 납품하면 지갑까지 import 단계에서 죽었습니다. 이제 아래 /지갑 명령에서 상점 코그를
+# get_cog로 찾아 build_wallet_gift_view()를 불러요. 상점이 없으면 버튼만 안 붙습니다.
 
 class UndoGiveSelect(discord.ui.Select):
     """되돌릴 지급/회수 묶음을 고르는 드롭다운"""
@@ -591,18 +595,12 @@ class MariEconomy(commands.Cog):
     @app_commands.command(name="지갑", description="본인의 에바 잔고와 보유 중인 아이템 목록을 확인해요")
     @app_commands.describe(
         member="확인할 멤버 선택 (비워두면 본인 지갑)",
-        캠프="여러 명의 지갑을 표로 한꺼번에 조회 (캠프별은 캠프장 전용, 전체는 관리자·상점주인 전용)"
+        전체="서버 인원 전체의 지갑을 표로 한꺼번에 조회해요. (관리자·상점주인 전용)"
     )
-    @app_commands.choices(캠프=[
-        app_commands.Choice(name="악동캠프", value="악동"),
-        app_commands.Choice(name="나래캠프", value="나래"),
-        app_commands.Choice(name="여백캠프", value="여백"),
-        app_commands.Choice(name="전체 (서버 인원 전원)", value="전체"),
-    ])
-    async def check_balance_slash(self, interaction: discord.Interaction, member: discord.Member = None, 캠프: Optional[app_commands.Choice[str]] = None):
-        # 📋 캠프 옵션이 들어오면 캠프별 전체 지갑 조회 분기로 처리
-        if 캠프 is not None:
-            return await self._show_camp_wallets(interaction, 캠프)
+    async def check_balance_slash(self, interaction: discord.Interaction, member: discord.Member = None, 전체: bool = False):
+        # 📋 전체 옵션을 켜면 서버 전원의 지갑을 표로 보여주는 분기로 넘어갑니다.
+        if 전체:
+            return await self._show_all_wallets(interaction)
 
         target = member if member else interaction.user
 
@@ -685,9 +683,11 @@ class MariEconomy(commands.Cog):
         # 🎁 [신규] 본인 지갑을 열었고, 넘겨줄 수 있는 아이템이 있을 때만 선물 버튼을 붙여줍니다.
         # (남의 지갑을 조회한 화면이나, 역할 아이템만 가진 사람에게는 버튼이 아예 안 보여요)
         view = discord.utils.MISSING
-        if shop_cog and target.id == interaction.user.id and hasattr(shop_cog, "collect_giftable_items"):
+        if (shop_cog and target.id == interaction.user.id
+                and hasattr(shop_cog, "collect_giftable_items")
+                and hasattr(shop_cog, "build_wallet_gift_view")):
             if shop_cog.collect_giftable_items(target.id):
-                view = WalletGiftView(shop_cog, interaction.user.id)
+                view = shop_cog.build_wallet_gift_view(interaction.user.id)
 
         # 최종 카드 전송
         await interaction.response.send_message(embed=embed, view=view)
@@ -699,14 +699,14 @@ class MariEconomy(commands.Cog):
             except Exception:
                 pass
 
-    async def _show_camp_wallets(self, interaction: discord.Interaction, 캠프: app_commands.Choice[str]):
-        """여러 명의 지갑 잔액을 표로 한꺼번에 조회합니다. (캠프별 또는 서버 전원)
+    async def _show_all_wallets(self, interaction: discord.Interaction):
+        """서버 인원 전체의 지갑 잔액을 표로 한꺼번에 조회합니다.
 
         🔁 [통합] 예전엔 서버 전체 순위를 보는 `/랭킹`이 따로 있었어요. 그런데 그쪽은 사람마다
         임베드 필드를 하나씩 써서 26명부터는 아예 안 떴고(디스코드 필드 상한 25개), 지갑만 보여줘서
         주식에 자산을 묻어둔 사람이 가난해 보이는 문제도 있었습니다. 여기 표 방식은 글자 수로
         잘라 나눠 보내기 때문에 인원 제한이 없고 지갑·주식·합계를 같이 보여줘서, `/랭킹`을
-        없애고 `캠프:전체`로 합쳤어요.
+        없애고 `/지갑 전체:True`로 합쳤어요.
         """
         # 🏠 지금은 mari_client._enforce_guild_only가 모든 명령어를 서버 전용으로 막아둬서
         # DM으로 들어올 일이 없어요. 그래도 이 검사는 남겨둡니다 — 서버 역할과 멤버 목록이
@@ -718,42 +718,19 @@ class MariEconomy(commands.Cog):
                 ephemeral=True,
             )
 
-        is_all = 캠프.value == "전체"
-        is_jeonyul = any(r.id == JEONYUL_ROLE_ID for r in interaction.user.roles)
-        is_admin = interaction.user.guild_permissions.administrator
+        # 🔐 권한: 서버 관리자 또는 상점주인. (없어진 `/랭킹`과 같은 기준이에요)
+        if not (interaction.user.guild_permissions.administrator or self._is_shop_owner(interaction)):
+            return await interaction.response.send_message(
+                "🙅‍♀️ 전체 지갑 조회는 관리자나 상점주인만 가능해요!", ephemeral=True
+            )
 
-        # 🔐 권한
-        #  • 캠프별: 캠프장 / 전율(캠프 관리 기구) / 서버 관리자
-        #  • 전체  : 서버 관리자 / 상점주인 / 전율 — 없어진 `/랭킹`과 같은 기준이라
-        #            이번 통합으로 새로 열리거나 막히는 사람이 없어요.
-        if is_all:
-            if not (is_admin or is_jeonyul or self._is_shop_owner(interaction)):
-                return await interaction.response.send_message(
-                    "🙅‍♀️ 전체 지갑 조회는 관리자나 상점주인만 가능해요!", ephemeral=True
-                )
-        else:
-            is_leader = any(r.id == CAMP_LEADER_ROLE_ID for r in interaction.user.roles)
-            if not (is_leader or is_jeonyul or is_admin):
-                return await interaction.response.send_message(
-                    "🙅‍♀️ 캠프별 지갑 조회는 캠프장(또는 관리자)만 가능해요!", ephemeral=True
-                )
+        # 📨 인원이 많아 임베드가 여러 장 나가므로, 채널을 어지럽히지 않게
+        # 조회한 사람에게만 보여줍니다.
+        await interaction.response.defer(ephemeral=True)
 
-        # 📨 전체 조회는 인원이 많아 임베드가 여러 장 나가므로 채널을 어지럽히지 않게
-        # 조회한 사람에게만 보여줍니다. 캠프별 조회는 지금까지처럼 공개예요.
-        await interaction.response.defer(ephemeral=is_all)
-
-        if is_all:
-            members = [m for m in interaction.guild.members if not m.bot]
-            if not members:
-                return await interaction.followup.send("❌ 조회할 인원이 없어요.", ephemeral=True)
-        else:
-            role = interaction.guild.get_role(CAMP_ROLE_IDS[캠프.value])
-            if not role:
-                return await interaction.followup.send(f"❌ '{캠프.name}' 역할을 서버에서 찾을 수 없어요.")
-
-            members = [m for m in role.members if not m.bot]
-            if not members:
-                return await interaction.followup.send(f"❌ {캠프.name}에 소속된 인원이 없어요.")
+        members = [m for m in interaction.guild.members if not m.bot]
+        if not members:
+            return await interaction.followup.send("❌ 조회할 인원이 없어요.", ephemeral=True)
 
         economy = self._load_raw_economy()
 
@@ -765,7 +742,7 @@ class MariEconomy(commands.Cog):
             try:
                 stock_data = stock_cog._load_stocks()
             except Exception as e:
-                print(f"⚠️ [캠프 지갑] 주식 평가액을 불러오지 못했어요: {type(e).__name__}: {e}")
+                print(f"⚠️ [전체 지갑] 주식 평가액을 불러오지 못했어요: {type(e).__name__}: {e}")
 
         rows = []
         for m in members:
@@ -787,8 +764,8 @@ class MariEconomy(commands.Cog):
         # 임베드 설명 길이 제한(4096자) 방어를 위해 표를 여러 청크로 분할 전송
         chunks = chunk_lines(lines)
 
-        title_label = "서버 전체" if is_all else 캠프.name
-        total_label = "🏦 전체 총자산" if is_all else f"🏦 {캠프.name} 총자산"
+        title_label = "서버 전체"
+        total_label = "🏦 전체 총자산"
 
         for idx, chunk in enumerate(chunks):
             embed = discord.Embed(
@@ -805,7 +782,7 @@ class MariEconomy(commands.Cog):
                 if not stock_cog:
                     embed.add_field(name="⚠️ 참고", value="주식 시스템을 불러올 수 없어서 주식 평가액이 0으로 표시됐어요.", inline=False)
             embed.set_footer(text=f"조회자: {interaction.user.display_name}")
-            await interaction.followup.send(embed=embed, ephemeral=is_all)
+            await interaction.followup.send(embed=embed, ephemeral=True)
 
     @app_commands.command(name="송금", description="다른 사람에게 에바를 송금해요!")
     @app_commands.describe(member="돈을 받을 멤버 선택", amount="보낼 에바 수량")
@@ -832,7 +809,7 @@ class MariEconomy(commands.Cog):
             return
 
         # 🚦 [성능 버그 수정] 예전엔 잔고 부족 안내를 economy_lock을 **쥔 채로** 보냈어요.
-        # economy_lock은 송금·출석·지급·상점구매·주식거래·캠프통장이 전부 지나가는 서버 공용
+        # economy_lock은 송금·출석·지급·상점구매·주식거래가 전부 지나가는 서버 공용
         # 관문이라, 흔하게 일어나는 실패 한 건이 디스코드와 통신하는 동안(레이트리밋에 걸리면
         # 몇 초) 서버의 모든 돈 관련 기능이 줄을 섰습니다.
         # 이제 락 안에서는 계산과 저장만 하고, 안내는 전부 락을 놓은 뒤에 보냅니다.

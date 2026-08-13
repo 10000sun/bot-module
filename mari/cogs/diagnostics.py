@@ -8,12 +8,11 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from mari_config import CAMP_LEADER_ROLE_ID, CAMP_ROLE_IDS, DATA_DIR, JEONYUL_ROLE_ID, KST, json_data_files
+from mari_config import DATA_DIR, KST, json_data_files
 from mari_storage import SAVE_FAILURES, safe_json_load
 from mari_settings import _get_role_ids, has_admin_or_role, load_settings
 from mari_state import state
-from mari_tax import CAMP_TAX_TYPE, flat_bracket_tax, load_tax_config, progressive_tax, stock_holding_tax
-from mari_utils import KNOWN_PLATFORMS, _looks_like_id_entry, _split_platform_and_id, normalize_platform, portfolio_value
+from mari_utils import KNOWN_PLATFORMS, _looks_like_id_entry, _split_platform_and_id, normalize_platform
 
 # ========== 🧪 [신규] 관리자 전용 테스트 도구 모음 ==========
 
@@ -92,10 +91,6 @@ class MariTest(commands.Cog):
             role_ids = _get_role_ids(settings, key)
             if role_ids and any(r.id in role_ids for r in target.roles):
                 has.append(label)
-        if any(r.id == CAMP_LEADER_ROLE_ID for r in target.roles):
-            has.append("🏕️ 캠프장")
-        if any(r.id == JEONYUL_ROLE_ID for r in target.roles):
-            has.append("🏛️ 전율(캠프 전체 관리)")
         if target.guild_permissions.administrator:
             has.append("🛡️ 서버 관리자 (모든 권한 보유)")
 
@@ -231,15 +226,7 @@ class MariTest(commands.Cog):
                         missing_resale += 1
             report.append(f"{'✅' if missing_resale == 0 else '⚠️'} 상점 되팔기퍼센트 누락: {missing_resale}건")
 
-        # ③ 캠프 역할 중복 소속 검사 (한 사람이 여러 캠프 역할을 동시에 보유)
-        overlap = 0
-        for member in interaction.guild.members:
-            camp_count = sum(1 for role_id in CAMP_ROLE_IDS.values() if any(r.id == role_id for r in member.roles))
-            if camp_count >= 2:
-                overlap += 1
-        report.append(f"{'✅' if overlap == 0 else '⚠️'} 캠프 역할 중복 소속: {overlap}명")
-
-        # ④ 전체 JSON 파일 로드 가능 여부
+        # ③ 전체 JSON 파일 로드 가능 여부
         # ⚠️ [수정] 예전엔 *_FILE 상수를 전부 검사해서, JSON이 아닌 .env와
         # 심장박동 파일이 파싱에 실패해 "손상됨"으로 잘못 보고됐어요.
         file_consts = json_data_files()
@@ -251,7 +238,7 @@ class MariTest(commands.Cog):
                 broken.append(os.path.basename(path))
         report.append(f"{'✅' if not broken else '❌'} 손상된 데이터 파일: {', '.join(broken) if broken else '없음'}")
 
-        # ⑤ [신규] 최근 저장 실패 기록
+        # ④ [신규] 최근 저장 실패 기록
         # 저장 실패는 "명령은 처리됐는데 파일에 안 남은" 상태라 제일 위험해요.
         # OneDrive·백신 같은 프로그램이 파일을 붙잡고 있으면 여기에 쌓입니다.
         if SAVE_FAILURES:
@@ -261,7 +248,7 @@ class MariTest(commands.Cog):
         else:
             report.append("✅ 최근 저장 실패: 없음")
 
-        # ⑥ [신규] 데이터 폴더가 클라우드 동기화 폴더 안에 있는지 확인
+        # ⑤ [신규] 데이터 폴더가 클라우드 동기화 폴더 안에 있는지 확인
         # OneDrive 안에서는 저장(os.replace)이 거부되거나 충돌 사본이 생길 수 있어요.
         # 📁 [수정] 데이터가 data/ 폴더로 분리됐으므로, 코드 위치(BASE_DIR)가 아니라
         # 실제 저장이 일어나는 DATA_DIR을 검사해야 맞아요.
@@ -351,77 +338,3 @@ class MariTest(commands.Cog):
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     # ---------- 10. 세금환수 미리보기 ----------
-    @test_group.command(name="세금환수미리보기", description="[관리자] 실제로 걷지 않고, 지금 세금환수하면 캠프별로 얼마씩 걷힐지 세 캠프를 한 번에 봐요.")
-    @app_commands.describe(정률="캠프별 기준 대신 전원에게 똑같은 비율(%)로 계산해볼 때만 입력하세요")
-    async def test_tax_preview(self, interaction: discord.Interaction, 정률: Optional[float] = None):
-        if not self._is_server_admin(interaction):
-            return await interaction.response.send_message("⛔ 서버 관리자 또는 테스트 관리자만 사용할 수 있어요.", ephemeral=True)
-        economy_cog = self.bot.get_cog("MariEconomy")
-        if not economy_cog:
-            return await interaction.response.send_message("❌ 경제 시스템을 찾을 수 없어요.", ephemeral=True)
-
-        # 🧾 [수정] 예전엔 세 캠프 모두에 같은 %를 곱해서 보여줬는데, 이제 캠프마다 세금 규칙이
-        # 달라서 그 숫자가 실제 징수액과 전혀 맞지 않았어요. 이제 각 캠프의 진짜 기준으로 계산합니다.
-        economy_data = economy_cog._load_raw_economy()
-        stock_cog = self.bot.get_cog("MariStock")
-        config = load_tax_config()
-
-        stock_data = {}
-        if stock_cog:
-            try:
-                stock_data = stock_cog._load_stocks()
-            except Exception as e:
-                print(f"⚠️ [세금 미리보기] 주식 평가액을 불러오지 못했어요: {type(e).__name__}: {e}")
-
-        lines = []
-        for camp_name, role_id in CAMP_ROLE_IDS.items():
-            members = [m for m in interaction.guild.members
-                       if not m.bot and any(r.id == role_id for r in m.roles)]
-            cfg = config.get(camp_name, {})
-            kind = CAMP_TAX_TYPE.get(camp_name)
-
-            total = 0
-            for m in members:
-                uid = str(m.id)
-                balance = economy_data.get(uid, 0)
-                balance = int(balance) if isinstance(balance, (int, float)) else 0
-
-                # 📈 [버그 수정] 예전엔 주식 평가액을 나래(flat_bracket)에서만 봤어요. 그런데 여백에
-                # **주식 보유세**(stock_holding_tax)가 나중에 추가되면서, 실제 /캠프 세금환수는
-                # `지갑 누진세 + 주식 보유세`를 걷는데 이 미리보기는 지갑 몫만 계산하고 있었습니다.
-                # 여백 예상액이 실제보다 적게 나와서, 미리 보는 의미가 없었어요.
-                stock_value = portfolio_value(stock_data, uid) if stock_data else 0
-
-                base = balance
-                if 정률 is None and kind == "flat_bracket" and cfg.get("include_stocks"):
-                    base = balance + stock_value
-
-                if 정률 is not None:
-                    tax = int(base * 정률 / 100) if base > 0 else 0
-                elif kind == "progressive":
-                    # 실제 징수(camp.collect_tax)와 같은 식이에요. 한쪽만 고치면 또 어긋납니다.
-                    tax = progressive_tax(cfg, balance) + stock_holding_tax(cfg, stock_value)
-                elif kind == "flat_bracket":
-                    tax = flat_bracket_tax(cfg, base)
-                elif kind == "roulette":
-                    # 룰렛은 뽑기라 매번 달라져요. 참여자 전원 기준 '평균 예상액'으로 어림잡아 보여줍니다.
-                    weights = sum(w for _, w in cfg.get("roulette", [])) or 1
-                    tax = int(sum(a * w for a, w in cfg.get("roulette", [])) / weights)
-                else:
-                    tax = 0
-                total += min(tax, balance)      # 지갑에 있는 만큼만 걷혀요
-
-            rule = f"정률 {정률:g}%" if 정률 is not None else {
-                "progressive": "초과 누진세 + 주식 보유세", "flat_bracket": "구간별 단일세율(주식 포함)",
-                "roulette": "세금 룰렛(평균 기준)",
-            }.get(kind, "기준 없음")
-            lines.append(f"🏕️ **{camp_name}캠프** · {rule}\n"
-                         f"└ {len(members)}명 대상 · 총 **{total:,} 에바** 예상")
-
-        embed = discord.Embed(
-            title="🧪 세금환수 미리보기 (실제로 걷지 않았어요)",
-            description="\n".join(lines),
-            color=discord.Color.orange(),
-        )
-        embed.set_footer(text="견학·부계정·겸직 제외는 반영되지 않은 어림값이에요. 정확한 명단은 /캠프 세금환수로 확인하세요.")
-        await interaction.response.send_message(embed=embed, ephemeral=True)

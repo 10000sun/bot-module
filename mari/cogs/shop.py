@@ -6,7 +6,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 
-from mari_config import CAMP_ROLE_IDS, ECONOMY_FILE, KST, SHOP_FILE, SHOP_TRANSACTIONS_FILE, VISIT_PASS_ASK_FILE
+from mari_config import ECONOMY_FILE, KST, SHOP_FILE, SHOP_TRANSACTIONS_FILE
 from mari_alerts import report_loop_error
 from mari_storage import atomic_json_save_or_raise, safe_json_load
 from mari_settings import feature_gate, has_admin_or_role, load_settings, send_log_embed
@@ -258,13 +258,6 @@ class ShopActionButtons(MariView):
             f"✅ `{self.item_info['name']}`을(를) 성공적으로 구매했어요! (-{price:,} 에바)",
         )
 
-        # 🎫 견학권을 샀다면, 어느 캠프에 언제 가고 싶은지 DM으로 물어봐요.
-        #    (구매는 이미 끝난 뒤라 여기서 실패해도 되돌리지 않고 상점 로그로만 알립니다)
-        if self.cog.is_visit_pass_item(self.item_info["name"]):
-            await self.cog.ask_visit_pass_destination(
-                interaction.user, self.item_info["name"], self.channel_id
-            )
-
     @discord.ui.button(label="💰 되팔기", style=discord.ButtonStyle.danger)
     async def sell_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         if self.processing:
@@ -331,7 +324,7 @@ class ShopActionButtons(MariView):
                     error = "❌ 이 매대는 더 이상 존재하지 않아요."
                 else:
                     # 🐛 [버그 수정] 예전엔 여기서 수량만 1 줄이고 **0이 된 칸을 지우지 않았어요.**
-                    # 선물(apply_gift)·견학권 차감(consume_items_by_name)·아이템 사용(use_item)은
+                    # 선물(apply_gift)·차감(consume_items_by_name)·아이템 사용(use_item)은
                     # 전부 0이 되면 칸을 지우는데 되팔기만 빠져 있었습니다. 그래서 산 걸 전부 되팔면
                     # 인벤토리에 {"3": 0}이 남았고, `/상점 사용`의 자동완성이 그걸 그대로 읽어서
                     # "보유: 0개" 항목을 힌트로 띄웠어요. 골라봐야 수량 부족으로 거부당하고,
@@ -691,92 +684,6 @@ class WalletGiftView(MariView):
         panel.origin_interaction = interaction
 
 
-# ========== 🎫 [신규] 견학권 구매자에게 희망 캠프·날짜 묻기 ==========
-# 견학권은 사두기만 하면 상점주인이 `/견학 보내기`로 직접 태워줘야 하는데, 정작 "어디로
-# 언제 가고 싶은지"를 물어볼 방법이 없어서 매번 따로 말을 걸어야 했어요.
-# 이제 구매하는 순간 마리가 DM으로 물어보고, 답을 상점 로그 채널로 넘겨줍니다.
-#
-# 🔘 캠프는 버튼으로 고르고(오타가 날 수 없어요), 날짜만 자유 입력으로 받아요.
-#    날짜는 "8/12"일 수도 "이번 주말"일 수도 있어서 형식을 강제하지 않고 원문 그대로 넘깁니다.
-
-VISIT_PASS_ASK_DAYS = 3                     # 답을 기다리는 기간. 지나면 버튼이 만료돼요.
-VISIT_PASS_CAMPS = tuple(CAMP_ROLE_IDS)     # 악동 / 나래 / 여백 (캠프가 늘면 여기도 자동으로 따라와요)
-
-
-class VisitPassCampButton(discord.ui.Button):
-    """DM에 붙는 캠프 버튼 하나. 누르면 희망 날짜를 적는 창(모달)이 열려요."""
-
-    def __init__(self, camp: str):
-        super().__init__(
-            label=f"{camp}캠프",
-            style=discord.ButtonStyle.primary,
-            custom_id=f"mari_visitpass:camp:{camp}",
-        )
-        self.camp = camp
-
-    async def callback(self, interaction: discord.Interaction):
-        cog = self.view.cog
-        record, problem = cog.load_visit_pass_request(interaction.message.id, interaction.user.id)
-        if problem:
-            return await interaction.response.send_message(problem, ephemeral=True)
-        await interaction.response.send_modal(
-            VisitPassDateModal(cog, self.camp, interaction.message, record)
-        )
-
-
-class VisitPassCampView(MariView):
-    """🎫 견학권을 산 사람에게 보내는 '어느 캠프로 갈까요?' 버튼 묶음.
-
-    ⚠️ Persistent View예요. DM에 남은 버튼은 봇을 재시작해도 계속 눌릴 수 있어야 해서
-    timeout=None + 고정 custom_id로 만들고, mari_client의 setup_hook에서 등록합니다.
-    누가 무엇을 샀는지는 버튼이 아니라 파일(VISIT_PASS_ASK_FILE)에 **DM 메세지 ID를 키로**
-    저장해둬요. custom_id는 100자 제한이 있어서 구매 정보를 다 싣을 수 없거든요.
-    """
-
-    def __init__(self, cog):
-        super().__init__(timeout=None)
-        self.cog = cog
-        for camp in VISIT_PASS_CAMPS:
-            self.add_item(VisitPassCampButton(camp))
-
-
-class VisitPassDateModal(discord.ui.Modal, title="🎫 견학 희망 날짜"):
-    """캠프를 고른 뒤 뜨는 창. 언제 가고 싶은지만 적으면 끝이에요."""
-
-    희망날짜 = discord.ui.TextInput(
-        label="언제 가고 싶으세요?",
-        placeholder="예) 8/12  ·  이번 주 토요일  ·  되도록 빨리",
-        required=True,
-        max_length=100,
-    )
-
-    def __init__(self, cog, camp: str, message: discord.Message, record: dict):
-        super().__init__()
-        self.cog = cog
-        self.camp = camp
-        self.message = message      # 버튼이 달려 있던 DM 메세지 (다 끝나면 버튼을 치워요)
-        self.record = record
-
-    async def on_submit(self, interaction: discord.Interaction):
-        await self.cog.deliver_visit_pass_answer(
-            interaction, self.camp, str(self.희망날짜), self.message, self.record
-        )
-
-    async def on_error(self, interaction: discord.Interaction, error: Exception) -> None:
-        """모달은 MariView와 상속 관계가 아니라서 오류 처리를 따로 붙여둬요.
-        (기본 동작은 콘솔 출력 + "Oops!" 영문 안내라, 무슨 일인지 알 수 없어요)"""
-        print(f"❗ [견학권] 희망 날짜 접수 중 오류: {type(error).__name__}: {error}")
-        msg = ("❌ 접수 중에 문제가 생겼어요. 상점주인에게 직접 말씀해 주세요.\n"
-               f"└ `{type(error).__name__}`")
-        try:
-            if interaction.response.is_done():
-                await interaction.followup.send(msg)
-            else:
-                await interaction.response.send_message(msg)
-        except Exception as e:
-            print(f"❗ [견학권] 오류 안내 전송 실패: {e}")
-
-
 class MariShop(commands.Cog):
     """에바스타운 공식 상점 및 인벤토리 시스템"""
     
@@ -798,12 +705,6 @@ class MariShop(commands.Cog):
         self.bot = bot
         self.SHOP_FILE = SHOP_FILE
         self.SHOP_TRANSACTIONS_FILE = SHOP_TRANSACTIONS_FILE
-        # 🎫 지금 접수를 처리 중인 견학권 안내 DM의 메세지 ID.
-        # 전달에 성공한 뒤에야 대기 기록을 지우기 때문에, 그 사이에 버튼을 또 누르면
-        # 같은 접수가 두 번 올라갈 수 있어요. 그걸 막는 표시입니다. (메모리에만 둡니다 —
-        # 봇이 재시작되면 어차피 처리 중이던 인터랙션도 같이 끝나니까요)
-        self._visit_pass_inflight = set()
-
         # 🖱️ [신규] 멤버 우클릭 → 앱 → 아이템 선물하기
         # 기존 선물 패널을 그대로 열되 '받을 사람'만 미리 채워둬요. 4단계가 2단계로 줄어듭니다.
         self.gift_menu = app_commands.ContextMenu(name="아이템 선물하기", callback=self.gift_menu_callback)
@@ -811,6 +712,41 @@ class MariShop(commands.Cog):
 
     async def cog_load(self):
         self.shop_refresh_loop.start()
+        self._register_persistent_views()
+
+    def _register_persistent_views(self):
+        """봇을 재시작해도 계속 눌리는 버튼(Persistent View)들을 등록합니다.
+
+        🧩 [이동] 예전엔 이 코드가 mari_client.setup_hook 안에 있었어요. 그래서 클라이언트
+        본체가 상점의 내부 구조(매대 목록의 생김새)를 알아야 했고, 상점을
+        빼고 납품하면 갈 곳 없는 코드가 남았습니다. 상점 일은 상점이 합니다.
+        """
+        # 🏪 [다중 매대] 매대가 채널마다 여러 개 있을 수 있으므로, 저장된 모든 매대를
+        # 순회하며 각 매대(메시지)마다 별도의 Persistent View를 등록해요.
+        try:
+            shop_data = self._load_shop()
+            registered = 0
+            for ch_id_str, board in shop_data.get("boards", {}).items():
+                msg_id = board.get("shop_message_id")
+                if msg_id:
+                    try:
+                        self.bot.add_view(ShopPurchaseView(self, int(ch_id_str)), message_id=msg_id)
+                        registered += 1
+                    except Exception as e:
+                        print(f"❗ 매대(채널 {ch_id_str}) Persistent View 등록 실패: {e}")
+            print(f"🛒 상점 지속성 버튼(Persistent View) {registered}개 매대 등록 완료!")
+        except Exception as e:
+            print(f"❗ 상점 매대 목록 로드 실패: {e}")
+
+    def build_wallet_gift_view(self, owner_id: int) -> "WalletGiftView":
+        """/지갑 아래에 붙일 '선물하기' 버튼을 만들어 줍니다.
+
+        🧩 지갑(MariEconomy)이 이 버튼을 붙이는데, 선물은 상점 데이터(인벤토리)를 만지는
+        일이라 UI도 로직도 여기 있어야 해요. 예전엔 economy.py가 `from cogs.shop import
+        WalletGiftView`로 직접 가져다 썼는데, 그러면 **상점을 빼고 납품할 때 지갑까지
+        import 단계에서 죽습니다.** 이제 지갑은 get_cog로 이 함수가 있는지만 확인해요.
+        """
+        return WalletGiftView(self, owner_id)
 
     async def cog_unload(self):
         self.shop_refresh_loop.cancel()
@@ -1043,7 +979,7 @@ class MariShop(commands.Cog):
         }
 
     # ========== 🎟️ [신규] 이름으로 아이템 찾아 차감/복구 (다른 코그에서 사용) ==========
-    # `/견학 보내기`의 일일견학권처럼, 다른 기능이 "이 아이템 몇 개 까줘"라고 부탁할 때 쓰는 공용 함수예요.
+    # 다른 기능이 "이 아이템 몇 개 까줘"라고 부탁할 때 쓰는 공용 함수예요.
     # 🏪 아이템은 매대마다 따로 저장돼서 같은 이름이 여러 매대에 흩어져 있을 수 있어요.
     #    그래서 전 매대를 돌며 합계를 세고, **모자라면 한 개도 건드리지 않고** 실패시킵니다.
 
@@ -1158,205 +1094,6 @@ class MariShop(commands.Cog):
             ],
         )
 
-    # ========== 🎫 [신규] 견학권 구매자에게 희망 캠프·날짜 묻기 ==========
-    # UI는 이 파일 위쪽의 VisitPassCampView / VisitPassDateModal이 담당하고,
-    # 데이터와 전달은 아래 함수들이 맡아요. (자세한 설계는 그쪽 주석 참고)
-
-    def _load_visit_pass_asks(self) -> dict:
-        """{"<DM 메세지 ID>": {구매 정보}} 형태의 대기열을 읽어옵니다."""
-        return safe_json_load(VISIT_PASS_ASK_FILE, {"requests": {}}).get("requests", {})
-
-    def _save_visit_pass_asks(self, requests: dict):
-        atomic_json_save_or_raise(VISIT_PASS_ASK_FILE, {"requests": requests}, indent=2)
-
-    def _visit_pass_expired(self, row: dict) -> bool:
-        """물어본 지 VISIT_PASS_ASK_DAYS일이 지났는지 판단합니다. (시각이 깨져 있으면 만료로 봐요)"""
-        try:
-            asked = dt.datetime.fromisoformat(row.get("asked_at", ""))
-        except (TypeError, ValueError):
-            return True
-        if asked.tzinfo is None:
-            asked = asked.replace(tzinfo=KST)
-        return dt.datetime.now(KST) - asked > dt.timedelta(days=VISIT_PASS_ASK_DAYS)
-
-    def _prune_visit_pass_asks(self, requests: dict) -> dict:
-        """기한이 지난 기록을 걸러냅니다. (파일이 무한정 커지지 않도록)"""
-        return {k: v for k, v in requests.items() if not self._visit_pass_expired(v)}
-
-    def _shop_admin_mention(self) -> str:
-        """상점 로그에 붙일 상점주인 태그를 만듭니다. (settings.json의 roles.shop_admin)
-
-        `/설정` 으로 상점주인 역할을 여러 개 지정할 수 있어서 리스트로 들어올 수 있어요.
-        아직 지정 전이면 빈 문자열이라 태그 없이 로그만 올라갑니다.
-
-        ⚠️ 태그가 실제로 울리려면 그 역할이 '누구나 멘션 가능'이거나, 마리에게 '모든 역할
-           멘션' 권한이 있어야 해요. 둘 다 아니면 글자만 파랗게 보이고 알림은 안 갑니다.
-        """
-        role_ids = load_settings().get("roles", {}).get("shop_admin")
-        if not role_ids:
-            return ""
-        if not isinstance(role_ids, list):
-            role_ids = [role_ids]        # 예전 데이터(단일 int) 하위 호환
-        return " ".join(f"<@&{rid}>" for rid in role_ids)
-
-    def is_visit_pass_item(self, item_name: str) -> bool:
-        """이 상품이 '견학권'인지 판단합니다.
-
-        기준은 캠프 코그가 이미 들고 있는 것(VISIT_PASS_ITEM / VISIT_PASS_KEYWORD)을 그대로
-        씁니다. 상품 이름을 바꿔도 고칠 자리가 camp.py 한 곳으로 유지되게 하려는 거예요.
-        """
-        camp_cog = self.bot.get_cog("MariCamp")
-        exact = getattr(camp_cog, "VISIT_PASS_ITEM", "타 캠프 1일 견학권")
-        keyword = getattr(camp_cog, "VISIT_PASS_KEYWORD", "견학권")
-        return item_name == exact or bool(keyword and keyword in item_name)
-
-    async def ask_visit_pass_destination(self, buyer: discord.Member, item_name: str, board_channel_id) -> None:
-        """견학권을 산 사람에게 DM으로 희망 캠프·날짜를 물어봅니다.
-
-        ⚠️ 구매가 **이미 끝난 뒤에** 불려요. 그래서 여기서 무슨 일이 나도 구매를 되돌리지 않고,
-        상점주인이 손으로 처리할 수 있도록 상점 로그에 알리기만 합니다.
-        """
-        embed = discord.Embed(
-            title="🎫 견학권을 구매하셨어요!",
-            description=(f"**{item_name}**을(를) 구매해 주셔서 고마워요.\n\n"
-                         "어느 캠프로 가고 싶으신지 아래 버튼으로 골라주세요.\n"
-                         "고르면 **언제 가고 싶은지** 적는 창이 열려요."),
-            color=0x5ce6b4,
-        )
-        embed.set_footer(text=f"{VISIT_PASS_ASK_DAYS}일 안에 알려주세요. 답해주시면 상점주인에게 바로 전달돼요.")
-
-        try:
-            dm = await buyer.send(embed=embed, view=VisitPassCampView(self))
-        except Exception as e:
-            # 🔒 DM을 닫아두신 분에게는 보낼 수가 없어요. (가장 흔한 실패 원인이에요)
-            #    구매는 이미 끝났으니 되돌리지 않고, 상점주인이 직접 여쭤보도록 넘깁니다.
-            await send_log_embed(
-                self.bot, "shop_log",
-                f"🔔 {buyer.mention}님께 견학권 안내 DM을 **보내지 못했어요.** 직접 확인해 주세요!",
-                fields=[
-                    ("구매자", buyer.mention, True),
-                    ("구매한 상품", item_name, True),
-                    ("매대 채널", f"<#{board_channel_id}>", True),
-                    ("실패 사유", f"`{type(e).__name__}` (DM 차단 또는 전송 실패)", False),
-                    ("해주실 일", "구매자에게 **어느 캠프로, 언제** 가고 싶은지 직접 여쭤봐 주세요.", False),
-                ],
-                content=self._shop_admin_mention(),      # 손이 필요한 일이라 상점주인을 부릅니다
-            )
-            print(f"❗ [견학권] 안내 DM 전송 실패 (유저 {buyer.id}): {type(e).__name__}: {e}")
-            return
-
-        # 나중에 버튼을 눌렀을 때 "누가 무엇을 샀는지" 알아야 하는데, custom_id에는 다 실을 수
-        # 없어요. DM 메세지 ID를 키로 파일에 남겨둡니다. (봇이 재시작돼도 살아남아요)
-        try:
-            requests = self._load_visit_pass_asks()
-            requests[str(dm.id)] = {
-                "user_id": str(buyer.id),
-                "item_name": item_name,
-                "board_channel_id": str(board_channel_id),
-                "asked_at": dt.datetime.now(KST).isoformat(),
-            }
-            self._save_visit_pass_asks(self._prune_visit_pass_asks(requests))
-        except Exception as e:
-            # 저장이 실패하면 DM 버튼을 눌러도 "만료됐다"고 나와요. 조용히 넘어가면 안 됩니다.
-            print(f"⚠️ [견학권] 대기 기록 저장 실패 (유저 {buyer.id}): {type(e).__name__}: {e}")
-            await send_log_embed(
-                self.bot, "shop_log",
-                f"🔔 {buyer.mention}님께 견학권 안내 DM은 보냈지만 **대기 기록 저장에 실패**했어요.",
-                fields=[
-                    ("구매자", buyer.mention, True),
-                    ("구매한 상품", item_name, True),
-                    ("실패 사유", f"`{type(e).__name__}: {e}`"[:1024], False),
-                    ("해주실 일", "버튼을 눌러도 만료됐다고 나올 수 있어요. 직접 여쭤봐 주세요.", False),
-                ],
-                content=self._shop_admin_mention(),
-            )
-
-    def load_visit_pass_request(self, message_id: int, clicker_id: int) -> tuple:
-        """버튼을 누른 시점에 그 안내가 아직 유효한지 확인합니다.
-
-        (기록, 문제안내) 중 **한쪽만** 채워서 돌려줘요.
-        """
-        row = self._load_visit_pass_asks().get(str(message_id))
-        if not row:
-            return None, ("⌛ 이 안내는 이미 처리됐거나 기록을 찾을 수 없어요.\n"
-                          "└ 상점주인에게 직접 말씀해 주세요!")
-        if str(clicker_id) != str(row.get("user_id")):
-            return None, "🙅‍♀️ 이 버튼은 견학권을 구매하신 분만 누를 수 있어요."
-        if self._visit_pass_expired(row):
-            return None, (f"⌛ 답변 기한({VISIT_PASS_ASK_DAYS}일)이 지났어요.\n"
-                          "└ 상점주인에게 직접 말씀해 주세요!")
-        return row, None
-
-    async def deliver_visit_pass_answer(self, interaction: discord.Interaction, camp: str,
-                                        wanted_date: str, message: discord.Message, record: dict) -> None:
-        """구매자가 고른 캠프와 적어준 날짜를 상점 로그로 전달합니다."""
-        # ⏱️ 아래에 로그 전송·메세지 수정이 이어져서, 먼저 defer로 3초 시한을 벗어나 둡니다.
-        await interaction.response.defer()
-
-        # 🔒 [변경] 예전엔 여기서 대기 기록을 **먼저** 지웠어요. 두 번 접수되는 걸 막으려던 건데,
-        #    상점 로그 채널이 아직 설정 안 됐거나 권한이 없어서 전달에 실패하면 기록만 사라져서
-        #    버튼으로 다시 시도할 방법이 없었습니다. 이제 **전달에 성공한 뒤에** 지워요.
-        #    대신 그 사이 버튼을 또 누르는 건 이 표시로 막습니다.
-        key = str(message.id)
-        if key in self._visit_pass_inflight:
-            return await interaction.followup.send("⏳ 방금 보내주신 답변을 처리하는 중이에요! 잠시만요.")
-        self._visit_pass_inflight.add(key)
-
-        try:
-            # 📝 날짜는 구매자가 적어준 **원문 그대로** 넘겨요. (형식을 강제하지 않기로 했으니까요)
-            #    다만 임베드 필드는 1024자가 한계라 그 길이로만 자릅니다.
-            wanted = (wanted_date or "").strip() or "(입력 없음)"
-            sent = await send_log_embed(
-                self.bot, "shop_log",
-                f"🎫 {interaction.user.mention}님이 견학권 희망 캠프를 알려주셨어요.",
-                fields=[
-                    ("구매자", interaction.user.mention, True),
-                    ("구매한 상품", record.get("item_name", "견학권"), True),
-                    ("매대 채널", f"<#{record.get('board_channel_id')}>", True),
-                    ("희망 캠프", f"**{camp}캠프**", True),
-                    ("희망 날짜 (구매자가 적은 그대로)", wanted[:1024], False),
-                ],
-                # 📣 견학을 실제로 태워줄 사람은 상점주인이라, 알림이 가도록 태그해서 올려요.
-                content=self._shop_admin_mention(),
-            )
-
-            if not sent:
-                # 상점 로그 채널이 설정 안 됐거나 권한이 없는 경우예요. 전달됐다고 거짓말하면 안 돼요.
-                # 기록도 버튼도 그대로 남겨둬서, 채널을 고친 뒤 다시 누르면 접수됩니다.
-                print("❗ [견학권] 상점 로그 채널로 전달하지 못했어요. (채널 미설정 또는 권한 없음)")
-                return await interaction.followup.send(
-                    f"⚠️ **{camp}캠프** · `{wanted}` 로 답해주셨지만, 상점주인에게 자동 전달이 되지 않았어요.\n"
-                    "└ 번거로우시겠지만 상점주인에게 직접 말씀해 주세요. (버튼은 그대로 두었으니 나중에 다시 눌러보셔도 돼요)"
-                )
-
-            # ✅ 전달에 성공했으니 이제 대기 기록을 지웁니다.
-            try:
-                requests = self._load_visit_pass_asks()
-                requests.pop(key, None)
-                self._save_visit_pass_asks(self._prune_visit_pass_asks(requests))
-            except Exception as e:
-                # 전달은 이미 됐어요. 기록이 남아 있으면 버튼을 또 눌러 중복 접수될 수 있다는
-                # 것뿐이라, 접수 자체를 실패로 돌리지는 않습니다.
-                print(f"⚠️ [견학권] 대기 기록 정리 실패: {type(e).__name__}: {e}")
-
-            # 🔘 다 끝났으니 DM에 남은 버튼을 치우고 결과 화면으로 바꿔요.
-            try:
-                done = discord.Embed(
-                    title="🎫 접수됐어요!",
-                    description=f"희망 캠프: **{camp}캠프**\n희망 날짜: **{wanted}**",
-                    color=0x5ce6b4,
-                )
-                await message.edit(embed=done, view=None)
-            except Exception as e:
-                print(f"⚠️ [견학권] 안내 DM 정리 실패: {type(e).__name__}: {e}")
-
-            await interaction.followup.send(
-                f"✅ **{camp}캠프** · `{wanted}` (으)로 상점주인에게 전달했어요!\n"
-                "└ 견학 처리는 상점주인이 직접 해드릴 거예요. 조금만 기다려 주세요."
-            )
-        finally:
-            self._visit_pass_inflight.discard(key)
-
     def _generate_shop_embed(self, board: dict) -> discord.Embed:
         embed = discord.Embed(
             title=board.get("shop_name", "🛒 상점"),
@@ -1409,16 +1146,6 @@ class MariShop(commands.Cog):
                 await self._refresh_board_message(int(channel_id_str), preloaded_data=data)
             except Exception as e:
                 print(f"❗ 매대(채널 {channel_id_str}) 갱신 실패: {e}")
-
-        # 🧹 기한이 지난 견학권 안내 대기 기록도 이참에 같이 치웁니다.
-        #    (버튼을 아예 안 누른 사람 몫이 계속 쌓이지 않도록)
-        try:
-            requests = self._load_visit_pass_asks()
-            alive = self._prune_visit_pass_asks(requests)
-            if len(alive) != len(requests):
-                self._save_visit_pass_asks(alive)
-        except Exception as e:
-            print(f"⚠️ [견학권] 대기 기록 정리 실패: {type(e).__name__}: {e}")
 
     @shop_refresh_loop.before_loop
     async def before_shop_refresh_loop(self):

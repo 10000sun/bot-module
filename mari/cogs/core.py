@@ -305,12 +305,14 @@ class MariCore(commands.Cog):
         chief_role_id = settings.get("roles", {}).get("chief_role")
         if chief_role_id and any(r.id == chief_role_id for r in member.roles):
             return "chief"
-        roster_cog = self.bot.get_cog("MariRoster")
-        if not roster_cog:
-            return None
-        for lvl, role_id in roster_cog.LEVEL_ROLES.items():
-            if any(r.id == role_id for r in member.roles):
-                return lvl
+        # 🗑️ [정리] 예전엔 여기서 명단 코그의 레벨 역할 표를 빌려 와 "이 사람은 몇 레벨"까지
+        # 돌려줬어요. 레벨 사다리는 원본 서버 고유 제도라 창고(parked/roster.py)로 옮겼고,
+        # 그래서 지금은 대장 역할만 판별합니다.
+        #
+        # ⚠️ 이 파일에는 아직 레벨을 전제로 한 코드가 남아 있어요. (레벨별 아이디 명단 게시,
+        # LEVEL_LABELS, /아이디 가져오기의 레벨 파싱 등) 지금은 이 함수가 항상 None을
+        # 돌려주므로 전원이 "레벨 미상"으로 묶여 동작에는 문제가 없지만, 레벨 개념을 아예
+        # 걷어낼지 아니면 등급 체계를 설정으로 뺄지는 아직 정하지 않았습니다.
         return None
 
     LEVEL_TITLES = {"chief": "대장", "4": "4LEVEL", "3": "3LEVEL", "2": "2LEVEL", "1": "1LEVEL", "0": "0레벨"}

@@ -94,7 +94,17 @@ DATA_DIR = os.environ.get("MARI_DATA_DIR", "").strip() or os.path.join(BASE_DIR,
 GUILD_CONFIG_PATH = os.environ.get("MARI_GUILD_CONFIG", "").strip() or os.path.join(BASE_DIR, "guild.json")
 
 # 데이터가 아니라 설정이라서 data/로 이사시키면 안 되는 파일들.
-_CONFIG_FILENAMES = {os.path.basename(GUILD_CONFIG_PATH).lower(), "guild.example.json"}
+#
+# 🐛 [버그 수정] 예전엔 이 집합을 `{basename(GUILD_CONFIG_PATH), "guild.example.json"}`으로만
+# 만들었어요. 그런데 MARI_GUILD_CONFIG로 다른 경로를 지정하면 기본 이름인 guild.json이
+# 목록에서 빠져버려서, **코드 옆에 있던 guild.json이 data/로 실려갔습니다.**
+# (실제로 검증 중에 당했어요. 봇 한 대에서 설정만 바꿔 띄우는 순간 원래 설정이 사라집니다)
+# 기본 이름은 무슨 일이 있어도 항상 지킵니다.
+_CONFIG_FILENAMES = {
+    "guild.json",
+    "guild.example.json",
+    os.path.basename(GUILD_CONFIG_PATH).lower(),
+}
 
 IDS_FILE = os.path.join(DATA_DIR, "ids.json")
 WIKI_FILE = os.path.join(DATA_DIR, "mari_wiki.json")
@@ -297,44 +307,14 @@ def _role(key: str) -> int:
     return _as_id(_ROLES.get(key), f"roles.{key}")
 
 
-# 🏕️ 캠프 역할 매핑 및 캠프장 권한 역할 (지갑/세금 공용)
-CAMP_LEADER_ROLE_ID = _role("camp_leader")
-CAMP_ROLE_IDS = _id_map("camps")
-# 🏛️ 특정 캠프가 아니라 캠프 전체를 관리하는 감독 역할(원본 서버에서는 "전율").
-# 이 역할을 가진 사람은 관리자처럼 모든 캠프를 조작할 수 있어야 해요.
-JEONYUL_ROLE_ID = _role("camp_overseer")
-
+# 📢 서버마다 다른 단일 역할들.
+#
+# 🗑️ [정리] 예전엔 여기에 캠프 역할(CAMP_ROLE_IDS·CAMP_LEADER_ROLE_ID·JEONYUL_ROLE_ID)과
+# 레벨/소속 역할표(LEVEL_ROLES·AFFILIATIONS)도 함께 있었어요. 전부 원본 서버 고유 제도라
+# 기능째로 창고(parked/)로 옮기면서 설정도 같이 걷어냈습니다.
 GOHWAK_MENTION_ROLE_ID = _role("broadcast_mention")  # /고확 방송에 함께 멘션할 역할
 MARI_CALL_ROLE_ID = _role("bot_mention")             # 이 역할을 멘션하면 봇을 부른 것으로 취급
-# 🧭 타운가이드. /역할부여와 /도움말 관리자 모드 두 곳이 같은 값을 각자 하드코딩하고 있었어요.
-TOWN_GUIDE_ROLE_ID = _role("town_guide")
-
-# 📊 [신규] 레벨 역할. 예전엔 cogs/roster.py 안에만 있었어요.
-# 키는 명단 명령의 선택지로 그대로 쓰이니 "0", "1"처럼 짧게 두는 게 좋아요.
-LEVEL_ROLES = _section("levels")
-LEVEL_ROLE_IDS = _id_map("levels")
-
-# 🏷️ [신규] 소속 역할. 캠프(세금·견학)와 달리 "명단/프로필에 어디 소속인지 보여주는" 용도라
-# 감독 역할(전율)까지 포함합니다. 따로 안 적으면 캠프 + 감독 역할로 자동 구성해요.
-# (원본 서버의 roster.py가 정확히 이 조합을 손으로 한 벌 더 적어두고 있었습니다)
-AFFILIATIONS = _section("affiliations")
-if AFFILIATIONS:
-    AFFILIATION_ROLE_IDS = _id_map("affiliations")
-else:
-    AFFILIATION_ROLE_IDS = dict(CAMP_ROLE_IDS)
-    if JEONYUL_ROLE_ID:
-        AFFILIATION_ROLE_IDS["전율"] = JEONYUL_ROLE_ID
-
-
-def affiliation_color(name: str) -> str:
-    """소속 이름에 지정된 색 이름(ANSI 팔레트 키). 안 적었으면 빈 문자열."""
-    entry = AFFILIATIONS.get(name)
-    return entry.get("color", "") if isinstance(entry, dict) else ""
-
-
-def level_color(name: str) -> str:
-    entry = LEVEL_ROLES.get(name)
-    return entry.get("color", "") if isinstance(entry, dict) else ""
+TOWN_GUIDE_ROLE_ID = _role("town_guide")             # 입주 절차를 진행하는 역할
 
 
 # 🧭 [신규] 입주 절차 프리셋 (/역할부여의 "가이드"). 서버마다 절차가 완전히 다르므로 설정으로 뺐어요.
@@ -369,6 +349,29 @@ ONBOARDING_PRESETS = _load_onboarding()
 PERSONA_USER_IDS = _id_map("personas")
 
 
+# 🧩 [신규] 이 배포에 담을 기능 목록. 실제 정의는 modules.py에 있어요.
+# 안 적으면(None) 전부 켭니다. 설정을 손대지 않은 기존 배포가 그대로 돌아가야 하니까요.
+def _load_enabled_modules():
+    value = _GUILD.get("modules")
+    if value is None:
+        return None
+    if not isinstance(value, list):
+        GUILD_CONFIG_WARNINGS.append(
+            "'modules'는 목록([\"economy\", \"shop\", ...])이어야 해요. 무시하고 전부 켭니다."
+        )
+        return None
+    names = [str(v).strip() for v in value if str(v).strip()]
+    if not names:
+        # 빈 목록은 "아무것도 켜지 마"라는 뜻일 수도, 실수일 수도 있어요. 사고 쪽이 훨씬
+        # 비싸므로(명령어가 전부 사라진 봇) 실수로 보고 전부 켭니다.
+        GUILD_CONFIG_WARNINGS.append("'modules'가 비어 있어요. 실수로 보고 전부 켭니다.")
+        return None
+    return names
+
+
+ENABLED_MODULES = _load_enabled_modules()
+
+
 def report_guild_config() -> None:
     """기동 시 설정 상태를 한 번 알려줍니다. (main.py가 아니라 여기서 부르는 이유는
     설정을 읽자마자 알리는 게 원인 파악에 제일 빠르기 때문이에요)"""
@@ -379,8 +382,7 @@ def report_guild_config() -> None:
     else:
         print(
             f"🏷️ 서버 설정을 읽었어요. "
-            f"역할 {len(_ROLES)}개 · 캠프 {len(CAMP_ROLE_IDS)}개 · 레벨 {len(LEVEL_ROLE_IDS)}개 · "
-            f"소속 {len(AFFILIATION_ROLE_IDS)}개 · 입주 프리셋 {len(ONBOARDING_PRESETS)}개 · "
+            f"역할 {len(_ROLES)}개 · 입주 프리셋 {len(ONBOARDING_PRESETS)}개 · "
             f"페르소나 {len(PERSONA_USER_IDS)}개"
         )
 
