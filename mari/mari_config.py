@@ -1,6 +1,7 @@
-"""경로·비밀값(.env)·시간대·역할 ID·그래프 색상 등 순수 설정값 모음.
+"""경로·비밀값(.env)·시간대·서버 고유 ID(guild.json)·그래프 색상 등 순수 설정값 모음.
 다른 마리 모듈을 일절 import하지 않는 최하위 계층이에요."""
 
+import json
 import os
 import re
 import shutil
@@ -84,6 +85,17 @@ load_env_file()
 # 여러 봇을 돌릴 때 코드는 한 벌만 두고 데이터 폴더만 나누면 됩니다.
 DATA_DIR = os.environ.get("MARI_DATA_DIR", "").strip() or os.path.join(BASE_DIR, "data")
 
+# 🏷️ 서버 고유 설정 파일의 위치. (내용을 읽는 부분은 파일 아래쪽 "서버 고유 ID 분리" 절에 있어요)
+#
+# ⚠️ 이 경로는 아래 migrate_legacy_data_files()보다 **먼저** 정해져야 합니다.
+#    그 함수가 BASE_DIR의 .json을 전부 data/로 옮기는데, guild.json은 코드 옆(.env 자리)에
+#    두는 배포 설정이라 같이 쓸려가면 안 돼요. 옮겨지고 나면 설정을 못 찾아서
+#    "설정 파일이 없다"며 역할 기능이 통째로 죽습니다.
+GUILD_CONFIG_PATH = os.environ.get("MARI_GUILD_CONFIG", "").strip() or os.path.join(BASE_DIR, "guild.json")
+
+# 데이터가 아니라 설정이라서 data/로 이사시키면 안 되는 파일들.
+_CONFIG_FILENAMES = {os.path.basename(GUILD_CONFIG_PATH).lower(), "guild.example.json"}
+
 IDS_FILE = os.path.join(DATA_DIR, "ids.json")
 WIKI_FILE = os.path.join(DATA_DIR, "mari_wiki.json")
 ATTENDANCE_FILE = os.path.join(DATA_DIR, "mari_attendance.json")
@@ -139,8 +151,12 @@ def migrate_legacy_data_files():
     moved, skipped = [], []
 
     # 1) main.py 옆에 남아있는 .json 파일 전부
+    # (단, guild.json 같은 **배포 설정**은 원래 여기 사는 파일이라 건드리면 안 돼요)
     try:
-        legacy_names = [n for n in os.listdir(BASE_DIR) if n.lower().endswith(".json")]
+        legacy_names = [
+            n for n in os.listdir(BASE_DIR)
+            if n.lower().endswith(".json") and n.lower() not in _CONFIG_FILENAMES
+        ]
     except Exception:
         legacy_names = []
 
@@ -185,23 +201,191 @@ def migrate_legacy_data_files():
 
 migrate_legacy_data_files()
 
-# 🏕️ 캠프 역할 매핑 및 캠프장 권한 역할 (지갑/세금 공용)
-CAMP_LEADER_ROLE_ID = 1191777510451585024
-CAMP_ROLE_IDS = {
-    "악동": 1457359696540336199,
-    "나래": 1457359755616977118,
-    "여백": 1457359769999507588,
-}
-# 🏛️ [신규] "전율"은 특정 캠프가 아니라 캠프 전체를 관리하는 관리 기구예요.
-# 이 역할을 가진 사람은 관리자처럼 3개 캠프(악동/나래/여백) 전부를 조작할 수 있어야 해요.
-JEONYUL_ROLE_ID = 1457363783826538852
+# ========== 🏷️ [신규] 서버 고유 ID 분리 (guild.json) ==========
+# 예전엔 역할·유저 ID가 코드 곳곳에 숫자로 박혀 있었어요. 이 봇을 다른 서버에 올리려면
+# mari_config.py / cogs/roster.py / cogs/setting.py / cogs/gpt.py 네 파일을 뒤져가며
+# 스무 개쯤 되는 숫자를 고쳐야 했고, roster.py는 캠프 역할을 여기와 **따로 한 벌 더**
+# 들고 있어서 한쪽만 고치면 조용히 어긋났습니다.
+#
+# 이제 서버마다 달라지는 값은 전부 guild.json 한 파일에 모여 있어요. 코드는 특정 서버를
+# 전혀 모릅니다. 새 서버에 납품할 때는 guild.example.json을 복사해 값만 채우면 됩니다.
+#
+# ⚠️ 상수 이름이 GUILD_CONFIG_"PATH"인 건 의도적이에요. _FILE로 바꾸지 마세요.
+#    json_data_files()가 "_FILE로 끝나고 .json인 전역"을 전부 데이터 파일로 간주하는데,
+#    그러면 init_json_files()가 설정 파일을 "{}"로 자동 생성해 버려요. 설정을 빠뜨린 채
+#    켰을 때 경고 대신 **빈 설정으로 조용히 기동**하게 되는데, 그게 제일 나쁜 결과입니다.
+#    (자동 백업 대상에 섞이는 것도 곤란해요. 이건 데이터가 아니라 배포 설정이에요)
+#
+# (경로 자체는 파일 위쪽 DATA_DIR 옆에서 정합니다. migrate_legacy_data_files()가
+#  이 파일을 data/로 옮겨버리지 않게 하려면 그보다 먼저 정해져 있어야 해요)
 
-# 📢 [정리] 함수 본문 안에 흩어져 있던 하드코딩 역할 ID들을 여기로 모았어요.
-GOHWAK_MENTION_ROLE_ID = 1063465600220921897   # /고확 방송에 함께 멘션할 역할
-MARI_CALL_ROLE_ID = 1386036454039228510        # 이 역할을 멘션하면 마리를 부른 것으로 취급
+# 📋 설정을 읽으면서 발견한 문제들. 기동 로그에 한 번 찍고, 진단 명령에서도 볼 수 있게 남겨둬요.
+GUILD_CONFIG_WARNINGS = []
+
+
+def load_guild_config(path: str = GUILD_CONFIG_PATH) -> dict:
+    """guild.json을 읽어옵니다. 없거나 깨져 있어도 봇은 뜹니다(해당 기능만 조용히 비어요).
+
+    일부러 예외를 던지지 않아요. 이 봇은 기능을 골라 담아 납품하는 구조라, 어떤 서버는
+    캠프도 레벨도 안 쓸 수 있습니다. 설정이 비었다고 기동을 막으면 안 되고, 대신 무엇이
+    비었는지 **시끄럽게** 알려야 해요. (그래서 아래 경고 목록을 기동 시 출력합니다)
+    """
+    if not os.path.exists(path):
+        GUILD_CONFIG_WARNINGS.append(
+            f"설정 파일이 없어요: {path}\n"
+            f"   guild.example.json을 복사해 guild.json으로 만들고 값을 채워주세요.\n"
+            f"   (역할 ID가 필요한 기능은 전부 동작하지 않습니다)"
+        )
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception as e:
+        GUILD_CONFIG_WARNINGS.append(
+            f"설정 파일을 읽지 못했어요: {path} ({type(e).__name__}: {e})\n"
+            f"   JSON 문법이 깨졌을 수 있어요. 역할 ID가 필요한 기능은 전부 동작하지 않습니다."
+        )
+        return {}
+    if not isinstance(data, dict):
+        GUILD_CONFIG_WARNINGS.append(f"설정 파일의 최상위가 객체({{...}})가 아니에요: {path}")
+        return {}
+    return data
+
+
+_GUILD = load_guild_config()
+
+
+def _section(name: str) -> dict:
+    """guild.json의 한 섹션을 딕셔너리로. 없거나 형식이 틀리면 빈 값."""
+    value = _GUILD.get(name)
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        GUILD_CONFIG_WARNINGS.append(f"'{name}' 항목은 객체({{...}})여야 해요. 무시하고 넘어갑니다.")
+        return {}
+    # "_"로 시작하는 키는 사람이 읽는 주석이에요. (JSON에는 주석 문법이 없어서 이렇게 씁니다)
+    return {k: v for k, v in value.items() if not k.startswith("_")}
+
+
+def _as_id(value, where: str) -> int:
+    """디스코드 ID로 쓸 수 있는 정수로 바꿔요. 못 쓰는 값이면 0(=미설정)."""
+    if value is None or value == 0 or value == "":
+        return 0
+    try:
+        # JSON에 문자열로 적어둔 ID("123...")도 받아줍니다. 자릿수가 커서 따옴표를 치는 사람이 많아요.
+        return int(value)
+    except (TypeError, ValueError):
+        GUILD_CONFIG_WARNINGS.append(f"'{where}'의 값이 ID(숫자)가 아니에요: {value!r} — 미설정으로 둡니다.")
+        return 0
+
+
+def _id_map(section_name: str) -> dict:
+    """{이름: ID} 형태의 섹션을 읽어요. 값이 {"role": ID, ...} 꼴이어도 ID만 뽑아냅니다."""
+    result = {}
+    for key, raw in _section(section_name).items():
+        value = raw.get("role") if isinstance(raw, dict) else raw
+        role_id = _as_id(value, f"{section_name}.{key}")
+        if role_id:
+            result[key] = role_id
+    return result
+
+
+_ROLES = _section("roles")
+
+
+def _role(key: str) -> int:
+    return _as_id(_ROLES.get(key), f"roles.{key}")
+
+
+# 🏕️ 캠프 역할 매핑 및 캠프장 권한 역할 (지갑/세금 공용)
+CAMP_LEADER_ROLE_ID = _role("camp_leader")
+CAMP_ROLE_IDS = _id_map("camps")
+# 🏛️ 특정 캠프가 아니라 캠프 전체를 관리하는 감독 역할(원본 서버에서는 "전율").
+# 이 역할을 가진 사람은 관리자처럼 모든 캠프를 조작할 수 있어야 해요.
+JEONYUL_ROLE_ID = _role("camp_overseer")
+
+GOHWAK_MENTION_ROLE_ID = _role("broadcast_mention")  # /고확 방송에 함께 멘션할 역할
+MARI_CALL_ROLE_ID = _role("bot_mention")             # 이 역할을 멘션하면 봇을 부른 것으로 취급
 # 🧭 타운가이드. /역할부여와 /도움말 관리자 모드 두 곳이 같은 값을 각자 하드코딩하고 있었어요.
-# 역할이 바뀔 때 한쪽만 고치면 조용히 어긋나므로 여기로 모았습니다.
-TOWN_GUIDE_ROLE_ID = 1135246176036327484
+TOWN_GUIDE_ROLE_ID = _role("town_guide")
+
+# 📊 [신규] 레벨 역할. 예전엔 cogs/roster.py 안에만 있었어요.
+# 키는 명단 명령의 선택지로 그대로 쓰이니 "0", "1"처럼 짧게 두는 게 좋아요.
+LEVEL_ROLES = _section("levels")
+LEVEL_ROLE_IDS = _id_map("levels")
+
+# 🏷️ [신규] 소속 역할. 캠프(세금·견학)와 달리 "명단/프로필에 어디 소속인지 보여주는" 용도라
+# 감독 역할(전율)까지 포함합니다. 따로 안 적으면 캠프 + 감독 역할로 자동 구성해요.
+# (원본 서버의 roster.py가 정확히 이 조합을 손으로 한 벌 더 적어두고 있었습니다)
+AFFILIATIONS = _section("affiliations")
+if AFFILIATIONS:
+    AFFILIATION_ROLE_IDS = _id_map("affiliations")
+else:
+    AFFILIATION_ROLE_IDS = dict(CAMP_ROLE_IDS)
+    if JEONYUL_ROLE_ID:
+        AFFILIATION_ROLE_IDS["전율"] = JEONYUL_ROLE_ID
+
+
+def affiliation_color(name: str) -> str:
+    """소속 이름에 지정된 색 이름(ANSI 팔레트 키). 안 적었으면 빈 문자열."""
+    entry = AFFILIATIONS.get(name)
+    return entry.get("color", "") if isinstance(entry, dict) else ""
+
+
+def level_color(name: str) -> str:
+    entry = LEVEL_ROLES.get(name)
+    return entry.get("color", "") if isinstance(entry, dict) else ""
+
+
+# 🧭 [신규] 입주 절차 프리셋 (/역할부여의 "가이드"). 서버마다 절차가 완전히 다르므로 설정으로 뺐어요.
+# 형식: {"guide1": {"label": "가이드1 (입주심사 추가)", "add": [ID...], "remove": [ID...]}}
+def _load_onboarding() -> dict:
+    presets = {}
+    for key, raw in _section("onboarding").items():
+        if not isinstance(raw, dict):
+            GUILD_CONFIG_WARNINGS.append(f"'onboarding.{key}'는 객체({{...}})여야 해요. 건너뜁니다.")
+            continue
+        add = [_as_id(v, f"onboarding.{key}.add") for v in raw.get("add", []) or []]
+        remove = [_as_id(v, f"onboarding.{key}.remove") for v in raw.get("remove", []) or []]
+        add = [i for i in add if i]
+        remove = [i for i in remove if i]
+        if not add and not remove:
+            GUILD_CONFIG_WARNINGS.append(f"'onboarding.{key}'에 추가/제거할 역할이 하나도 없어요. 건너뜁니다.")
+            continue
+        presets[key] = {
+            # 선택지에 그대로 보이는 이름이에요. 디스코드 한도가 100자입니다.
+            "label": str(raw.get("label") or key)[:100],
+            "add": add,
+            "remove": remove,
+        }
+    return presets
+
+
+ONBOARDING_PRESETS = _load_onboarding()
+
+# 🎭 [신규] 특정 사람에게만 다르게 반응하는 AI 페르소나 (cogs/gpt.py).
+# 원본 서버에서는 제작자 부부와 특정 유저 한 명의 ID가 코드에 그대로 박혀 있었어요.
+# 형식: {"papa": 123..., "mama": 456...} — 안 적으면 전부 기본 페르소나로 응대합니다.
+PERSONA_USER_IDS = _id_map("personas")
+
+
+def report_guild_config() -> None:
+    """기동 시 설정 상태를 한 번 알려줍니다. (main.py가 아니라 여기서 부르는 이유는
+    설정을 읽자마자 알리는 게 원인 파악에 제일 빠르기 때문이에요)"""
+    if GUILD_CONFIG_WARNINGS:
+        print("⚠️ 서버 설정(guild.json)에 확인할 점이 있어요:")
+        for warning in GUILD_CONFIG_WARNINGS:
+            print(f" • {warning}")
+    else:
+        print(
+            f"🏷️ 서버 설정을 읽었어요. "
+            f"역할 {len(_ROLES)}개 · 캠프 {len(CAMP_ROLE_IDS)}개 · 레벨 {len(LEVEL_ROLE_IDS)}개 · "
+            f"소속 {len(AFFILIATION_ROLE_IDS)}개 · 입주 프리셋 {len(ONBOARDING_PRESETS)}개 · "
+            f"페르소나 {len(PERSONA_USER_IDS)}개"
+        )
+
+
+report_guild_config()
 
 
 # ========== 🔐 [신규] 비밀값 읽기 ==========

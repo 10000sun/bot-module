@@ -6,7 +6,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from mari_config import EXILE_DATA_FILE, KST, TOWN_GUIDE_ROLE_ID
+from mari_config import EXILE_DATA_FILE, KST, ONBOARDING_PRESETS, TOWN_GUIDE_ROLE_ID
 from mari_storage import atomic_json_save_or_raise, safe_json_load
 from mari_utils import MariView
 from mari_settings import FEATURE_KEYS, FEATURE_LIST_TEXT, _get_role_ids, has_admin_or_role, is_super_admin, load_settings, save_settings, send_log_embed, set_all_features_enabled, set_feature_enabled
@@ -39,6 +39,25 @@ class RoleGrantView(MariView):
         except Exception:
             pass
         await self.setting_cog._apply_role_changes(interaction, self.member, list(roles), None)
+
+
+# 🧭 [신규] 입주 절차 프리셋(/역할부여의 "가이드") 선택지를 guild.json에서 만들어요.
+# 예전엔 프리셋 2종과 그 안에서 주고받을 역할 ID가 전부 코드에 박혀 있어서, 서버마다
+# 다른 입주 절차를 담으려면 코드를 고쳐야 했습니다.
+_GUIDE_CHOICES = [
+    app_commands.Choice(name=preset["label"], value=key)
+    for key, preset in ONBOARDING_PRESETS.items()
+]
+
+
+def _with_guide_choices(func):
+    """프리셋이 하나라도 설정돼 있을 때만 '가이드' 선택지를 답니다.
+
+    ⚠️ 빈 리스트를 넘기면 디스코드가 명령어 등록을 거부해서 동기화 전체가 실패해요.
+    입주 절차를 안 쓰는 서버에서는 선택지 없이 두면 됩니다. (프리셋이 없으면 아래
+    _apply_role_changes도 자연스럽게 아무것도 안 해요)
+    """
+    return app_commands.choices(가이드=_GUIDE_CHOICES)(func) if _GUIDE_CHOICES else func
 
 
 class MariSetting(commands.Cog):
@@ -508,15 +527,12 @@ class MariSetting(commands.Cog):
         유배지="'유배'(현재 역할 전부 뺏고 유배자 역할만 부여, 추방관 전용) 또는 '복귀'(원래 역할 복원, 지옥간수 전용)",
     )
     @app_commands.choices(
-        가이드=[
-            app_commands.Choice(name="가이드1 (입주심사 추가)", value="guide1"),
-            app_commands.Choice(name="가이드2 (여행자/입주심사 제거 + level0/시민권/5세대/noob 추가)", value="guide2")
-        ],
         유배지=[
             app_commands.Choice(name="유배 (현재 역할 전부 저장 후 제거, 유배자 역할만 부여)", value="exile"),
             app_commands.Choice(name="복귀 (저장해둔 원래 역할 복원, 유배자 역할 제거)", value="return"),
         ],
     )
+    @_with_guide_choices
     async def grant_role(
         self, 
         interaction: discord.Interaction, 
@@ -665,53 +681,45 @@ class MariSetting(commands.Cog):
                 failed_actions.append(f"지급 실패: `{역할.name}` ({e})")
 
         # 4. 가이드 프리셋 처리 (정직하게 빼고 넣기)
+        #
+        # 🗑️ [정리] 예전엔 여기가 `if 가이드.value == "guide1": ... elif == "guide2": ...` 로
+        # 나뉘어 있었고, 주고받을 역할 ID가 그 안에 숫자로 박혀 있었어요. 프리셋을 하나 더
+        # 만들려면 거의 같은 코드를 통째로 복사해야 했고, 실제로 제거/추가 처리가 두 벌
+        # 중복돼 있었습니다. 이제 설정에 적힌 프리셋을 그대로 순회해요.
         if 가이드 is not None:
-            if 가이드.value == "guide1":
-                # 가이드1: 입주심사(1147926269837725869) 추가
-                r_id = 1147926269837725869
-                role = interaction.guild.get_role(r_id)
-                if role:
-                    try:
-                        await 멤버.add_roles(role)
-                        success_added.append(f"{role.mention} *(가이드1)*")
-                    except discord.Forbidden:
-                        failed_actions.append("가이드1 적용 실패: `입주심사` (봇 역할 순위 부족)")
-                    except Exception as e:
-                        failed_actions.append(f"가이드1 적용 실패: `입주심사` ({e})")
-                else:
-                    failed_actions.append(f"가이드1 실패: 서버에서 ID `{r_id}`(입주심사) 역할을 찾을 수 없어요.")
-
-            elif 가이드.value == "guide2":
-                # 제거 대상: 여행자(1147902673593581659), 입주심사(1147926269837725869)
-                remove_ids = [1147902673593581659, 1147926269837725869]
-                # 추가 대상: level0(1207153785084846150), 시민권(1063465600220921897), 5세대 에바인(1478698106550882356), noob ticket(1153678716845686786)
-                add_ids = [1207153785084846150, 1063465600220921897, 1478698106550882356, 1153678716845686786]
+            preset = ONBOARDING_PRESETS.get(가이드.value)
+            if preset is None:
+                # 설정에서 프리셋을 지웠는데 디스코드에 옛 선택지가 아직 남아있는 경우예요.
+                # (명령어 동기화가 퍼지는 데 시간이 걸립니다)
+                failed_actions.append(f"`{가이드.name}` 프리셋이 설정에 없어요. 관리자에게 문의해 주세요.")
+            else:
+                label = preset["label"]
 
                 # 4-1. 정직하게 역할 제거 진행
-                for rid in remove_ids:
+                for rid in preset["remove"]:
                     role = interaction.guild.get_role(rid)
                     if role and role in 멤버.roles:
                         try:
                             await 멤버.remove_roles(role)
                             success_removed.append(f"`{role.name}`")
                         except discord.Forbidden:
-                            failed_actions.append(f"가이드2 제거 실패: `{role.name}` (봇 역할 순위 부족)")
+                            failed_actions.append(f"{label} 제거 실패: `{role.name}` (봇 역할 순위 부족)")
                         except Exception as e:
-                            failed_actions.append(f"가이드2 제거 실패: `{role.name}` ({e})")
+                            failed_actions.append(f"{label} 제거 실패: `{role.name}` ({e})")
 
                 # 4-2. 정직하게 역할 추가 진행
-                for rid in add_ids:
+                for rid in preset["add"]:
                     role = interaction.guild.get_role(rid)
-                    if role:
-                        try:
-                            await 멤버.add_roles(role)
-                            success_added.append(f"{role.mention} *(가이드2)*")
-                        except discord.Forbidden:
-                            failed_actions.append(f"가이드2 지급 실패: `{role.name}` (봇 역할 순위 부족)")
-                        except Exception as e:
-                            failed_actions.append(f"가이드2 지급 실패: `{role.name}` ({e})")
-                    else:
-                        failed_actions.append(f"가이드2 지급 실패: 서버에서 ID `{rid}` 역할을 찾을 수 없어요.")
+                    if not role:
+                        failed_actions.append(f"{label} 지급 실패: 서버에서 ID `{rid}` 역할을 찾을 수 없어요.")
+                        continue
+                    try:
+                        await 멤버.add_roles(role)
+                        success_added.append(f"{role.mention} *({label})*")
+                    except discord.Forbidden:
+                        failed_actions.append(f"{label} 지급 실패: `{role.name}` (봇 역할 순위 부족)")
+                    except Exception as e:
+                        failed_actions.append(f"{label} 지급 실패: `{role.name}` ({e})")
 
         # 5. 사용한 사람에게만 보여줄 결과 메시지 조합 (ephemeral=True)
         result_msg = []

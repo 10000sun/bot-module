@@ -10,7 +10,7 @@ from google import genai
 from google.genai import types
 from discord.ext import commands, tasks
 
-from mari_config import CHAT_LOG_FILE, CHAT_MEMORY_FILE, CHAT_STATS_FILE, GEMINI_API_KEY, KST, LIMIT_FILE, MARI_CALL_ROLE_ID, MARI_USER_MEMORY_FILE, get_pacific_date_str
+from mari_config import CHAT_LOG_FILE, CHAT_MEMORY_FILE, CHAT_STATS_FILE, GEMINI_API_KEY, KST, LIMIT_FILE, MARI_CALL_ROLE_ID, MARI_USER_MEMORY_FILE, PERSONA_USER_IDS, get_pacific_date_str
 from mari_alerts import report_loop_error
 from mari_storage import atomic_json_save, safe_json_load
 from mari_state import load_wiki, state
@@ -473,9 +473,15 @@ class MariGPT(commands.Cog):
 
             user_name = message.author.display_name
 
-            PAPA_USER_ID = 348014743706927104
-            MAMA_USER_ID = 486807899272773642
-            DISDAIN_USER_ID = 711903065267240961
+            # 🏷️ [정리] 예전엔 여기 유저 ID 세 개가 그대로 박혀 있었어요. 봇을 다른 서버에
+            # 올리면 그 서버의 아무 상관 없는 사람이 "아빠" 대접을 받거나, 최악의 경우
+            # 일부러 못되게 구는 페르소나(disdain)에 걸리는 구조였습니다.
+            # 이제 guild.json의 personas 항목에서 읽어요. 안 적으면 아무도 특별 취급하지 않아요.
+            persona_key = None
+            for key, user_id in PERSONA_USER_IDS.items():
+                if message.author.id == user_id:
+                    persona_key = key
+                    break
             
             # 🎭 페르소나는 파일 상단 build_persona()에서 조립합니다.
             # 공통 성격·말투는 그쪽 상수 한 군데에만 있어서, 성격을 손보면 네 갈래에 한꺼번에 반영돼요.
@@ -485,17 +491,17 @@ class MariGPT(commands.Cog):
                 "애정을 표현하지만 과하게 들러붙지 않는다. "
             )
 
-            if message.author.id == PAPA_USER_ID:
+            if persona_key == "papa":
                 system_instruction = build_persona(
                     FAMILY_RELATION.format(call="아빠"),
                     address_rule="- “아빠”라는 호칭을 자연스럽게 자주 사용한다. ",
                 )
-            elif message.author.id == MAMA_USER_ID:
+            elif persona_key == "mama":
                 system_instruction = build_persona(
                     FAMILY_RELATION.format(call="엄마"),
                     address_rule="- “엄마”라는 호칭을 자연스럽게 자주 사용한다. ",
                 )
-            elif message.author.id == DISDAIN_USER_ID:
+            elif persona_key == "disdain":
                 # 😾 이 갈래만 일부러 못되게 굴어요. 다만 "말은 밉게 하되 시킨 건 해준다"로
                 # 잡아뒀습니다. 예전엔 아예 안 해주고 쫓아내기만 해서 쓸모가 없었어요.
                 system_instruction = build_persona(
