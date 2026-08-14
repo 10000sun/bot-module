@@ -7,7 +7,7 @@ import time
 import datetime as dt
 from collections import deque
 
-from mari_config import KST, json_data_files
+from mari_config import KST, active_data_files
 
 # 💾 [개선] 원자적(atomic) JSON 저장 유틸리티
 # 기존에는 json.dump()로 파일에 바로 덮어썼는데, 저장 도중 봇이 죽거나
@@ -115,7 +115,14 @@ def safe_json_load(path: str, default):
 def init_json_files():
     # (각 로드 함수들이 이미 .get()/.setdefault()로 빈 {} 구조에도 안전하게 대응하도록
     # 짜여있어서, 파일마다 정확한 기본 구조를 여기 미리 안 적어놔도 문제없어요)
-    for name, file_path in json_data_files().items():
+    #
+    # 🧩 [변경] 예전엔 json_data_files() 전체를 만들었어요. 그래서 주식을 빼고 납품해도
+    # mari_stocks.json이 생기고, 매일 백업에 실리고, 데이터 점검 목록에도 올랐습니다.
+    # 이제 이번 배포에 담긴 모듈이 쓰는 파일만 만들어요. (modules.py의 data_files)
+    #
+    # ⚠️ 여기만 거릅니다. 백업과 손상 점검은 계속 전체 목록을 봐요 — 둘 다 없는 파일은
+    #    건너뛰므로, 전체를 훑어야 예전 배포에서 넘어온 데이터까지 지킬 수 있습니다.
+    for name, file_path in active_data_files().items():
         if not os.path.exists(file_path):
             if atomic_json_save(file_path, {}, indent=2):
                 print(f"📦 빈 데이터 파일이 자동 생성됐어요: {os.path.basename(file_path)} ({name})")

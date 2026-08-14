@@ -1,5 +1,8 @@
 """경로·비밀값(.env)·시간대·서버 고유 ID(guild.json)·그래프 색상 등 순수 설정값 모음.
-다른 마리 모듈을 일절 import하지 않는 최하위 계층이에요."""
+
+거의 최하위 계층이에요. modules(순수 자료) 하나만 import하고, 다른 마리 모듈은
+일절 부르지 않습니다. modules를 부르는 이유는 "이번 배포에 뭐가 담겼나"를 여기서 한 번
+확정해서 나눠주기 위해서예요. (ENABLED_SPECS / active_data_files 참고)"""
 
 import json
 import os
@@ -7,6 +10,9 @@ import re
 import shutil
 import datetime as dt
 import discord
+
+# modules는 아무것도 import하지 않는 순수 자료 계층이라 여기서 불러도 순환이 생기지 않아요.
+from modules import is_active, owners, resolve_modules
 
 # ========== ⚙️ 기본 설정 ==========
 intents = discord.Intents.default()
@@ -326,6 +332,29 @@ def _load_enabled_modules():
 
 ENABLED_MODULES = _load_enabled_modules()
 
+# 🧩 이번 배포에 실제로 담기는 모듈을 여기서 딱 한 번 확정합니다.
+# (코어 강제 포함과 의존 모듈 끌어오기까지 끝난 결과예요)
+#
+# 예전엔 mari_client가 자기 혼자 resolve_modules()를 불렀어요. 그런데 "지금 뭐가 담겼나"를
+# 알아야 하는 곳이 클라이언트 말고도 여럿(설정 명령·도움말·진단·데이터 파일 생성)이라,
+# 각자 부르면 답이 갈라질 수 있습니다. 한 곳에서 정하고 나눠 씁니다.
+ENABLED_SPECS, MODULE_WARNINGS = resolve_modules(ENABLED_MODULES)
+ENABLED_MODULE_KEYS = frozenset(spec.key for spec in ENABLED_SPECS)
+
+
+def module_active(key: str) -> bool:
+    """그 모듈이 이번 배포에 담겼는지."""
+    return key in ENABLED_MODULE_KEYS
+
+
+def active_keys(kind: str, names) -> list:
+    """`names` 중에서 지금 담긴 모듈이 데려온 것만 순서대로 골라냅니다.
+
+    kind는 "channels" / "roles" / "features" 중 하나예요. 어느 모듈도 소유하지 않은
+    키는 공용으로 보고 그대로 남깁니다. (modules.owners 설명 참고)
+    """
+    return [name for name in names if is_active(kind, name, ENABLED_MODULE_KEYS)]
+
 
 def report_guild_config() -> None:
     """기동 시 설정 상태를 한 번 알려줍니다. (main.py가 아니라 여기서 부르는 이유는
@@ -395,3 +424,26 @@ def json_data_files() -> dict:
         name: value for name, value in globals().items()
         if name.endswith("_FILE") and isinstance(value, str) and value.endswith(".json")
     }
+
+
+def active_data_files() -> dict:
+    """위 목록 중, **이번 배포에 담긴 모듈이 실제로 쓰는** 파일만.
+
+    주식을 안 담고 납품했는데도 `mari_stocks.json`이 만들어지고 매일 백업까지 되던 문제를
+    막습니다. 어느 모듈의 것도 아닌 파일(설정 등)은 공용이라 항상 남아요.
+
+    ⚠️ 백업(cogs/backup.py)과 손상 점검(cogs/diagnostics.py)은 일부러 이걸 쓰지 않고
+       json_data_files() 전체를 봅니다. 둘 다 **없는 파일은 알아서 건너뛰기** 때문에,
+       전체를 훑어야 예전 배포에서 넘어온 파일까지 빠짐없이 지킬 수 있어요.
+       여기서 거르면 기능을 뺀 순간 그 데이터가 백업 대상에서 조용히 빠집니다.
+    """
+    owner = module_owner_of_data_files()
+    return {
+        name: path for name, path in json_data_files().items()
+        if owner.get(name) is None or owner[name] in ENABLED_MODULE_KEYS
+    }
+
+
+def module_owner_of_data_files() -> dict:
+    """`{상수 이름: 소유 모듈 키}`. (modules.py의 data_files를 그대로 뒤집은 것)"""
+    return owners("data_files")

@@ -6,7 +6,8 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from mari_config import KST
+from mari_config import ENABLED_MODULE_KEYS, KST
+from modules import is_active
 from mari_utils import MariView
 from mari_settings import FEATURE_KEYS, FEATURE_LIST_TEXT, _get_role_ids, is_super_admin, load_settings, save_settings, send_log_embed, set_all_features_enabled, set_feature_enabled
 from mari_names import (MAX_NAME_LENGTH, NAME_FIELDS, bot_name, currency, event_name,
@@ -132,10 +133,84 @@ class InitialSetupModal(discord.ui.Modal, title="🏷️ 이름 설정"):
         )
 
 
+def _feature_choices(**params):
+    """`@app_commands.choices(...)`인데, 선택지가 비어 있으면 아예 달지 않아요.
+
+    🚨 빈 선택지 목록을 넘기면 디스코드가 명령 등록을 거부하고 **동기화가 통째로 실패**해서
+       봇의 모든 명령어가 사라집니다. 기능을 하나도 안 담은 구성(코어만)에서 실제로 이 상황이
+       나올 수 있어요. 그때는 아래 _prune_module_commands()가 /기능제어 자체를 걷어내지만,
+       데코레이터는 그보다 먼저 import 시점에 실행되므로 여기서 한 번 더 막습니다.
+    """
+    if not any(params.values()):
+        return lambda func: func
+    return app_commands.choices(**params)
+
+
 class MariSetting(commands.Cog):
     """봇의 모든 권한 역할 및 채널을 동적으로 변경하는 마리 설정 시스템"""
     def __init__(self, bot):
         self.bot = bot
+        # ⏱️ 코그가 트리에 등록되기 **전에** 걷어내야 해요. cog_load는 등록보다 나중에
+        #    불려서, 최상위 그룹(/기능제어)을 빼려 해도 이미 등록된 뒤라 놓칩니다.
+        self._prune_module_commands()
+
+    # 🧩 이 설정 명령이 어느 설정 키를 손보는지. 담기지 않은 모듈의 명령을 걷어내는 데 씁니다.
+    # (어느 모듈이 어떤 키를 데려오는지는 modules.py에 적혀 있어요)
+    _CHANNEL_COMMANDS = {
+        "출석": "attendance", "경제로그": "economy_log", "상점로그": "shop_log",
+        "주식전광판": "stock_board", "주식로그": "stock_log", "종가게시판": "closing_log",
+        "이벤트": "evashi_announce", "아이디로그": "id_log", "아이디목록": "level_roster",
+        "아이디등록": "id_submit", "역할로그": "role_log",
+        "생일알림": "birthday_announce", "생일로그": "birthday_log",
+    }
+    _ROLE_COMMANDS = {
+        "아이디": "ids_admin", "상점": "shop_admin", "주식": "stock_admin",
+        "이벤트": "evashi_admin", "연대기": "chronicle_admin", "테스트": "test_admin",
+    }
+
+    def _prune_module_commands(self):
+        """이번 배포에 담기지 않은 기능의 설정 명령을 트리에서 걷어냅니다.
+
+        예전엔 주식을 빼고 납품해도 `/설정 채널 주식로그`·`/설정 관리자 상점`이 그대로
+        남아서, 클라이언트가 있지도 않은 기능의 채널을 지정하고 있었어요.
+
+        ⚠️ 하위 명령이 0개인 그룹은 디스코드가 등록을 거부합니다. 비게 된 그룹은 통째로
+           빼야 해요. (역할로그·테스트 관리자가 코어 소유라 실제로 비는 일은 없지만,
+           나중에 소유 관계가 바뀌었을 때 조용히 동기화가 깨지는 걸 막는 방어선입니다)
+        """
+        removed = []
+
+        # ⚠️ discord.py의 remove_command()는 지운 명령을 돌려주지 **않아요**(항상 None).
+        #    반환값으로 "지웠는지"를 판단하면 아무것도 기록되지 않습니다. 있는지 먼저 보고 지웁니다.
+        def drop(container, name, label):
+            if container.get_command(name) is None:
+                return
+            container.remove_command(name)
+            removed.append(label)
+
+        for name, key in self._CHANNEL_COMMANDS.items():
+            if not is_active("channels", key, ENABLED_MODULE_KEYS):
+                drop(self.채널, name, f"/설정 채널 {name}")
+
+        for name, key in self._ROLE_COMMANDS.items():
+            if not is_active("roles", key, ENABLED_MODULE_KEYS):
+                drop(self.관리자, name, f"/설정 관리자 {name}")
+
+        # 📋 '명단'은 아이디 등록부가 있어야 의미가 있는 설정이에요.
+        # (chief_role 자체는 /기능제어 권한이기도 해서 설정 모듈 소유로 남겨뒀습니다)
+        if "id" not in ENABLED_MODULE_KEYS:
+            drop(self.설정, "명단", "/설정 명단")
+
+        for group in (self.관리자, self.채널):
+            if not group.commands:
+                drop(self.설정, group.name, f"/설정 {group.name} (하위 명령이 없어서)")
+
+        # 🚧 정지·재개할 기능이 하나도 없으면 /기능제어는 빈 껍데기예요.
+        if not FEATURE_KEYS:
+            drop(self.bot.tree, "기능제어", "/기능제어")
+
+        if removed:
+            print(f"🧩 담지 않은 기능의 설정 명령 {len(removed)}개를 뺐어요: {', '.join(removed)}")
 
     설정 = app_commands.Group(name="설정", description=f"{bot_name()}봇의 채널 및 관리자 역할을 동적 관리합니다.")
     관리자 = app_commands.Group(parent=설정, name="관리자", description="기능별 전용 관리자 역할을 설정합니다.")
@@ -152,7 +227,7 @@ class MariSetting(commands.Cog):
 
     @기능제어.command(name="정지", description="[관리자] 특정 기능을 일시 정지합니다. (서버 관리자 또는 대장 전용)")
     @app_commands.describe(기능="정지할 기능")
-    @app_commands.choices(기능=FEATURE_CHOICES)
+    @_feature_choices(기능=FEATURE_CHOICES)
     async def stop_feature(self, interaction: discord.Interaction, 기능: app_commands.Choice[str]):
         if not is_super_admin(interaction):
             return await interaction.response.send_message("⛔ 서버 관리자 또는 대장 역할만 사용할 수 있어요.", ephemeral=True)
@@ -161,7 +236,7 @@ class MariSetting(commands.Cog):
 
     @기능제어.command(name="재개", description="[관리자] 정지된 특정 기능을 다시 켭니다. (서버 관리자 또는 대장 전용)")
     @app_commands.describe(기능="재개할 기능")
-    @app_commands.choices(기능=FEATURE_CHOICES)
+    @_feature_choices(기능=FEATURE_CHOICES)
     async def resume_feature(self, interaction: discord.Interaction, 기능: app_commands.Choice[str]):
         if not is_super_admin(interaction):
             return await interaction.response.send_message("⛔ 서버 관리자 또는 대장 역할만 사용할 수 있어요.", ephemeral=True)

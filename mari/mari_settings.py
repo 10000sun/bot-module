@@ -6,7 +6,7 @@ import datetime as dt
 import discord
 from discord.ext import commands
 
-from mari_config import KST, SETTINGS_FILE
+from mari_config import KST, SETTINGS_FILE, active_keys
 from mari_storage import DataSaveError, atomic_json_save, safe_json_load
 
 # ========== 🔐 권한 체크 공용 유틸리티 ==========
@@ -46,13 +46,21 @@ def has_admin_or_role(interaction: discord.Interaction, role_key: str = None) ->
 # 아래 FEATURE_KEYS에 있는 기능들을 개별적으로, 또는 한 번에 전부 정지·재개할 수 있어요.
 # 이 시스템을 다루는 권한은 일부러 다른 관리자 설정(채널관리자 등)보다 훨씬 엄격하게,
 # "진짜 서버 관리자" 또는 "대장 역할" 보유자로만 제한했어요.
-FEATURE_KEYS = {
+_ALL_FEATURE_KEYS = {
     "주식": "stock", "상점": "shop", "송금": "transfer",
     "출석": "attendance", "생일": "birthday", "아이디": "id", "위키": "wiki",
     # ⏰ 나중에 답장(스누즈)은 돈을 만지지 않지만 **DM을 자동으로 발송**하는 유일한 기능이라,
     # 오작동했을 때 끌 수단이 있어야 해요. 정지하면 새 예약도 막히고 알림 발송도 멈춥니다.
     # (이미 잡혀 있는 예약은 사라지지 않고, 재개하면 밀린 것부터 순서대로 나갑니다)
     "나중에답장": "snooze",
+}
+
+# 🧩 [변경] 이번 배포에 담긴 기능만 남깁니다. 예전엔 위 목록이 그대로 선택지가 돼서,
+# 주식을 빼고 납품한 서버에서도 `/기능제어 정지 주식`이 버젓이 떴어요.
+# 어느 모듈이 어떤 기능 키를 데려오는지는 modules.py의 features에 적혀 있습니다.
+_ACTIVE_FEATURES = set(active_keys("features", _ALL_FEATURE_KEYS.values()))
+FEATURE_KEYS = {
+    label: key for label, key in _ALL_FEATURE_KEYS.items() if key in _ACTIVE_FEATURES
 }
 
 # 📝 명령어 설명과 안내 문구에 들어갈 기능 목록.

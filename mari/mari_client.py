@@ -9,10 +9,10 @@ import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 
-from mari_config import ALERT_DISCONNECT_SECONDS, ENABLED_MODULES, HEARTBEAT_FILE, KST
+from mari_config import (ALERT_DISCONNECT_SECONDS, ENABLED_SPECS, HEARTBEAT_FILE, KST,
+                         MODULE_WARNINGS)
 from mari_alerts import send_alert
 from mari_utils import describe_user_error
-from modules import resolve_modules
 from mari_names import bot_name, is_configured
 
 # 🧩 [변경] 예전엔 여기 `from cogs.X import Y` 17줄이 있었고, setup_hook에는 add_cog 17줄이
@@ -212,8 +212,10 @@ class MariBotClient(commands.Bot):
         ImportError를 내면 봇이 통째로 안 켜졌습니다. 기능을 골라 담는 구조에서는
         "방금 넣은 모듈 하나 때문에 전부 죽는" 게 특히 곤란해요.
         """
-        specs, warnings = resolve_modules(ENABLED_MODULES)
-        for warning in warnings:
+        # 🧩 무엇을 담을지는 mari_config가 기동 시점에 이미 확정해뒀어요.
+        # (여기서 또 계산하면 설정 명령·도움말이 보는 목록과 갈라질 수 있습니다)
+        specs = ENABLED_SPECS
+        for warning in MODULE_WARNINGS:
             print(f"🧩 {warning}")
 
         for spec in specs:
