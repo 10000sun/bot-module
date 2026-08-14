@@ -1,9 +1,15 @@
-"""등급 사다리(guild.json의 `ranks`)가 제대로 읽히고 명단이 나뉘는지 확인합니다.
+"""`guild.json`을 코드가 제대로 읽는지 확인합니다. (디스코드에 연결하지 않아요)
 
-디스코드에 연결하지 않아요. 가짜 멤버를 만들어 칸 나누기만 검사합니다.
+보는 것 —
+  · 등급 사다리(`ranks`) 파싱과 아이디 명단 칸 나누기 (가짜 멤버로)
+  · 예전 키 이름을 그대로 둔 설정 파일도 동작하는지
+
+두 번째가 특히 중요해요. `guild.json`은 `.gitignore` 대상이라 **깃이 안 건드립니다.**
+실제로 봇이 돌고 있는 PC에서 `git pull`만 하면 코드는 새것, 설정은 옛것이 돼요.
+그때 조용히 기능이 빠지면(예: 생일 알림 멘션) 한참 뒤에나 알아차립니다.
 
 사용:
-    .venv\\Scripts\\python tools/check_ranks.py
+    .venv\\Scripts\\python tools/check_guild.py
 
 🚨 여기서 제일 중요한 건 **아무도 명단에서 사라지지 않는다**는 검사예요.
    예전에 레벨 역할표를 걷어낸 뒤 아무 칸에도 안 걸린 사람이 명단에서 통째로 빠진
@@ -185,13 +191,46 @@ def test_legacy_parser():
           ["박영희"])
 
 
+def test_legacy_keys():
+    """예전 이름을 그대로 둔 guild.json도 동작해야 합니다.
+
+    🚨 여기가 깨지면, 회사 PC에서 `git pull`만 한 순간 생일 알림 멘션이 조용히
+       사라집니다. 봇은 안 죽고 기동 로그에도 티가 잘 안 나요.
+    """
+    print("\n[7] 예전 키 이름 (pull만 하고 설정은 안 고친 서버)")
+    cfg = load_config({
+        "roles": {"broadcast_mention": 111222333, "bot_mention": 444555666,
+                  "town_guide": 777888999},
+        "onboarding": {"guide1": {"add": [1]}},
+        "personas": {"papa": 12345},
+    })
+    check("🚨 옛 이름으로도 생일 멘션 역할을 읽음", cfg.BIRTHDAY_MENTION_ROLE_ID, 111222333)
+    check("나머지 역할은 그대로", cfg.MARI_CALL_ROLE_ID, 444555666)
+    warns = " | ".join(cfg.GUILD_CONFIG_WARNINGS)
+    check("이름을 바꾸라고 안내", "예전 이름이에요" in warns, True)
+    check("창고로 간 설정도 알려줌 (최상위)", "onboarding" in warns and "personas" in warns, True)
+    check("창고로 간 설정도 알려줌 (roles)", "town_guide" in warns, True)
+
+    print("\n[8] 이름을 고친 뒤 — 잔소리가 없어야 해요")
+    cfg = load_config({"roles": {"birthday_mention": 111222333, "bot_mention": 444555666}})
+    check("새 이름으로 읽음", cfg.BIRTHDAY_MENTION_ROLE_ID, 111222333)
+    check("경고 없음", cfg.GUILD_CONFIG_WARNINGS, [])
+
+    print("\n[9] 오타는 조용히 넘어가면 안 됩니다")
+    cfg = load_config({"roles": {"birthday_mention": 111, "brithday_mention": 999}})
+    check("오타 키를 짚어줌",
+          any("brithday_mention" in w and "오타" in w for w in cfg.GUILD_CONFIG_WARNINGS), True)
+    check("옛 이름과 헷갈리지 않음", cfg.BIRTHDAY_MENTION_ROLE_ID, 111)
+
+
 if __name__ == "__main__":
     test_parsing()
     test_sections()
     test_legacy_parser()
+    test_legacy_keys()
     print()
     if _fails:
         print(f"🚨 {len(_fails)}건 실패: {', '.join(_fails)}")
         sys.exit(1)
-    print("✅ 등급 사다리 검사 전부 통과")
+    print("✅ guild.json 검사 전부 통과")
     sys.exit(0)

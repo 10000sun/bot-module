@@ -292,9 +292,30 @@ def _as_id(value, where: str) -> int:
 
 _ROLES = _section("roles")
 
+# 🔄 예전 키 이름 → 지금 이름. 이미 돌고 있는 서버의 guild.json은 깃이 안 건드리므로
+# (`.gitignore` 대상이에요) 코드를 업데이트해도 설정 파일은 옛날 그대로입니다.
+# 새 이름이 없으면 옛 이름을 대신 읽어서, **업데이트만 하고 아무것도 안 고쳐도**
+# 지금까지처럼 동작하게 해요. 대신 기동 로그로 이름을 바꾸라고 알려줍니다.
+_ROLE_ALIASES = {
+    # /고확을 창고로 보내면서 이 역할의 남은 쓰임이 생일 알림뿐이라 이름을 바꿨어요.
+    # (원본 서버에선 고확 멘션과 생일 멘션이 같은 '시민권' 역할이라 상수를 공유했습니다)
+    "birthday_mention": "broadcast_mention",
+}
+
 
 def _role(key: str) -> int:
-    return _as_id(_ROLES.get(key), f"roles.{key}")
+    if key in _ROLES:
+        return _as_id(_ROLES[key], f"roles.{key}")
+
+    old = _ROLE_ALIASES.get(key)
+    if old and old in _ROLES:
+        GUILD_CONFIG_WARNINGS.append(
+            f"'roles.{old}'는 예전 이름이에요. 지금은 'roles.{key}'입니다. "
+            f"일단 옛 이름 값을 그대로 쓰지만, guild.json에서 이름을 바꿔주세요."
+        )
+        return _as_id(_ROLES[old], f"roles.{old}")
+
+    return 0
 
 
 # 📢 서버마다 다른 단일 역할들.
@@ -377,6 +398,41 @@ def _load_ranks() -> list:
 
 
 RANKS = _load_ranks()
+
+
+# 🧹 코드가 읽지 않는 항목 알려주기.
+#
+# guild.json은 깃이 안 건드리는 파일이라(`.gitignore`), 창고로 보낸 기능의 설정이
+# 그대로 남아 있기 쉬워요. 지금은 그냥 조용히 무시되는데, 그러면 오타로 적은 키도
+# 똑같이 조용히 무시됩니다. 역할 ID를 정성껏 채워 넣고 "왜 안 되지?" 하는 상황이
+# 제일 나빠서, 무엇을 안 읽고 있는지 기동 때 알려줍니다.
+_READ_TOP_LEVEL = {"modules", "roles", "ranks"}
+_READ_ROLES = {"birthday_mention", "bot_mention"}
+
+# 📦 창고(parked/)로 간 기능이 쓰던 것들. 지워도 되는 잔재라고 알려줄 수 있어요.
+_PARKED_TOP_LEVEL = {"camps", "levels", "affiliations", "onboarding", "personas"}
+_PARKED_ROLES = {"camp_leader", "camp_overseer", "town_guide"}
+
+
+def _warn_unused_guild_keys() -> None:
+    def look(actual, read, parked, where):
+        # "_"로 시작하는 건 사람이 읽는 주석이라 건너뜁니다.
+        leftover = sorted(k for k in actual if not k.startswith("_") and k not in read)
+        gone = [k for k in leftover if k in parked]
+        unknown = [k for k in leftover if k not in parked]
+        if gone:
+            GUILD_CONFIG_WARNINGS.append(
+                f"{where}의 {gone}는 창고(parked/)로 간 기능이 쓰던 설정이에요. 지워도 됩니다.")
+        if unknown:
+            GUILD_CONFIG_WARNINGS.append(
+                f"{where}의 {unknown}는 코드가 읽지 않아요. 오타가 아닌지 확인해주세요.")
+
+    look(_GUILD, _READ_TOP_LEVEL, _PARKED_TOP_LEVEL, "설정 최상위")
+    # 옛 이름은 위 _role()이 "이름을 바꾸세요"라고 이미 안내했으니 여기선 또 말하지 않아요.
+    look(_ROLES, _READ_ROLES | set(_ROLE_ALIASES.values()), _PARKED_ROLES, "roles")
+
+
+_warn_unused_guild_keys()
 
 
 # 🧩 [신규] 이 배포에 담을 기능 목록. 실제 정의는 modules.py에 있어요.
