@@ -7,15 +7,18 @@
 사람이 눈으로 대조할 일이 아니라서 여기 자동화해뒀어요.
 
 사용:
-    .venv\\Scripts\\python tools/check_help.py
+    .venv\\Scripts\\python tools/check_help.py                # 아래 조합 전부
+    .venv\\Scripts\\python tools/check_help.py shop birthday  # 이 조합만
 
 없는 명령을 안내하고 있으면 종료 코드 1로 끝납니다.
 
-**모듈을 전부 켠 상태로만 검사합니다.** 조합을 골라서 검사하지 않는 이유가 있어요:
-`cogs/help.py`의 안내문은 지금 **어떤 모듈이 올라왔는지 보지 않는 고정 문자열**이라,
-일부만 담아 납품하면 안 담은 기능의 명령까지 그대로 안내합니다. 그래서 조합별로
-돌리면 "이 조합엔 없는 명령"이 잔뜩 나오는데, 그건 help.py를 고쳐야 사라지는
-**별개의 문제**예요. 여기서 섞어 보고하면 진짜 오타를 못 찾습니다.
+**여러 모듈 조합으로 검사합니다.** 예전엔 전부 켠 상태로만 봤어요. `cogs/help.py`의
+안내문이 어떤 모듈이 올라왔는지 보지 않는 고정 문자열이라, 조합별로 돌리면 "이 조합엔
+없는 명령"이 잔뜩 나와서 진짜 오타가 묻혔거든요. 지금은 도움말이 모듈 구성을 보고
+스스로 걸러내므로(`MariHelp._visible`) **어느 조합에서든 0개가 정상**입니다.
+
+조합을 섞어 보는 게 중요해요. 전부 켠 상태만 보면 "안 담긴 기능의 명령을 안내한다"는,
+납품할 때마다 실제로 터지던 문제를 영영 못 잡습니다.
 
 ⚠️ 반대 방향(실제로 있는데 도움말에 없는 명령)도 검사하지 않아요. 연대기처럼 **일부러**
    안 싣는 명령이 있어서, 그건 사람이 판단할 일입니다.
@@ -26,6 +29,7 @@
 """
 
 import asyncio
+import json
 import os
 import re
 import sys
@@ -35,9 +39,37 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 MARI = os.path.join(os.path.dirname(HERE), "mari")
 sys.path.insert(0, MARI)
 
-# 설정 파일이 없는 것처럼 띄웁니다. modules 항목이 비면 전부 켜지므로(resolve_modules 참고)
-# 로컬 guild.json이 어떻게 돼 있든 항상 "모듈 전부" 기준으로 검사해요.
-os.environ["MARI_GUILD_CONFIG"] = os.path.join(tempfile.gettempdir(), "no-such-guild.json")
+# 🧩 검사할 조합들. 납품에서 실제로 나올 법한 모양으로 골랐어요.
+# (None은 "설정 파일 없음" = 전부 켜짐. 코어만 담은 구성은 유저용 카테고리가 통째로
+#  비는 유일한 경우라 꼭 넣어야 합니다 — 예전에 여기서 /도움말이 터질 뻔했어요)
+COMBOS = [
+    (None, "전부 (설정 없음)"),
+    (["shop", "birthday"], "shop + birthday"),
+    (["id"], "id 만"),
+    (["stock"], "stock 만 (economy 자동 포함)"),
+    (["gpt"], "gpt 만"),
+    (["wiki", "snooze"], "wiki + snooze"),
+    (["diagnostics"], "코어 모듈만"),
+]
+
+
+def _use_config(mods):
+    """이 조합으로 guild.json을 임시로 만들고 경로를 환경변수에 꽂습니다.
+
+    ⚠️ 진짜 guild.json / data 폴더는 안 건드려요. 실제 설정이 날아가면 안 되니까요.
+    """
+    if mods is None:
+        # 없는 경로를 가리키면 "설정 파일 없음"이 되고, 그때는 전부 켜집니다.
+        path = os.path.join(tempfile.gettempdir(), "no-such-guild.json")
+    else:
+        path = os.path.join(tempfile.mkdtemp(), "guild.json")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump({"modules": mods}, f)
+    os.environ["MARI_GUILD_CONFIG"] = path
+    os.environ["MARI_DATA_DIR"] = tempfile.mkdtemp()
+    # 설정은 import 시점에 한 번 읽고 굳어요. 조합마다 모듈을 다시 들여야 합니다.
+    for name in [m for m in sys.modules if m.startswith(("mari", "cogs")) or m == "modules"]:
+        del sys.modules[name]
 
 
 def _registered_command_paths(bot) -> set:
@@ -82,7 +114,10 @@ def _mentioned_command_paths(help_cog) -> set:
     return mentioned
 
 
-async def main():
+async def check_one(mods, label) -> int:
+    """조합 하나를 검사하고 없는 명령 개수를 돌려줍니다."""
+    _use_config(mods)
+
     import mari_config as cfg
     from mari_client import MariBotClient
 
@@ -107,21 +142,40 @@ async def main():
             continue
         missing.append(name)
 
-    print(f"\n{'=' * 60}\n도움말 ↔ 실제 명령 대조 (모듈 전부 켠 상태)\n{'=' * 60}")
+    admin = help_cog._admin_categories()
+    user = help_cog._user_categories()
+
+    print(f"\n{'=' * 60}\n{label}\n{'=' * 60}")
     print(f"  올라간 모듈      : {len(bot.loaded_modules)}개")
     print(f"  등록된 명령 경로 : {len(real)}개")
     print(f"  도움말이 언급    : {len(mentioned)}개")
+    print(f"  카테고리         : 관리자 {len(admin)}개 / 유저 {len(user)}개")
     if missing:
         print(f"\n  🚨 도움말에만 있고 실제로는 없는 명령 {len(missing)}개:")
         for name in missing:
             print(f"     /{name}")
-        print("\n  cogs/help.py의 안내문을 고쳐주세요.")
+        print("\n  cogs/help.py에서 그 줄의 모듈 태그를 확인해주세요. (_visible 설명 참고)")
     else:
-        print("\n  ✅ 도움말의 모든 명령이 실제로 등록됩니다.")
+        print("  ✅ 도움말의 모든 명령이 실제로 등록됩니다.")
 
     await bot.close()
-    return 1 if missing else 0
+    return len(missing)
+
+
+async def main(argv):
+    combos = COMBOS if not argv else [(list(argv), f"주문 모듈: {', '.join(argv)}")]
+    total = 0
+    for mods, label in combos:
+        total += await check_one(mods, label)
+
+    print(f"\n{'=' * 60}")
+    if total:
+        print(f"🚨 조합 {len(combos)}개 중 없는 명령 안내 총 {total}건")
+    else:
+        print(f"✅ 조합 {len(combos)}개 전부 통과 — 어느 구성에서도 유령 명령 없음")
+    print("=" * 60)
+    return 1 if total else 0
 
 
 if __name__ == "__main__":
-    sys.exit(asyncio.run(main()))
+    sys.exit(asyncio.run(main(sys.argv[1:])))
