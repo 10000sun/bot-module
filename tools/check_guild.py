@@ -223,11 +223,74 @@ def test_legacy_keys():
     check("옛 이름과 헷갈리지 않음", cfg.BIRTHDAY_MENTION_ROLE_ID, 111)
 
 
+def test_fatal():
+    """설정이 **있는데 못 읽을 때**는 기동을 막아야 합니다.
+
+    🚨 그대로 켜면 modules를 못 읽어서 주문하지 않은 기능까지 전부 켜진 채로
+       납품돼요. 클라이언트가 그걸 쓰기 시작한 뒤 설정을 고치면 그 데이터가
+       통째로 빠집니다. (2026-08-15 결정)
+    """
+    print("\n[10] 설정 파일이 없을 때 — 막으면 안 됨")
+    cfg = load_config(None)          # 파일 자체를 안 만듦
+    check("새 서버는 그냥 뜸", cfg.GUILD_CONFIG_FATAL, None)
+    check("전부 켜기가 기본", cfg.ENABLED_MODULES, None)
+
+    print("\n[11] 🚨 JSON 문법이 깨졌을 때 — 막아야 함")
+    d = tempfile.mkdtemp()
+    path = os.path.join(d, "guild.json")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write('{"modules": ["shop"] "roles": {}}')     # 쉼표 빠짐
+    os.environ["MARI_GUILD_CONFIG"] = path
+    os.environ["MARI_DATA_DIR"] = tempfile.mkdtemp()
+    for name in [m for m in sys.modules if m.startswith(("mari", "cogs")) or m == "modules"]:
+        del sys.modules[name]
+    import mari_config as broken
+    check("기동을 막는 표시가 켜짐", bool(broken.GUILD_CONFIG_FATAL), True)
+    check("이유에 원인이 담김", "JSONDecodeError" in broken.GUILD_CONFIG_FATAL, True)
+    check("고치는 법도 안내", "jsonlint" in broken.GUILD_CONFIG_FATAL, True)
+    # ⚠️ import 도중에 터지면 안 돼요. 여기까지 왔다는 게 그 증거입니다.
+    check("🚨 import는 예외 없이 끝남 (알림 웹훅에 닿아야 하니까)", True, True)
+
+    print("\n[12] 🚨 최상위가 객체가 아닐 때 — 막아야 함")
+    path = os.path.join(tempfile.mkdtemp(), "guild.json")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write('["shop", "birthday"]')
+    os.environ["MARI_GUILD_CONFIG"] = path
+    os.environ["MARI_DATA_DIR"] = tempfile.mkdtemp()
+    for name in [m for m in sys.modules if m.startswith(("mari", "cogs")) or m == "modules"]:
+        del sys.modules[name]
+    import mari_config as arr
+    check("기동을 막는 표시가 켜짐", bool(arr.GUILD_CONFIG_FATAL), True)
+
+    print("\n[13] 🚨 못 읽었으면 데이터 파일도 만들면 안 됨")
+    # 설정을 못 읽으면 "담긴 모듈"이 전부로 잡혀요. 그대로 두면 주문하지 않은 기능의
+    # 빈 JSON이 몽땅 생기고, 나중에 설정을 고쳐도 그 파일들이 그대로 남습니다.
+    data_dir = tempfile.mkdtemp()
+    path = os.path.join(tempfile.mkdtemp(), "guild.json")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("{이건 JSON이 아님")
+    os.environ["MARI_GUILD_CONFIG"] = path
+    os.environ["MARI_DATA_DIR"] = data_dir
+    for name in [m for m in sys.modules if m.startswith(("mari", "cogs")) or m == "modules"]:
+        del sys.modules[name]
+    import mari_storage  # noqa: F401  (import하는 순간 init_json_files가 돕니다)
+    made = sorted(os.listdir(data_dir))
+    check("주문 안 한 기능의 빈 JSON이 안 생김", made, [])
+    # (실제 기동에서는 mari_settings.json 하나가 생겨요. 기동 중단 메세지에 봇 이름을
+    #  쓰느라 설정을 읽기 때문인데, 모든 배포가 갖는 공용 파일이라 괜찮습니다)
+
+    print("\n[14] 정상 설정은 당연히 안 막힘")
+    ok = load_config({"modules": ["shop"], "roles": {}})
+    check("표시 없음", ok.GUILD_CONFIG_FATAL, None)
+    check("주문한 모듈만", ok.ENABLED_MODULES, ["shop"])
+
+
 if __name__ == "__main__":
     test_parsing()
     test_sections()
     test_legacy_parser()
     test_legacy_keys()
+    test_fatal()
     print()
     if _fails:
         print(f"🚨 {len(_fails)}건 실패: {', '.join(_fails)}")

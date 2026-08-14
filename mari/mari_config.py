@@ -234,13 +234,29 @@ migrate_legacy_data_files()
 GUILD_CONFIG_WARNINGS = []
 
 
-def load_guild_config(path: str = GUILD_CONFIG_PATH) -> dict:
-    """guild.json을 읽어옵니다. 없거나 깨져 있어도 봇은 뜹니다(해당 기능만 조용히 비어요).
+# 🚨 설정 파일이 **있는데 못 읽었을 때** 여기에 이유가 담깁니다. (없으면 None)
+# main.py가 이걸 보고 봇을 시작하지 않아요.
+#
+# ⚠️ 여기서 예외를 던지면 안 됩니다. mari_config는 main.py가 제일 먼저 import하는
+#    모듈이라, import 도중에 터지면 다운 알림 웹훅에 닿기도 전에 죽어요. systemd로
+#    띄웠다면 아무도 모르는 채 크래시 루프만 돕니다. 그래서 "값으로 알리고 main.py가
+#    판단"하는 방식입니다. (state.load() 실패를 다루는 방식과 같아요)
+GUILD_CONFIG_FATAL = None
 
-    일부러 예외를 던지지 않아요. 이 봇은 기능을 골라 담아 납품하는 구조라, 어떤 서버는
-    캠프도 레벨도 안 쓸 수 있습니다. 설정이 비었다고 기동을 막으면 안 되고, 대신 무엇이
-    비었는지 **시끄럽게** 알려야 해요. (그래서 아래 경고 목록을 기동 시 출력합니다)
+
+def load_guild_config(path: str = GUILD_CONFIG_PATH) -> dict:
+    """guild.json을 읽어옵니다.
+
+    파일이 **없으면** 빈 설정으로 보고 그냥 뜹니다. 새로 납품한 서버가 그렇고,
+    그때는 전부 켜진 상태가 맞아요.
+
+    파일이 **있는데 못 읽으면** 기동을 막습니다(GUILD_CONFIG_FATAL). 누군가 고치다
+    실수한 상황인데, 그대로 켜면 `modules`를 못 읽어 **주문하지 않은 기능까지 전부
+    켜진 채로** 납품돼요. 클라이언트가 그걸 한 달 쓰다가 쉼표를 고치는 순간 그
+    데이터가 통째로 빠집니다. 조용히 잘못 켜지는 것보다 시끄럽게 안 켜지는 게 나아요.
     """
+    global GUILD_CONFIG_FATAL
+
     if not os.path.exists(path):
         GUILD_CONFIG_WARNINGS.append(
             f"설정 파일이 없어요: {path}\n"
@@ -252,13 +268,20 @@ def load_guild_config(path: str = GUILD_CONFIG_PATH) -> dict:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
     except Exception as e:
-        GUILD_CONFIG_WARNINGS.append(
-            f"설정 파일을 읽지 못했어요: {path} ({type(e).__name__}: {e})\n"
-            f"   JSON 문법이 깨졌을 수 있어요. 역할 ID가 필요한 기능은 전부 동작하지 않습니다."
+        GUILD_CONFIG_FATAL = (
+            f"{type(e).__name__}: {e}\n\n"
+            f"   파일은 있는데 읽을 수가 없어요 ({path}).\n"
+            f"   이대로 켜면 modules를 못 읽어서 **주문하지 않은 기능까지 전부**\n"
+            f"   켜진 채로 납품됩니다. guild.json을 고친 뒤 다시 실행해 주세요.\n"
+            f"   (JSON 문법 검사: https://jsonlint.com)"
         )
         return {}
     if not isinstance(data, dict):
-        GUILD_CONFIG_WARNINGS.append(f"설정 파일의 최상위가 객체({{...}})가 아니에요: {path}")
+        GUILD_CONFIG_FATAL = (
+            f"설정 파일의 최상위가 객체({{...}})가 아니에요.\n\n"
+            f"   파일: {path}\n"
+            f"   맨 바깥이 {{ }} 로 감싸져 있어야 해요. guild.example.json을 참고하세요."
+        )
         return {}
     return data
 

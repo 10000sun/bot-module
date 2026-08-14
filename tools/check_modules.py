@@ -66,8 +66,20 @@ def _prepare_config(argv):
         real = os.path.join(MARI, "guild.json")
         data = {}
         if os.path.exists(real):
-            with open(real, "r", encoding="utf-8") as f:
-                data = json.load(f)
+            # 🚨 여기서 그냥 터지면 클라이언트는 raw 트레이스백만 봅니다. 납품 절차에서
+            #    이 도구를 돌리라고 안내하니(README 7번), 이유를 그대로 알려줘야 해요.
+            #    봇도 이 경우 기동을 막습니다. (mari_config.GUILD_CONFIG_FATAL)
+            try:
+                with open(real, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+            except Exception as e:
+                print(f"\n🚨 {real} 을 읽을 수 없어요.\n   {type(e).__name__}: {e}\n")
+                print("   JSON 문법이 깨져 있어요. 고치기 전까지는 봇도 기동하지 않습니다.")
+                print("   (문법 검사: https://jsonlint.com)\n")
+                sys.exit(1)
+            if not isinstance(data, dict):
+                print(f"\n🚨 {real} 의 최상위가 객체({{...}})가 아니에요.\n")
+                sys.exit(1)
         data["modules"] = argv
         path = os.path.join(tempfile.gettempdir(), "check_modules_guild.json")
         with open(path, "w", encoding="utf-8") as f:

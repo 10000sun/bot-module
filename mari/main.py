@@ -35,10 +35,11 @@ def _force_utf8_console() -> None:
 _force_utf8_console()
 
 import asyncio      # noqa: E402  (위 인코딩 설정이 반드시 먼저 실행돼야 해요)
+import os
 import traceback
 import discord
 
-from mari_config import BASE_DIR, DISCORD_TOKEN, intents
+from mari_config import BASE_DIR, DISCORD_TOKEN, GUILD_CONFIG_FATAL, GUILD_CONFIG_PATH, intents
 from mari_alerts import send_alert_sync
 from mari_client import MariBotClient
 from mari_state import state
@@ -48,6 +49,26 @@ bot = MariBotClient(command_prefix="/", intents=intents)
 
 # ========== 🚀 봇 구동부 ==========
 async def main():
+    # 🚨 서버 설정이 있는데 못 읽었으면 아예 시작하지 않아요.
+    #
+    # 그대로 켜면 `modules`를 못 읽어서 **주문하지 않은 기능까지 전부 켜진 채로**
+    # 납품됩니다. 클라이언트가 그 기능을 쓰기 시작한 뒤에 설정을 고치면, 그때
+    # 데이터가 통째로 빠져요. 조용히 잘못 켜지는 것보다 시끄럽게 안 켜지는 게 낫습니다.
+    #
+    # (파일이 아예 **없을** 때는 막지 않아요. 새로 납품한 서버가 그렇고, 그때는
+    #  전부 켜진 상태가 맞습니다. mari_config.load_guild_config 참고)
+    if GUILD_CONFIG_FATAL:
+        print(f"\n🚨 서버 설정({os.path.basename(GUILD_CONFIG_PATH)})을 읽을 수 없어 봇을 시작하지 않았어요.")
+        print(f"   {GUILD_CONFIG_FATAL}\n")
+        send_alert_sync(
+            f"🔴 {bot_name()}봇 기동 중단 — 서버 설정을 읽을 수 없어요",
+            f"`{GUILD_CONFIG_PATH}` 를 읽지 못해 봇을 시작하지 않았습니다.\n"
+            f"그대로 켜면 주문하지 않은 기능까지 전부 켜진 채로 돌아가서, 일부러 막았어요.\n\n"
+            f"```\n{GUILD_CONFIG_FATAL}\n```",
+        )
+        # ⚙️ 0이 아닌 코드로 끝내야 systemd/도커가 "실패"로 인식해요.
+        sys.exit(1)
+
     # 🔐 [변경] 토큰은 더 이상 코드에 없어요. 같은 폴더의 .env 파일에서 읽어옵니다.
     if not DISCORD_TOKEN:
         print("❌ 봇 토큰이 없어요!")

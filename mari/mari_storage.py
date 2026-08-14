@@ -7,7 +7,7 @@ import time
 import datetime as dt
 from collections import deque
 
-from mari_config import KST, active_data_files
+from mari_config import GUILD_CONFIG_FATAL, KST, active_data_files
 
 # 💾 [개선] 원자적(atomic) JSON 저장 유틸리티
 # 기존에는 json.dump()로 파일에 바로 덮어썼는데, 저장 도중 봇이 죽거나
@@ -122,6 +122,15 @@ def init_json_files():
     #
     # ⚠️ 여기만 거릅니다. 백업과 손상 점검은 계속 전체 목록을 봐요 — 둘 다 없는 파일은
     #    건너뛰므로, 전체를 훑어야 예전 배포에서 넘어온 데이터까지 지킬 수 있습니다.
+    #
+    # 🚨 설정을 못 읽었으면 **아무것도 만들지 않습니다.** 그 상태에서는 "담긴 모듈"이
+    #    전부로 잡혀서, 주문하지 않은 기능의 빈 JSON까지 몽땅 생겨요. 어차피 main.py가
+    #    기동을 막을 건데(GUILD_CONFIG_FATAL) 파일만 어질러 놓으면 안 됩니다.
+    #    이건 import 시점에 도는 함수라 main.py의 판단보다 **먼저** 실행돼요.
+    if GUILD_CONFIG_FATAL:
+        print("🚨 서버 설정을 읽지 못해 데이터 파일을 만들지 않았어요. (guild.json을 고쳐주세요)")
+        return
+
     for name, file_path in active_data_files().items():
         if not os.path.exists(file_path):
             if atomic_json_save(file_path, {}, indent=2):
