@@ -1,4 +1,4 @@
-"""MariGPT — Gemini 기반 마리 캐릭터 대화, 장기 기억, 채팅 로그/통계."""
+"""MariGPT — Gemini 기반 봇 캐릭터 대화, 장기 기억, 채팅 로그/통계."""
 
 import asyncio
 import datetime as dt
@@ -17,14 +17,14 @@ from mari_state import load_wiki, state
 from mari_utils import find_guild_member_by_name, holding_avg_price, holding_shares
 from mari_names import bot_name, currency, josa
 
-# ========== 🎭 마리 페르소나 프롬프트 ==========
+# ========== 🎭 봇 페르소나 프롬프트 ==========
 # 예전엔 아빠 / 엄마 / 경멸 / 일반 네 갈래가 거의 똑같은 문장을 통째로 복사해서 갖고
 # 있었어요. 그래서 성격을 손볼 때 한 갈래만 고치면 나머지 세 갈래는 옛날 문구로 남아
-# 마리 성격이 사람마다 갈라졌습니다. (실제로 일반 갈래에는 "존재해야 단다" 같은 오타도
+# 봇 성격이 사람마다 갈라졌습니다. (실제로 일반 갈래에는 "존재해야 단다" 같은 오타도
 # 그쪽에만 남아 있었어요) 이제 공통부는 여기 한 군데에만 두고, 갈래별로 다른 부분만
 # 인자로 받습니다. 성격을 바꾸고 싶으면 아래 상수만 고치면 네 갈래에 동시에 반영돼요.
 
-# 🙇 [순종성 조정] 마리가 시키는 걸 바로 하지 않고 자기 의견부터 내세우는 문제가 있어서,
+# 🙇 [순종성 조정] 봇이 시키는 걸 바로 하지 않고 자기 의견부터 내세우는 문제가 있어서,
 # "자기 주관" 계열 문구를 걷어내고 아래 행동 원칙을 최우선으로 올렸습니다.
 # 튕기는 빈도는 확률("10번에 1번")로 적으면 모델이 잘 못 지켜서, 대신 언제 튕기는지
 # 조건을 구체적으로 못 박는 방식으로 적었어요.
@@ -136,11 +136,11 @@ class MariGPT(commands.Cog):
         # (다른 기능에서 실제로 같은 방식으로 터졌던 문제라) 전역 절대경로를 직접 씁니다.
         self.CHAT_MEMORY_FILE = CHAT_MEMORY_FILE
         memory = self._load_chat_memory()
-        self.last_user_message = memory.get("user_to_mari", {})   # 유저가 마리한테 한 마지막 말
-        self.last_mari_message = memory.get("mari_to_user", {})   # 마리가 그 유저한테 한 마지막 말
+        self.last_user_message = memory.get("user_to_mari", {})   # 유저가 봇한테 한 마지막 말
+        self.last_mari_message = memory.get("mari_to_user", {})   # 봇이 그 유저한테 한 마지막 말
         self.LIMIT_FILE = LIMIT_FILE
 
-        # 📜 [신규] 서버별 최근 채팅 로그(최대 50개, 봇 메시지 제외) - 마리 호출 시 대화 맥락 참고용
+        # 📜 [신규] 서버별 최근 채팅 로그(최대 50개, 봇 메시지 제외) - 봇 호출 시 대화 맥락 참고용
         # 💡 [연산량 대책] 메시지가 올 때마다 파일에 바로 쓰면 채팅이 활발한 서버에서는
         # 디스크 I/O가 잦아져 부담이 될 수 있습니다. 그래서 평소엔 메모리 상의 deque에만
         # O(1)로 적재하고, 10초마다 변경된 경우에만 한 번씩 파일로 모아 저장합니다.
@@ -283,7 +283,7 @@ class MariGPT(commands.Cog):
 
     def _build_recent_log_text(self, guild_id: int) -> str:
         """해당 서버의 최근 채팅 로그를 Gemini에 넘길 텍스트 블록으로 만듭니다.
-        누구의 발언인지뿐 아니라, 마리의 응답이면 어떤 종류(명령어/GPT)였는지도 함께 표시합니다."""
+        누구의 발언인지뿐 아니라, 봇의 응답이면 어떤 종류(명령어/GPT)였는지도 함께 표시합니다."""
         dq = self.recent_messages.get(guild_id)
         if not dq:
             return ""
@@ -298,7 +298,7 @@ class MariGPT(commands.Cog):
         return find_guild_member_by_name(guild, name)
 
     # ========== 🧠 [신규] 유저별 장기 기억 ==========
-    # 💰 [비용 관리] 요약해달라고 Gemini를 따로 부르지 않아요. 마리가 평소 대화 중에
+    # 💰 [비용 관리] 요약해달라고 Gemini를 따로 부르지 않아요. 봇이 평소 대화 중에
     # "이건 기억해둘 만하다" 싶으면 remember_fact 도구를 그 자리에서 바로 호출해서 저장해요.
     # 그래서 추가 API 호출이 전혀 없고, 토큰도 짧은 사실 목록만큼만 아주 조금 늘어나요.
     def _load_user_memory(self) -> dict:
@@ -413,7 +413,7 @@ class MariGPT(commands.Cog):
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
         if message.author.bot:
-            # 🏷️ [신규] 마리 본인이 보낸 메시지 중, 디스코드가 "이 메시지는 /명령어 응답이다"라고
+            # 🏷️ [신규] 봇 본인이 보낸 메시지 중, 디스코드가 "이 메시지는 /명령어 응답이다"라고
             # 알려주는 interaction_metadata가 붙어있는 경우에만 "명령어 응답"으로 로그에 남깁니다.
             # (전광판 갱신, 생일 알림, 로그 임베드 등 그 외 자동 발송 메시지는 대화 맥락이 아니라서 제외)
             # GPT 대화 응답은 여기서 잡지 않고, 실제로 답장을 보내는 코드 지점에서 직접 태그해서 기록합니다.
@@ -431,11 +431,11 @@ class MariGPT(commands.Cog):
                     self._record_chat(message, author_label=bot_name(), source=f"명령어 응답 (/{cmd_name})")
             return
 
-        # 🏠 [신규] DM에서는 마리가 대답하지 않아요.
+        # 🏠 [신규] DM에서는 봇이 대답하지 않아요.
         # 슬래시 명령어를 전부 서버 전용으로 막은 것과 같은 정책이고, 여기는 이유가 하나 더 있어요.
         # 대화는 부를 때마다 Gemini API를 호출하고 그만큼 토큰(=비용)과 일일 한도(RPD)를 씁니다.
         # DM은 서버 관리자 눈에 안 띄는 통로라, 누가 계속 말을 걸면 한도가 조용히 새어나가고
-        # 정작 서버에서 마리를 부른 사람들이 "오늘은 지쳤어요" 소리를 듣게 돼요.
+        # 정작 서버에서 봇을 부른 사람들이 "오늘은 지쳤어요" 소리를 듣게 돼요.
         # 🔒 어떤 검사보다도 먼저 돌려보냅니다. (채팅 로그·통계도 서버 것만 쌓아야 하니까요)
         if message.guild is None:
             return
@@ -446,12 +446,12 @@ class MariGPT(commands.Cog):
         # (_record_chat은 내용이 빈 메시지를 건너뛰는데, 사진만 올린 것도 채팅 1개니까요)
         self._bump_chat_count()
 
-        # 🐛 [버그 수정] 디스코드에서 마리 메세지에 **답장(reply)** 하면, 본문에 @마리를 쓰지
-        # 않았어도 message.mentions 안에 마리가 자동으로 들어가요. 그래서 아이디 자동등록 확인처럼
-        # "답장으로 알려주세요" 방식으로 진행하는 기능을 쓸 때마다, 마리가 그걸 자기를 부른 걸로
+        # 🐛 [버그 수정] 디스코드에서 봇 메세지에 **답장(reply)** 하면, 본문에 @봇을 쓰지
+        # 않았어도 message.mentions 안에 봇이 자동으로 들어가요. 그래서 아이디 자동등록 확인처럼
+        # "답장으로 알려주세요" 방식으로 진행하는 기능을 쓸 때마다, 봇이 그걸 자기를 부른 걸로
         # 착각해서 GPT 답변까지 같이 내보냈어요.
         # raw_mentions는 **본문에 실제로 적힌 멘션**만 뽑아주기 때문에 답장 자동 멘션이 걸러집니다.
-        # (마리를 부르고 싶으면 예전처럼 본문에 @마리를 쓰면 그대로 동작해요)
+        # (봇을 부르고 싶으면 예전처럼 본문에 @봇을 쓰면 그대로 동작해요)
         is_bot_mentioned = self.bot.user.id in message.raw_mentions
         is_role_mentioned = any(role.id == MARI_CALL_ROLE_ID for role in message.role_mentions)
 
@@ -495,7 +495,7 @@ class MariGPT(commands.Cog):
             # 🛠️ 어떤 조회 도구를 쓸 수 있는지 알려줍니다.
             # 🐛 [버그 수정] 예전엔 "lookup_game_id, lookup_wiki 라는 두 개의 도구를 쓸 수 있다"라고만
             # 적혀 있었어요. 그 뒤에 지갑·주식·프로필 도구 세 개를 더 붙였는데 이 안내문은 그대로라,
-            # 마리가 "내 도구는 두 개뿐"이라고 믿고 지갑 질문에 도구를 안 부르는 일이 있었습니다.
+            # 봇이 "내 도구는 두 개뿐"이라고 믿고 지갑 질문에 도구를 안 부르는 일이 있었습니다.
             # (실제로 "지갑 가격은 브랜드에 따라 달라"처럼 현실 지갑 상품으로 알아듣기도 했어요)
             system_instruction += (
                 " 너는 아래 도구들을 쓸 수 있다. "
@@ -588,9 +588,9 @@ class MariGPT(commands.Cog):
                 final_parts.append(image_part)
             conversation.append({"role": "user", "parts": final_parts})
 
-            # 🛠️ [신규] 마리가 위키/아이디 데이터를 직접 찾아볼 수 있는 도구(함수) 정의
+            # 🛠️ [신규] 봇이 위키/아이디 데이터를 직접 찾아볼 수 있는 도구(함수) 정의
             # 구글 genai SDK의 "자동 함수 호출(Automatic Function Calling)" 기능을 써서,
-            # 필요하다고 판단되면 마리가 알아서 이 함수들을 호출하고 결과를 참고해서 답해요.
+            # 필요하다고 판단되면 봇이 알아서 이 함수들을 호출하고 결과를 참고해서 답해요.
             # (함수 안에서 message.guild를 그대로 참조하는 클로저라, 매 메세지마다 새로 만들어요)
             def lookup_game_id(name: str) -> str:
                 """서버 멤버가 등록해둔 게임 아이디(플랫폼별)를 조회합니다.
@@ -685,7 +685,7 @@ class MariGPT(commands.Cog):
                     lines.append(f"{name} {shares}주 (평단 {avg_price:,} → 현재 {current_price:,}, {rate:+.1f}%)")
 
                 # 🐛 [버그 수정] 보유 기록은 있는데 종목이 전부 상장 폐지된 경우 lines가 비어서
-                # "포트폴리오: / 총 평가금액 0 에바" 같은 깨진 문장이 마리한테 넘어갔어요.
+                # "포트폴리오: / 총 평가금액 0 재화" 같은 깨진 문장이 봇한테 넘어갔어요.
                 if not lines:
                     return f"{message.author.display_name}님은 지금 보유 중인 주식이 없어요. (기록에 남은 종목은 모두 상장 폐지됐어요)"
 
@@ -729,7 +729,7 @@ class MariGPT(commands.Cog):
                         # 오류도 아니고 429도 아니고, 응답 형태는 이래요:
                         #   {"content": {"role": "model"}, "finishReason": "STOP"}
                         # 파트가 하나도 없고 출력 토큰도 0인데 정상 종료(STOP)라고 표시돼요.
-                        # 특히 마리가 도구(지갑/주식/프로필 조회)를 부르려는 턴에서 자주 나서,
+                        # 특히 봇이 도구(지갑/주식/프로필 조회)를 부르려는 턴에서 자주 나서,
                         # "내 지갑 얼마야?" 같은 질문이 절반 가까이 먹통이 됐습니다.
                         # 예전엔 이때 바로 "딴생각 하느라 못 들었나 봐요"를 내보내고 return 해버려서
                         # 잠깐 반짝하는 문제인데도 유저 눈엔 지갑 조회가 통째로 고장 난 것처럼 보였어요.
@@ -745,7 +745,7 @@ class MariGPT(commands.Cog):
                             await message.channel.send(f"{message.author.mention} 음.. {bot_name()}{josa(bot_name(), '이가')} 지금 잠깐 딴생각 하느라 못 들었나 봐요. 다시 한번 말해줄래요?")
                             return
 
-                        # 🗣️ 이번 턴(유저 말 + 마리 답)을 한 쌍으로 저장 (파일 영구 저장)
+                        # 🗣️ 이번 턴(유저 말 + 봇 답)을 한 쌍으로 저장 (파일 영구 저장)
                         self.last_user_message[author_key] = user_content
                         self.last_mari_message[author_key] = reply
                         self._save_chat_memory()

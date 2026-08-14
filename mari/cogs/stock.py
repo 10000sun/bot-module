@@ -495,7 +495,7 @@ class MariStock(commands.Cog):
             return
 
         # 🚦 [성능 버그 수정] 예전엔 아래 economy_lock 안에서 곧바로 followup.send와 로그 전송까지
-        # 했어요. economy_lock은 송금·출석·지급·회수·상점구매·에바시·캠프통장까지 전부 통과하는
+        # 했어요. economy_lock은 송금·출석·지급·회수·상점구매·이벤트·캠프통장까지 전부 통과하는
         # 서버 공용 관문이라, 거래 한 건이 디스코드에 메세지를 보내는 동안(수백ms, 레이트리밋에
         # 걸리면 몇 초) 서버의 모든 돈 관련 기능이 줄을 서서 멈췄습니다.
         # 이제 락 안에서는 "읽고·계산하고·저장"까지만 하고, 안내와 로그는 락을 놓은 뒤에 보냅니다.
@@ -706,7 +706,7 @@ class MariStock(commands.Cog):
 
         # 🔓 여기서부터는 락을 놓은 상태예요.
         if broken:
-            # 주식은 이미 빠져나가 원장에 남길 에바 변동이 없어요. 그래서 ledger_delta는 0이고,
+            # 주식은 이미 빠져나가 원장에 남길 재화 변동이 없어요. 그래서 ledger_delta는 0이고,
             # 관리자 알림과 유저 안내만 나갑니다. (복구는 /주식 지급으로)
             return await report_broken_transaction(
                 interaction, action="주식 매도", user_id=broken["user_id"],

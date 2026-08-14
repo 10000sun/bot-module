@@ -145,7 +145,7 @@ class MariTest(commands.Cog):
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    # ---------- 3. 에바시 강제 오픈 ----------
+    # ---------- 3. 이벤트 강제 오픈 ----------
     @test_group.command(name="이벤트", description=f"[관리자] {event_name()} 이벤트 창을 짧게 강제로 열어서 전체 흐름(리액션/마감공지/보상)을 테스트해요.")
     @app_commands.describe(초="테스트용 창 지속시간(초). 기본 15초")
     async def test_evashi(self, interaction: discord.Interaction, 초: int = 15):
@@ -217,7 +217,7 @@ class MariTest(commands.Cog):
         embed.set_footer(text="실제로 등록되지 않아요. 순수 미리보기예요.")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    # ---------- 6. 마리 상태 ----------
+    # ---------- 6. 봇 상태 ----------
     @test_group.command(name="ai상태", description="[관리자] Gemini API 연결과 RPM/RPD 사용량을 확인해요.")
     async def test_mari_status(self, interaction: discord.Interaction):
         if not self._is_server_admin(interaction):

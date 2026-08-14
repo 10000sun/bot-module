@@ -357,7 +357,7 @@ class ShopActionButtons(MariView):
                     new_balance = None
 
         if broken:
-            # 환급이 아예 안 들어갔으니 원장에 남길 에바 변동이 없어요. (복구는 /지급 또는 /상점으로)
+            # 환급이 아예 안 들어갔으니 원장에 남길 재화 변동이 없어요. (복구는 /지급 또는 /상점으로)
             return await report_broken_transaction(
                 interaction, action="상점 되팔기", user_id=user_id,
                 lost=broken["lost"], not_received=broken["not_received"], error=broken["error"],
@@ -381,7 +381,7 @@ class ShopActionButtons(MariView):
 
 # ========== 🎁 [신규] 아이템 선물 시스템 ==========
 # /지갑에 붙는 버튼으로, 상점에서 산 아이템을 다른 사람에게 그대로 넘겨줍니다.
-# (돈을 보내는 /송금과 달리 에바는 전혀 오가지 않고, 인벤토리 숫자만 이동해요)
+# (돈을 보내는 /송금과 달리 재화는 전혀 오가지 않고, 인벤토리 숫자만 이동해요)
 #
 # 🔒 [역할 아이템은 일부러 제외했어요]
 # 역할 아이템은 상태가 두 군데로 나뉘어 있습니다 — 인벤토리 숫자(shop.json)와
@@ -687,7 +687,7 @@ class WalletGiftView(MariView):
 
 
 class MariShop(commands.Cog):
-    """에바스타운 공식 상점 및 인벤토리 시스템"""
+    """서버 공식 상점 및 인벤토리 시스템"""
     
     # 🔑 [이 코그의 데이터 안전 규칙]
     # shop.json 하나에 매대 정보와 **전원의 인벤토리**가 같이 들어 있어요. 그래서
@@ -822,7 +822,7 @@ class MariShop(commands.Cog):
         self._save_economy_file(economy)
 
     def _record_ledger(self, user_id, delta: int, balance_after, kind: str, detail: str = ""):
-        """상점 거래를 에바 원장에 남깁니다. (유저가 /지갑 내역으로 확인할 수 있어요)"""
+        """상점 거래를 재화 원장에 남깁니다. (유저가 /지갑 내역으로 확인할 수 있어요)"""
         record_ledger(user_id, delta, balance_after, kind, detail)
     # ==============================================================================
 
@@ -1083,7 +1083,7 @@ class MariShop(commands.Cog):
         self._save_shop(data)
 
     async def log_gift(self, giver: discord.Member, receiver: discord.Member, result: dict, amount: int):
-        """선물 기록을 상점 로그 채널에 남깁니다. (아이템만 오가므로 에바 원장에는 남기지 않아요)"""
+        """선물 기록을 상점 로그 채널에 남깁니다. (아이템만 오가므로 재화 원장에는 남기지 않아요)"""
         await send_log_embed(
             self.bot, "shop_log", f"{giver.mention}님이 아이템을 선물했어요.",
             fields=[
@@ -1218,7 +1218,7 @@ class MariShop(commands.Cog):
         )
 
     # ========== 💰 [신규] /정산용 거래 내역 기록 ==========
-    # 🧹 파일이 무한정 커지지 않도록 오래된 것부터 잘라냅니다. (에바 원장의 LEDGER_MAX_ENTRIES와 같은 취지)
+    # 🧹 파일이 무한정 커지지 않도록 오래된 것부터 잘라냅니다. (재화 원장의 LEDGER_MAX_ENTRIES와 같은 취지)
     # 이 기록을 읽는 곳은 /상점 정산 하나뿐이고 월 단위로만 보기 때문에, 최근 몇 달치만 있으면 충분해요.
     TRANSACTIONS_MAX_ENTRIES = 5000
 
@@ -1350,7 +1350,7 @@ class MariShop(commands.Cog):
         if not self._is_admin(interaction): return await interaction.response.send_message("⛔ 권한이 없어요.", ephemeral=True)
         # 🚨 [버그 수정] 여기만 가격 검증이 빠져 있었어요. (`/상점 항목설정`은 이미 막고 있었습니다)
         # 가격이 음수면 _do_buy의 잔액 검사(`current_balance < price`)를 무조건 통과하고,
-        # 차감식이 `잔액 - (-1000)`이 되면서 **살 때마다 에바가 늘어납니다.** 할인 의도로 `-`를
+        # 차감식이 `잔액 - (-1000)`이 되면서 **살 때마다 재화가 늘어납니다.** 할인 의도로 `-`를
         # 붙이는 오타 한 번이면 나는 사고라, 등록하는 자리에서 막습니다.
         if 가격 < 0:
             return await interaction.response.send_message(

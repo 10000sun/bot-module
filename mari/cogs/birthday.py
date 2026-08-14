@@ -12,7 +12,7 @@ from mari_settings import feature_gate, is_feature_enabled, load_settings, send_
 from mari_names import bot_name
 
 class MariBirthday(commands.Cog):
-    """마리봇 생일 알림 및 유저 데이터 관리 시스템 (설정 기능 분리 버전)"""
+    """봇 생일 알림 및 유저 데이터 관리 시스템 (설정 기능 분리 버전)"""
     def __init__(self, bot):
         self.bot = bot
         # MariSetting 클래스가 사용하는 동일한 설정 파일 경로
@@ -152,7 +152,7 @@ class MariBirthday(commands.Cog):
     @tasks.loop(time=dt.time(hour=0, minute=0, tzinfo=KST))
     async def check_birthday_loop(self):
         # 💡 [정리] wait_until_ready()는 루프 본문이 아니라 아래 @before_loop로 옮겼어요.
-        # 본문에 두면 회차마다 매번 확인하게 되고, 다른 루프들(출석 초기화·백업·에바시)과
+        # 본문에 두면 회차마다 매번 확인하게 되고, 다른 루프들(출석 초기화·백업·이벤트)과
         # 방식이 달라서 읽는 사람이 헷갈립니다.
         if not is_feature_enabled("birthday"):
             return  # 🚧 생일 기능이 정지된 상태면 자동 축하도 건너뜀

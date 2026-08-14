@@ -254,7 +254,7 @@ class MariIds(commands.Cog):
         return member_has_admin_or_role(member, "ids_admin")
 
     # ========== 🆔 [신규] 아이디 자동등록 시스템 ==========
-    # 지정된 채널에 유저가 "플랫폼 아이디" 형식으로 올리면, 마리가 알아서 아이디 데이터베이스에
+    # 지정된 채널에 유저가 "플랫폼 아이디" 형식으로 올리면, 봇이 알아서 아이디 데이터베이스에
     # 등록하고 원본 메세지는 삭제해요. 플랫폼을 못 알아보겠으면 조용히 넘기지 않고
     # ids_admin 역할을 가진 분들께 "아이디 로그" 채널에서 확인을 받아요.
 
@@ -749,12 +749,12 @@ class MariIds(commands.Cog):
         req["notified_admin_ids"] = [a.id for a in admins]
 
     async def _resolve_id_pending_from_reply(self, message: discord.Message):
-        """ids_admin이 아이디 로그 채널에서 마리의 확인 요청 메세지에 '답장(reply)'하면 처리합니다."""
+        """ids_admin이 아이디 로그 채널에서 봇의 확인 요청 메세지에 '답장(reply)'하면 처리합니다."""
         # 🚨 [심각한 버그 수정] 예전엔 이 채널에서 관리자가 무슨 말을 하든(잡담이라도) 그걸
         # "가장 오래된 대기 요청의 답변"으로 해석해서 아무 사람한테나 등록해버렸어요.
         # 그래서 대기 요청이 쌓여있는 상태에서 관리자가 대화하면, 엉뚱한 사람 아이디가
         # 다른 사람 계정에 줄줄이 등록되는 사고가 났어요.
-        # 이제는 마리가 보낸 확인 요청 메세지에 "답장(reply)"한 경우에만 처리해요.
+        # 이제는 봇이 보낸 확인 요청 메세지에 "답장(reply)"한 경우에만 처리해요.
         if message.reference is None or message.reference.message_id is None:
             return
 
@@ -763,7 +763,7 @@ class MariIds(commands.Cog):
         except Exception:
             return
         if not replied_to.author.bot or replied_to.author.id != self.bot.user.id:
-            return  # 마리가 보낸 메세지에 답장한 게 아니면 무시
+            return  # 봇이 보낸 메세지에 답장한 게 아니면 무시
 
         data = self._load_id_pending()
         requests = data.get("requests", {})

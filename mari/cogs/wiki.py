@@ -26,7 +26,7 @@ def _fit_field(value: str) -> str:
 
 
 class MariWiki(commands.Cog):
-    """에바스타운 위키 시스템"""
+    """서버 위키 시스템"""
 
     wiki_group = app_commands.Group(name="위키", description="멤버 위키(소개/생일/MBTI 등) 관련 명령어 모음")
 

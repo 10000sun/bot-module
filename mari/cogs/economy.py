@@ -1,4 +1,4 @@
-"""MariEconomy — 에바 지갑, 출석, 송금, 지급/회수, 거래내역, 서버 통계."""
+"""MariEconomy — 재화 지갑, 출석, 송금, 지급/회수, 거래내역, 서버 통계."""
 
 import datetime as dt
 from typing import Optional
@@ -171,12 +171,12 @@ class MariEconomy(commands.Cog):
         # 매일 자정 출석 초기화를 위한 백그라운드 태스크 시작
         self.midnight_reset_loop.start()
 
-        # 🖱️ [신규] 멤버 우클릭 → 앱 → 에바 보내기 (받을 사람 고르는 단계가 사라져요)
+        # 🖱️ [신규] 멤버 우클릭 → 앱 → 송금하기 (받을 사람 고르는 단계가 사라져요)
         self.transfer_menu = app_commands.ContextMenu(name="송금하기", callback=self.transfer_menu_callback)
         self.bot.tree.add_command(self.transfer_menu)
 
     def cog_unload(self):
-        # 💡 [정리] 다른 코그(백업·상점·스누즈·에바시)는 전부 내려갈 때 루프를 정리하는데
+        # 💡 [정리] 다른 코그(백업·상점·스누즈·이벤트)는 전부 내려갈 때 루프를 정리하는데
         # 여기만 빠져 있었어요. 코그를 다시 불러올 때 루프가 겹쳐 도는 걸 막아줍니다.
         self.midnight_reset_loop.cancel()
         self.bot.tree.remove_command(self.transfer_menu.name, type=self.transfer_menu.type)
@@ -297,7 +297,7 @@ class MariEconomy(commands.Cog):
         # 그러면 다음 날부터 출석 초기화가 안 됩니다.
         await report_loop_error(self.midnight_reset_loop, "자정 출석 초기화", error)
 
-    # ========== 🧾 [신규] 에바 거래 내역 / 지급 되돌리기 / 서버 통계 ==========
+    # ========== 🧾 [신규] 재화 거래 내역 / 지급 되돌리기 / 서버 통계 ==========
 
     지갑내역 = app_commands.Group(name="지갑내역", description=f"{currency()} 입출금 내역을 확인해요.")
 
@@ -461,7 +461,7 @@ class MariEconomy(commands.Cog):
         humans = [m for m in guild.members if not m.bot]
         human_ids = {str(m.id) for m in humans}
 
-        # 💰 에바 유통량 (서버에 남아있는 멤버 기준)
+        # 💰 재화 유통량 (서버에 남아있는 멤버 기준)
         economy = self._load_raw_economy()
         balances = sorted(
             ((uid, v) for uid, v in economy.items() if uid in human_ids and isinstance(v, int)),
@@ -799,7 +799,7 @@ class MariEconomy(commands.Cog):
         await self.perform_transfer(interaction, member, amount)
 
     async def perform_transfer(self, interaction: discord.Interaction, member: discord.Member, amount: int):
-        """송금 한 건을 처리합니다. `/송금`과 멤버 우클릭 '에바 보내기'가 같이 씁니다.
+        """송금 한 건을 처리합니다. `/송금`과 멤버 우클릭 '송금하기'가 같이 씁니다.
 
         ⚠️ 아직 응답하지 않은 인터랙션을 받아요. (슬래시 호출·모달 제출 둘 다 그 상태예요)
         기능 정지(feature_gate)는 부르는 쪽에서 이미 확인하고 들어옵니다.
@@ -1185,7 +1185,7 @@ class MariEconomy(commands.Cog):
                 # 💾 출석 기록을 **먼저** 저장하고 보상을 나중에 넣습니다. 순서가 반대면
                 # "보상은 들어갔는데 기록이 안 남는" 실패에서 같은 사람이 또 받아갈 수 있어요.
                 # 이 순서라면 최악이어도 "출석은 됐는데 보상이 안 들어간" 상태라, 관리자가
-                # /지급으로 채워주면 되고 에바가 복사되지는 않습니다.
+                # /지급으로 채워주면 되고 재화가 복사되지는 않습니다.
                 self._save_attendance(data)
 
                 economy_data = self._load_raw_economy()

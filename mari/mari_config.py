@@ -1,6 +1,6 @@
 """경로·비밀값(.env)·시간대·서버 고유 ID(guild.json)·그래프 색상 등 순수 설정값 모음.
 
-거의 최하위 계층이에요. modules(순수 자료) 하나만 import하고, 다른 마리 모듈은
+거의 최하위 계층이에요. modules(순수 자료) 하나만 import하고, 다른 봇 모듈은
 일절 부르지 않습니다. modules를 부르는 이유는 "이번 배포에 뭐가 담겼나"를 여기서 한 번
 확정해서 나눠주기 위해서예요. (ENABLED_SPECS / active_data_files 참고)"""
 
@@ -129,7 +129,7 @@ CHAT_LOG_FILE = os.path.join(DATA_DIR, "mari_chat_log.json") # 📜 서버별 �
 MARI_USER_MEMORY_FILE = os.path.join(DATA_DIR, "mari_user_memory.json") # 🧠 [신규] 유저별 장기 기억(사실 목록)
 ID_PENDING_FILE = os.path.join(DATA_DIR, "mari_id_pending.json") # 🆔 [신규] 아이디 자동등록 중 플랫폼이 불명확해 관리자 확인이 필요한 대기열
 PORTFOLIO_HISTORY_FILE = os.path.join(DATA_DIR, "mari_portfolio_history.json") # 📈 [신규] 종가게시 시점 유저별 포트폴리오 총 가치 스냅샷
-LEDGER_FILE = os.path.join(DATA_DIR, "mari_ledger.json") # 🧾 [신규] 에바 입출금 원장 (유저 거래내역 조회 / 지급 되돌리기용)
+LEDGER_FILE = os.path.join(DATA_DIR, "mari_ledger.json") # 🧾 [신규] 재화 입출금 원장 (유저 거래내역 조회 / 지급 되돌리기용)
 CHAT_STATS_FILE = os.path.join(DATA_DIR, "mari_chat_stats.json") # 💬 [신규] 날짜별 채팅 "개수"만 세는 통계 (내용·작성자 미저장)
 HEARTBEAT_FILE = os.path.join(DATA_DIR, "mari_heartbeat.txt") # 💓 [신규] 봇이 살아있음을 외부 감시 도구에 알리는 심장박동 파일
 BACKUP_DIR = os.path.join(DATA_DIR, "backups") # 💾 매일 자동 백업이 쌓이는 폴더

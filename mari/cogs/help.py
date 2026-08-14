@@ -35,7 +35,7 @@ class HelpView(MariView):
 
 
 class MariHelp(commands.Cog):
-    """마리봇 전용 명령어 도움말 시스템"""
+    """봇 전용 명령어 도움말 시스템"""
     def __init__(self, bot):
         self.bot = bot
 

@@ -1,4 +1,4 @@
-"""봇이 메모리에 들고 있는 공용 데이터(아이디 DB 등)와 에바 입출금 원장."""
+"""봇이 메모리에 들고 있는 공용 데이터(아이디 DB 등)와 재화 입출금 원장."""
 
 import uuid
 import datetime as dt
@@ -20,8 +20,8 @@ def save_wiki(data):
     atomic_json_save_or_raise(WIKI_FILE, data, indent=2)
 
 
-# ========== 🧾 [신규] 에바 입출금 원장 ==========
-# 유저의 "내 에바 왜 줄었어요?" 문의에 관리자가 로그 채널을 뒤지지 않아도 되도록,
+# ========== 🧾 [신규] 재화 입출금 원장 ==========
+# 유저의 "내 재화 왜 줄었어요?" 문의에 관리자가 로그 채널을 뒤지지 않아도 되도록,
 # 모든 잔액 변동을 파일에 남깁니다. /지갑 내역 조회와 /지급 되돌리기가 이걸 씁니다.
 LEDGER_MAX_ENTRIES = 3000  # 파일이 무한정 커지지 않도록 오래된 것부터 잘라냅니다
 
@@ -36,7 +36,7 @@ def load_ledger() -> dict:
 
 def record_ledger(user_id, delta: int, balance_after, kind: str,
                   detail: str = "", actor_id=None, batch_id: str = None) -> str:
-    """에바 변동 한 건을 원장에 기록하고 기록 id를 돌려줍니다.
+    """재화 변동 한 건을 원장에 기록하고 기록 id를 돌려줍니다.
 
     🚨 이 함수는 절대 예외를 밖으로 던지지 않아요.
     이미 돈이 오간 뒤에 호출되기 때문에, 여기서 실패가 터지면 유저에게는

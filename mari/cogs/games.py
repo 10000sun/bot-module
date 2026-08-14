@@ -1,4 +1,4 @@
-"""MariGames — 하이로우 게임, 에바시 선착순 이벤트."""
+"""MariGames — 하이로우 게임, 선착순 이벤트."""
 
 import random
 import asyncio
@@ -21,7 +21,7 @@ class MariGames(commands.Cog):
 
     def __init__(self, bot):
         # 🐛 [버그 수정] 이 코그에는 원래 __init__이 없어서 self.bot이 보장되지 않았어요.
-        # 이제 정식으로 저장해서 에바시 기능(백그라운드 스케줄러, on_message)에서도 안전하게 씁니다.
+        # 이제 정식으로 저장해서 이벤트 기능(백그라운드 스케줄러, on_message)에서도 안전하게 씁니다.
         self.bot = bot
 
         # 🎲 하이로우 게임 상태 (메모리 전용)
@@ -34,8 +34,8 @@ class MariGames(commands.Cog):
         self.current_numbers = {}   # {guild_id: 현재 숫자}
         self.active_games = set()   # 하이로우가 시작된 guild_id
 
-        # 🎉 에바시 이벤트 상태
-        self.evashi_window_open_until = None  # 이 시각까지는 "에바시"를 치면 보상을 받을 수 있음 (KST datetime)
+        # 🎉 선착순 이벤트 상태
+        self.evashi_window_open_until = None  # 이 시각까지는 이벤트 키워드를 치면 보상을 받을 수 있음 (KST datetime)
         self.evashi_participants = set()      # 이번 창(window)에서 이미 보상을 받은 유저 ID (선착순+나머지 전부)
         self.evashi_first_claimed = 0         # 이번 창에서 "선착순" 보상을 받은 인원 수
         self.evashi_first_winners = []        # 이번 창에서 선착순 보상을 받은 유저 ID 목록
@@ -49,7 +49,7 @@ class MariGames(commands.Cog):
         if self.evashi_close_task and not self.evashi_close_task.done():
             self.evashi_close_task.cancel()
 
-    # ---------- 🎉 에바시 설정 로드/저장 ----------
+    # ---------- 🎉 이벤트 설정 로드/저장 ----------
     def _load_evashi_settings(self) -> dict:
         settings = load_settings()
         defaults = {"first_count": 3, "first_amount": 12210, "rest_amount": 1221, "window_seconds": 60}
@@ -67,8 +67,8 @@ class MariGames(commands.Cog):
         return has_admin_or_role(interaction, "evashi_admin")
 
     async def _send_evashi_announce(self, guild: discord.Guild, text: str):
-        """마리 전용 에바시 '안내 채널'로 공지를 보냅니다. (유저가 '에바시'를 치는 채널이 아니라
-        별도로 설정해둔, 마리가 결과를 알려주는 전용 채널이에요.)"""
+        """봇 전용 이벤트 '안내 채널'로 공지를 보냅니다. (유저가 이벤트 키워드를 치는 채널이 아니라
+        별도로 설정해둔, 봇이 결과를 알려주는 전용 채널이에요.)"""
         ch_id = load_settings().get("channels", {}).get("evashi_announce")
         if not ch_id:
             print(f"⚠️ [{event_name()}] 안내 채널이 설정 안 돼있어서 결과 공지를 못 올렸어요. `/설정 채널 이벤트`로 지정해주세요.")
@@ -89,7 +89,7 @@ class MariGames(commands.Cog):
                 return
 
     async def _give_evashi_reward(self, user_id: int, amount: int, *, is_first: bool = False):
-        """에바시 보상을 안전하게 지급합니다. (동시 지급 충돌 방지용 economy_lock 사용)"""
+        """이벤트 보상을 안전하게 지급합니다. (동시 지급 충돌 방지용 economy_lock 사용)"""
         economy_cog = self.bot.get_cog("MariEconomy")
         if not economy_cog:
             return
@@ -101,7 +101,7 @@ class MariGames(commands.Cog):
             balance_after = data[user_key]
 
         # 🧾 [버그 수정] 지갑에 돈이 들어오는데 원장에는 안 남고 있었어요. 송금·출석·상점·주식·
-        # 캠프통장은 전부 남기는데 여기만 빠져서, 유저가 /지갑내역을 열면 에바시로 받은 돈만
+        # 캠프통장은 전부 남기는데 여기만 빠져서, 유저가 /지갑내역을 열면 이벤트로 받은 돈만
         # 출처 없이 잔액에 얹혀 있었습니다. (락을 놓은 뒤에 기록해요)
         record_ledger(user_key, amount, balance_after, f"{event_name()} 보상",
                       "선착순" if is_first else "참여")
@@ -112,7 +112,7 @@ class MariGames(commands.Cog):
         타이밍에 따라 최대 59초까지 늦게 열릴 수 있었어요. 이제는 discord.py의 time= 스케줄링을 써서
         00:21, 12:21(KST) 정각에 정확하게 실행돼요."""
         # 🛡️ 설정 파일이 손상되면 load_settings()가 예외를 던져요. 그게 밖으로 새면
-        # 루프가 영구히 멈춰서 에바시 이벤트가 다시는 안 열립니다. 이번 회차만 포기해요.
+        # 루프가 영구히 멈춰서 선착순 이벤트가 다시는 안 열립니다. 이번 회차만 포기해요.
         try:
             evashi = self._load_evashi_settings()
         except Exception as e:
@@ -217,7 +217,7 @@ class MariGames(commands.Cog):
         # 💰 보상 지급은 실시간으로 바로 해요. (공지/로그만 창이 닫힐 때 한 번에 모아서 나가요)
         await self._give_evashi_reward(message.author.id, amount, is_first=is_first)
 
-        # 👍 [버그 수정] 도배를 막으려고 개인별 메세지/로그를 다 없앴더니, "에바시" 쳐도
+        # 👍 [버그 수정] 도배를 막으려고 개인별 메세지/로그를 다 없앴더니, 이벤트 키워드를 쳐도
         # 그 순간엔 아무 반응이 없어서 마치 안 되는 것처럼 보였어요. 새 메세지를 추가로
         # 보내지 않으면서도 즉시 확인할 수 있게, 본인이 친 메세지에 리액션만 살짝 달아줘요.
         try:

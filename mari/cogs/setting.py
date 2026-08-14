@@ -147,7 +147,7 @@ def _feature_choices(**params):
 
 
 class MariSetting(commands.Cog):
-    """봇의 모든 권한 역할 및 채널을 동적으로 변경하는 마리 설정 시스템"""
+    """봇의 모든 권한 역할 및 채널을 동적으로 변경하는 봇 설정 시스템"""
     def __init__(self, bot):
         self.bot = bot
         # ⏱️ 코그가 트리에 등록되기 **전에** 걷어내야 해요. cog_load는 등록보다 나중에
