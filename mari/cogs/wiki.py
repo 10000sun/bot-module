@@ -6,6 +6,7 @@ from discord.ext import commands
 
 from mari_settings import feature_gate, has_admin_or_role
 from mari_state import load_wiki, save_wiki
+from mari_names import server_name
 
 # 📏 [버그 수정] 임베드 필드 값 하나의 상한은 1024자예요. 넘기면 그 필드만 잘리는 게 아니라
 # **메세지 전송 자체가 400으로 실패**해서 그 사람 위키를 아예 조회할 수 없게 됩니다.
@@ -155,7 +156,7 @@ class MariWiki(commands.Cog):
             await interaction.followup.send("❌ 등록된 위키가 없어!", ephemeral=True)
             return
 
-        embed = discord.Embed(title="📚 에바스 위키 목록", color=0xA9CCE3)
+        embed = discord.Embed(title=f"📚 {server_name()} 위키 목록", color=0xA9CCE3)
         sorted_ids = sorted(wiki.keys())
         lines = []
         for uid in sorted_ids:

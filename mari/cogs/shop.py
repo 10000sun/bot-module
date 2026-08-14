@@ -12,6 +12,7 @@ from mari_storage import atomic_json_save_or_raise, safe_json_load
 from mari_settings import feature_gate, has_admin_or_role, load_settings, send_log_embed
 from mari_state import record_ledger
 from mari_utils import MariView, report_broken_transaction, schedule_delete
+from mari_names import currency, josa
 
 class ShopPurchaseView(MariView):
     """상점 매대에 상시 고정될 드롭다운 뷰 (봇 재시작 대응 Persistent View, 매대=채널별로 독립)"""
@@ -41,7 +42,7 @@ class ShopItemSelect(discord.ui.Select):
             for item_id, info in list(board["items"].items())[:MAX_SELECT_OPTIONS]:
                 status = "🟢" if info.get("can_buy", True) else "❌"
                 label = f"{status} [{item_id}번] {info['name']}"[:100]
-                desc = f"💵 가격: {info['price']:,} 에바 | {info['desc']}"[:100]
+                desc = f"💵 가격: {info['price']:,} {currency()} | {info['desc']}"[:100]
                 options.append(discord.SelectOption(label=label, value=item_id, description=desc))
 
         super().__init__(
@@ -75,8 +76,8 @@ class ShopItemSelect(discord.ui.Select):
         embed = discord.Embed(
             title=f"📦 {item_info['name']} 거래 패널",
             description=(
-                f"📝 **설명**: {item_info['desc']}\n💵 **가격**: {item_info['price']:,} 에바\n"
-                f"♻️ **되팔기 환급**: 원가의 {resale_percent}% (약 {refund_amount:,} 에바)"
+                f"📝 **설명**: {item_info['desc']}\n💵 **가격**: {item_info['price']:,} {currency()}\n"
+                f"♻️ **되팔기 환급**: 원가의 {resale_percent}% (약 {refund_amount:,} {currency()})"
             ),
             color=0x5ce6b4
         )
@@ -185,8 +186,8 @@ class ShopActionButtons(MariView):
         async with self.cog.bot.economy_lock:
             current_balance = self.cog._get_balance(user_id)
             if current_balance < price:
-                error = (f"❌ 에바가 부족합니다!\n"
-                         f"└ 보유 잔액: {current_balance:,} 에바 / 필요 금액: {price:,} 에바")
+                error = (f"❌ {currency()}{josa(currency(), '이가')} 부족합니다!\n"
+                         f"└ 보유 잔액: {current_balance:,} {currency()} / 필요 금액: {price:,} {currency()}")
             # 🏪 매대가 살아 있는지만 먼저 확인해요. 여기서 읽은 사본은 **일부러 버립니다.**
             #    (아래 역할 지급 await을 건너온 사본은 낡은 것이라 저장에 쓰면 안 돼요)
             elif not self.cog._get_board(self.cog._load_shop(), self.channel_id):
@@ -207,7 +208,7 @@ class ShopActionButtons(MariView):
                         error = ("❌ 봇에게 역할 지급 권한이 없어요."
                                  if isinstance(role_err, discord.Forbidden) else
                                  f"❌ 역할을 지급하지 못했어요. 잠시 뒤 다시 시도해 주세요.\n"
-                                 f"└ 에바는 차감되지 않았어요. ({type(role_err).__name__})")
+                                 f"└ {currency()}{josa(currency(), '은는')} 차감되지 않았어요. ({type(role_err).__name__})")
 
                 if error is None:
                     # 🚨 [심각한 버그 수정] shop.json은 **여기서 처음 읽습니다.**
@@ -232,7 +233,7 @@ class ShopActionButtons(MariView):
                             self.cog._save_shop(data)
                         except Exception as save_err:
                             broken = {
-                                "lost": f"에바 {price:,}",
+                                "lost": f"{currency()} {price:,}",
                                 "not_received": self.item_info["name"],
                                 "error": save_err,
                                 "balance": current_balance - price,
@@ -256,7 +257,7 @@ class ShopActionButtons(MariView):
 
         await self._notify(
             interaction,
-            f"✅ `{self.item_info['name']}`을(를) 성공적으로 구매했어요! (-{price:,} 에바)",
+            f"✅ `{self.item_info['name']}`을(를) 성공적으로 구매했어요! (-{price:,} {currency()})",
         )
 
     @discord.ui.button(label="💰 되팔기", style=discord.ButtonStyle.danger)
@@ -315,7 +316,7 @@ class ShopActionButtons(MariView):
                     error = ("❌ 봇에게 역할 회수 권한이 없어요."
                              if isinstance(role_err, discord.Forbidden) else
                              f"❌ 역할을 회수하지 못했어요. 잠시 뒤 다시 시도해 주세요.\n"
-                             f"└ 아이템과 에바는 그대로예요. ({type(role_err).__name__})")
+                             f"└ 아이템과 {currency()}{josa(currency(), '은는')} 그대로예요. ({type(role_err).__name__})")
 
             # 3. 아이템 회수 처리 — shop.json은 위 await이 끝난 **뒤에** 다시 읽습니다.
             if error is None:
@@ -350,7 +351,7 @@ class ShopActionButtons(MariView):
                 except Exception as save_err:
                     broken = {
                         "lost": self.item_info["name"],
-                        "not_received": f"에바 {refund:,}",
+                        "not_received": f"{currency()} {refund:,}",
                         "error": save_err,
                     }
                     new_balance = None
@@ -374,7 +375,7 @@ class ShopActionButtons(MariView):
         await self._notify(
             interaction,
             f"💵 `{self.item_info['name']}`을(를) 되팔았어요. "
-            f"(원가의 {resale_percent}% · +{refund:,} 에바 지급)",
+            f"(원가의 {resale_percent}% · +{refund:,} {currency()} 지급)",
         )
 
 
@@ -517,7 +518,7 @@ class GiftPanelView(MariView):
         (드롭다운은 화면을 새로 그리면 선택 표시가 흐려질 수 있어서, 확정된 값은 여기서 확인해요)"""
         embed = discord.Embed(
             title="🎁 선물 보내기",
-            description="아래 세 칸을 모두 고른 뒤 **보내기**를 눌러주세요.\n에바는 오가지 않고 아이템만 넘어가요.",
+            description=f"아래 세 칸을 모두 고른 뒤 **보내기**를 눌러주세요.\n{currency()}{josa(currency(), '은는')} 오가지 않고 아이템만 넘어가요.",
             color=0x5ce6b4,
         )
         embed.add_field(
@@ -873,7 +874,7 @@ class MariShop(commands.Cog):
             "shop_channel_id": None,
             "shop_message_id": None,
             "shop_name": "🛒 상점",
-            "shop_desc": "환영합니다! 모은 에바로 다양한 아이템을 거래해 보세요.",
+            "shop_desc": f"환영합니다! 모은 {currency()}{josa(currency(), '으로로')} 다양한 아이템을 거래해 보세요.",
             "next_item_id": 1,
             "items": {},
             "inventories": {}
@@ -1115,7 +1116,7 @@ class MariShop(commands.Cog):
                 if not status: status.append("❌ 거래불가")
 
                 type_str = f"역할 지급 (<@&{info['role_id']}>)" if info["is_role"] else "일반 아이템"
-                field_value = f"💵 **가격**: {info['price']:,} 에바\n📝 **설명**: {info['desc']}\n🏷️ **타입**: {type_str}\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                field_value = f"💵 **가격**: {info['price']:,} {currency()}\n📝 **설명**: {info['desc']}\n🏷️ **타입**: {type_str}\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
                 embed.add_field(name=f"📦 {info['name']} ({', '.join(status)})", value=field_value, inline=False)
 
         hidden = len(items) - MAX_BOARD_ITEMS
@@ -1204,7 +1205,7 @@ class MariShop(commands.Cog):
         await self._refresh_board_message(channel_id)
 
     async def log_purchase(self, member: discord.Member, item_name: str, amount: int, total_cost: int, current_balance: int):
-        cost_str = f"{total_cost:,} 에바" if total_cost > 0 else f"환불: {abs(total_cost):,} 에바"
+        cost_str = f"{total_cost:,} {currency()}" if total_cost > 0 else f"환불: {abs(total_cost):,} {currency()}"
         await send_log_embed(
             self.bot, "shop_log", f"{member.mention}님의 상점 거래 영수증이에요.",
             fields=[
@@ -1212,7 +1213,7 @@ class MariShop(commands.Cog):
                 ("거래 항목", item_name, True),
                 ("수량", f"{amount:,} 개", True),
                 ("사용 금액", cost_str, True),
-                ("최종 잔액", f"{current_balance:,} 에바", True),
+                ("최종 잔액", f"{current_balance:,} {currency()}", True),
             ],
         )
 
@@ -1353,7 +1354,7 @@ class MariShop(commands.Cog):
         # 붙이는 오타 한 번이면 나는 사고라, 등록하는 자리에서 막습니다.
         if 가격 < 0:
             return await interaction.response.send_message(
-                "❌ 가격은 0 에바 이상이어야 해요. (음수로 등록하면 구매할 때마다 에바가 늘어나요)",
+                f"❌ 가격은 0 {currency()} 이상이어야 해요. (음수로 등록하면 구매할 때마다 {currency()}{josa(currency(), '이가')} 늘어나요)",
                 ephemeral=True,
             )
         if 되팔기퍼센트 is not None and not (0 <= 되팔기퍼센트 <= 100):
@@ -1400,7 +1401,7 @@ class MariShop(commands.Cog):
         for info in board.get("items", {}).values():
             name = info.get("name", "")
             if current.lower() in name.lower():
-                choices.append(app_commands.Choice(name=f"{name} ({info.get('price', 0):,} 에바)", value=name))
+                choices.append(app_commands.Choice(name=f"{name} ({info.get('price', 0):,} {currency()})", value=name))
         return choices[:25]
 
     @shop_group.command(name="항목삭제", description="[관리자] 현재 채널 매대의 진열 물품을 이름 기반으로 식별해 삭제합니다.")
@@ -1448,14 +1449,14 @@ class MariShop(commands.Cog):
             info["name"] = 새이름
 
         if 새가격 is not None:
-            if 새가격 < 0: return await interaction.response.send_message("가격은 0 에바 이상이어야 합니다.", ephemeral=True)
-            logs.append(f"가격: {info['price']:,} ➡️ {새가격:,} 에바")
+            if 새가격 < 0: return await interaction.response.send_message(f"가격은 0 {currency()} 이상이어야 합니다.", ephemeral=True)
+            logs.append(f"가격: {info['price']:,} ➡️ {새가격:,} {currency()}")
             info["price"] = 새가격
         elif 퍼센트변동 is not None:
             old = info["price"]
             calc = int(old * (1 + (퍼센트변동 / 100)))
             if calc < 0: calc = 0
-            logs.append(f"비율변동({퍼센트변동:+.1f}%): {old:,} ➡️ {calc:,} 에바")
+            logs.append(f"비율변동({퍼센트변동:+.1f}%): {old:,} ➡️ {calc:,} {currency()}")
             info["price"] = calc
 
         if 설명 is not None: info["desc"] = 설명; logs.append("설명 수정")
@@ -1717,15 +1718,15 @@ class MariShop(commands.Cog):
             description=f"모든 매대를 합산한 {target_year}년 {월}월 정산 결과예요.",
             color=0x5ce6b4,
         )
-        embed.add_field(name="💰 총 구매 매출", value=f"{buy_total:,} 에바", inline=True)
-        embed.add_field(name="♻️ 총 되팔기 환급", value=f"{sell_total:,} 에바", inline=True)
-        embed.add_field(name="✅ 순 정산액", value=f"**{net_total:,} 에바**", inline=True)
+        embed.add_field(name="💰 총 구매 매출", value=f"{buy_total:,} {currency()}", inline=True)
+        embed.add_field(name="♻️ 총 되팔기 환급", value=f"{sell_total:,} {currency()}", inline=True)
+        embed.add_field(name="✅ 순 정산액", value=f"**{net_total:,} {currency()}**", inline=True)
 
         if per_board:
             lines = []
             for ch_id, stat in per_board.items():
                 net = stat["buy"] - stat["sell"]
-                lines.append(f"<#{ch_id}> · 구매 {stat['buy']:,} / 되팔기 {stat['sell']:,} / 순액 {net:,} 에바")
+                lines.append(f"<#{ch_id}> · 구매 {stat['buy']:,} / 되팔기 {stat['sell']:,} / 순액 {net:,} {currency()}")
             embed.add_field(name="🏪 매대별 상세", value="\n".join(lines), inline=False)
         else:
             embed.add_field(name="🏪 매대별 상세", value="해당 월 거래 내역이 없어요.", inline=False)

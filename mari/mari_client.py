@@ -13,6 +13,7 @@ from mari_config import ALERT_DISCONNECT_SECONDS, ENABLED_MODULES, HEARTBEAT_FIL
 from mari_alerts import send_alert
 from mari_utils import describe_user_error
 from modules import resolve_modules
+from mari_names import bot_name, is_configured
 
 # 🧩 [변경] 예전엔 여기 `from cogs.X import Y` 17줄이 있었고, setup_hook에는 add_cog 17줄이
 # 짝을 이뤄 있었어요. 기능 하나를 빼려면 두 곳을 같이 고쳐야 했고, 무엇보다 **한 코그의
@@ -57,7 +58,7 @@ class MariBotClient(commands.Bot):
         if not self._startup_alert_sent:
             self._startup_alert_sent = True
             await send_alert(
-                "✅ 마리봇이 정상 기동했어요",
+                f"✅ {bot_name()}봇이 정상 기동했어요",
                 f"계정: `{self.user}` (ID: `{self.user.id}`)\n"
                 f"참여 서버: {len(self.guilds)}개\n"
                 f"기동 시각: {dt.datetime.now(KST).strftime('%Y-%m-%d %H:%M:%S')} KST",
@@ -86,7 +87,7 @@ class MariBotClient(commands.Bot):
         if was_alerted and down_since is not None:
             seconds = int((dt.datetime.now(dt.timezone.utc) - down_since).total_seconds())
             await send_alert(
-                "🟢 마리봇 연결이 복구됐어요",
+                f"🟢 {bot_name()}봇 연결이 복구됐어요",
                 f"약 {seconds}초 만에 디스코드에 다시 연결됐어요.",
                 color=0x2ECC71,
             )
@@ -109,7 +110,7 @@ class MariBotClient(commands.Bot):
             if down >= ALERT_DISCONNECT_SECONDS:
                 self._alerted_disconnect = True
                 await send_alert(
-                    "⚠️ 마리봇 연결이 끊겼어요",
+                    f"⚠️ {bot_name()}봇 연결이 끊겼어요",
                     f"{int(down)}초째 디스코드 게이트웨이에 연결되지 않고 있어요.\n"
                     "네트워크 문제이거나 디스코드 장애일 수 있어요. 자동 재연결을 계속 시도 중입니다.",
                     color=0xF39C12,
@@ -134,7 +135,7 @@ class MariBotClient(commands.Bot):
         if interaction.guild is None:
             try:
                 await interaction.response.send_message(
-                    "🙅‍♀️ 마리 명령어는 서버 안에서만 쓸 수 있어요! 서버에 와서 불러주세요.",
+                    f"🙅‍♀️ {bot_name()} 명령어는 서버 안에서만 쓸 수 있어요! 서버에 와서 불러주세요.",
                     ephemeral=True,
                 )
             except Exception:
@@ -231,6 +232,13 @@ class MariBotClient(commands.Bot):
             # 실패를 조용히 넘기면 "명령어가 왜 안 보이지"로 며칠을 헤매게 돼요.
             print(f"🚨 실패한 모듈 {len(self.failed_modules)}개: "
                   f"{', '.join(key for key, _ in self.failed_modules)}")
+
+        # 🏷️ 갓 납품한 서버는 이름이 아직 원본 서버의 기본값("에바"·"마리"…)이에요.
+        # 봇은 그대로 잘 돌지만 문구에 남의 서버 이름이 나가므로, 기동할 때마다 알려줍니다.
+        # (막지는 않아요. 이름을 안 바꾸고 쓰겠다는 선택도 있을 수 있으니까요)
+        if not is_configured():
+            print("🏷️ 서버 이름이 아직 기본값이에요. 서버 관리자가 `/초기설정`을 한 번 실행하면 "
+                  "재화·봇·이벤트·서버 이름을 이 서버에 맞게 바꿀 수 있어요.")
 
     async def setup_hook(self):
         await self.load_modules()

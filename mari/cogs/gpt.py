@@ -15,6 +15,7 @@ from mari_alerts import report_loop_error
 from mari_storage import atomic_json_save, safe_json_load
 from mari_state import load_wiki, state
 from mari_utils import find_guild_member_by_name, holding_avg_price, holding_shares
+from mari_names import bot_name, currency, josa
 
 # ========== 🎭 마리 페르소나 프롬프트 ==========
 # 예전엔 아빠 / 엄마 / 경멸 / 일반 네 갈래가 거의 똑같은 문장을 통째로 복사해서 갖고
@@ -34,7 +35,10 @@ _PERSONA_OBEDIENCE = (
     "- 대화 주제는 사용자가 정한다. 사용자가 꺼낸 주제를 따라가고 딴 데로 돌리지 않는다. "
     "- 자기 의견은 사용자가 물어봤을 때만 낸다. 묻지 않은 훈수·지적·반박·평가는 하지 않는다. "
     "- 사용자 말에 토를 달거나 되받아치지 않는다. "
-    "- 딱 하나 예외: 사용자가 먼저 장난을 걸어오거나 마리를 놀릴 때만 한 마디 정도 "
+    # ⚠️ 여기는 일부러 f-string이 아니라 **틀**이에요. 모듈 상수는 봇이 켜질 때 한 번만
+    #    만들어지기 때문에, f-string으로 두면 `/초기설정`으로 이름을 바꿔도 AI만 옛 이름으로
+    #    자기를 부릅니다. 실제 이름은 build_persona()가 채워 넣어요.
+    "- 딱 하나 예외: 사용자가 먼저 장난을 걸어오거나 {bot}{bot_josa} 놀릴 때만 한 마디 정도 "
     "가볍게 툴툴대며 튕겨도 된다. 그때도 결국은 부탁받은 걸 해준다. "
     "- 튕기는 건 한 문장을 넘기지 않는다. 삐진 척을 길게 끌지 않는다. "
 )
@@ -97,9 +101,10 @@ def build_persona(relation: str, *, address_rule: str = "",
     style/never/core — 기본 블록을 통째로 갈아끼우고 싶을 때만 지정 (경멸 갈래용)
     """
     return (
-        "너의 이름은 마리(MARI)다. "
+        f"너의 이름은 {bot_name()}{josa(bot_name(), '이다다')}. "
         + relation
-        + _PERSONA_OBEDIENCE
+        # 틀에 지금 이름을 채워 넣습니다. (위 _PERSONA_OBEDIENCE 주석 참고)
+        + _PERSONA_OBEDIENCE.format(bot=bot_name(), bot_josa=josa(bot_name(), "을를"))
         + _PERSONA_TRAITS
         + _PERSONA_TONE + address_rule
         + (style if style is not None else _PERSONA_STYLE)
@@ -119,7 +124,7 @@ class MariGPT(commands.Cog):
     RPM_LIMIT = 8      # 분당 호출 한도 (여유 있게 보수적으로 설정)
     RPD_LIMIT = 200    # 일일 호출 한도 (여유 있게 보수적으로 설정)
 
-    memory_group = app_commands.Group(name="마리기억", description="마리가 대화 중 기억해둔 내용을 확인/관리하는 명령어 모음")
+    memory_group = app_commands.Group(name="기억", description=f"{bot_name()}{josa(bot_name(), '이가')} 대화 중 기억해둔 내용을 확인/관리하는 명령어 모음")
 
     def __init__(self, bot):
         self.bot = bot
@@ -327,21 +332,21 @@ class MariGPT(commands.Cog):
         return "\n".join(f"- {f}" for f in facts)
 
     # ---------- 🧠 유저가 직접 확인/관리하는 명령어 ----------
-    @memory_group.command(name="목록", description="마리가 나에 대해 기억하고 있는 내용을 확인해요.")
+    @memory_group.command(name="목록", description=f"{bot_name()}{josa(bot_name(), '이가')} 나에 대해 기억하고 있는 내용을 확인해요.")
     async def show_my_memory(self, interaction: discord.Interaction):
         facts = self._get_user_facts(interaction.user.id)
         if not facts:
-            return await interaction.response.send_message("ℹ️ 아직 마리가 기억하고 있는 내용이 없어요.", ephemeral=True)
+            return await interaction.response.send_message(f"ℹ️ 아직 {bot_name()}{josa(bot_name(), '이가')} 기억하고 있는 내용이 없어요.", ephemeral=True)
         lines = "\n".join(f"{i+1}. {f}" for i, f in enumerate(facts))
         embed = discord.Embed(
-            title="🧠 마리가 기억하고 있는 것",
+            title=f"🧠 {bot_name()}{josa(bot_name(), '이가')} 기억하고 있는 것",
             description=lines,
             color=0x5ce6b4,
         )
-        embed.set_footer(text="/마리기억삭제 번호 로 개별 삭제, /마리기억초기화 로 전체 삭제할 수 있어요.")
+        embed.set_footer(text="/기억 삭제 번호 로 개별 삭제, /기억 초기화 로 전체 삭제할 수 있어요.")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    @memory_group.command(name="삭제", description="마리가 기억하고 있는 내용 중 하나를 지워요. (번호는 /마리기억 목록에서 확인)")
+    @memory_group.command(name="삭제", description=f"{bot_name()}{josa(bot_name(), '이가')} 기억하고 있는 내용 중 하나를 지워요. (번호는 /기억 목록에서 확인)")
     @app_commands.describe(번호="지울 항목 번호 (1부터 시작)")
     async def delete_my_memory(self, interaction: discord.Interaction, 번호: int):
         data = self._load_user_memory()
@@ -353,7 +358,7 @@ class MariGPT(commands.Cog):
         self._save_user_memory(data)
         await interaction.response.send_message(f"🗑️ 지웠어요: {removed}", ephemeral=True)
 
-    @memory_group.command(name="초기화", description="마리가 나에 대해 기억하고 있는 내용을 전부 지워요.")
+    @memory_group.command(name="초기화", description=f"{bot_name()}{josa(bot_name(), '이가')} 나에 대해 기억하고 있는 내용을 전부 지워요.")
     async def clear_my_memory(self, interaction: discord.Interaction):
         data = self._load_user_memory()
         user_key = str(interaction.user.id)
@@ -361,7 +366,7 @@ class MariGPT(commands.Cog):
             return await interaction.response.send_message("ℹ️ 어차피 기억하고 있는 내용이 없어요.", ephemeral=True)
         data[user_key] = []
         self._save_user_memory(data)
-        await interaction.response.send_message("🧹 마리 기억에서 회원님에 대한 내용을 전부 지웠어요.", ephemeral=True)
+        await interaction.response.send_message(f"🧹 {bot_name()} 기억에서 회원님에 대한 내용을 전부 지웠어요.", ephemeral=True)
 
     def _load_chat_memory(self) -> dict:
         """유저별 마지막 대화 기억을 JSON 파일에서 불러옵니다.
@@ -423,7 +428,7 @@ class MariGPT(commands.Cog):
                     interaction_meta = getattr(message, "interaction", None)
                 if interaction_meta is not None:
                     cmd_name = getattr(interaction_meta, "name", None) or "명령어"
-                    self._record_chat(message, author_label="마리", source=f"명령어 응답 (/{cmd_name})")
+                    self._record_chat(message, author_label=bot_name(), source=f"명령어 응답 (/{cmd_name})")
             return
 
         # 🏠 [신규] DM에서는 마리가 대답하지 않아요.
@@ -454,7 +459,7 @@ class MariGPT(commands.Cog):
             # 🔐 [신규] API 키가 없거나 초기화에 실패하면 AI 대화만 조용히 건너뜁니다.
             if self.client is None:
                 await message.channel.send(
-                    f"{message.author.mention} 지금은 마리가 대답할 수 없는 상태예요. "
+                    f"{message.author.mention} 지금은 {bot_name()}{josa(bot_name(), '이가')} 대답할 수 없는 상태예요. "
                     "(관리자에게 문의해 주세요 — AI 설정이 아직 안 됐어요) 😥"
                 )
                 return
@@ -463,12 +468,12 @@ class MariGPT(commands.Cog):
             self.minutely_timestamps = [t for t in self.minutely_timestamps if current_time - t < 60]
             
             if len(self.minutely_timestamps) >= self.RPM_LIMIT:
-                await message.channel.send(f"{message.author.mention} 지금 마리를 너무 많이 부르고 있어서 잠깐 숨 고르는 중이에요. 조금 이따가 다시 불러줄래요? 😣")
+                await message.channel.send(f"{message.author.mention} 지금 {bot_name()}{josa(bot_name(), '을를')} 너무 많이 부르고 있어서 잠깐 숨 고르는 중이에요. 조금 이따가 다시 불러줄래요? 😣")
                 return
 
             daily_count = self._get_daily_count()
             if daily_count >= self.RPD_LIMIT:
-                await message.channel.send(f"{message.author.mention} 마리가 오늘 너무 열심히 대답해서 지쳤어요.. 내일 다시 놀아줄래요? 💤")
+                await message.channel.send(f"{message.author.mention} {bot_name()}{josa(bot_name(), '이가')} 오늘 너무 열심히 대답해서 지쳤어요.. 내일 다시 놀아줄래요? 💤")
                 return
 
             user_name = message.author.display_name
@@ -496,12 +501,12 @@ class MariGPT(commands.Cog):
                 " 너는 아래 도구들을 쓸 수 있다. "
                 "lookup_game_id: 서버 멤버의 게임 아이디 조회. "
                 "lookup_wiki: 서버 멤버의 위키(소개/생일/MBTI 등) 조회. "
-                "check_my_wallet: 지금 대화 중인 상대 본인의 에바 잔액 조회. "
+                f"check_my_wallet: 지금 대화 중인 상대 본인의 {currency()} 잔액 조회. "
                 "check_my_portfolio: 상대 본인의 주식 포트폴리오 조회. "
                 "remember_fact: 상대에 대해 기억해둘 만한 사실 저장. "
-                "게임 아이디·위키·에바 잔액·주식처럼 서버 데이터가 필요한 질문에는 "
+                f"게임 아이디·위키·{currency()} 잔액·주식처럼 서버 데이터가 필요한 질문에는 "
                 "추측하거나 아는 척하지 말고 반드시 해당 도구를 호출해서 실제 값을 확인한 뒤 답한다. "
-                "이 서버에서 '지갑', '에바', '돈'은 서버 재화 이야기다. 현실의 지갑 상품이나 가격 이야기가 아니다. "
+                f"이 서버에서 '지갑', '{currency()}', '돈'은 서버 재화 이야기다. 현실의 지갑 상품이나 가격 이야기가 아니다. "
                 "check_my_로 시작하는 도구는 대화 상대 본인 것만 조회한다. 다른 사람의 지갑·주식을 "
                 "물어보면 본인 것만 확인해줄 수 있다고 답한다. "
                 "도구 조회 결과가 없다고 나오면 없다고 솔직하게 말한다."
@@ -539,7 +544,7 @@ class MariGPT(commands.Cog):
                     break  # 여러 장 첨부돼도 첫 번째 이미지 1장만 처리
 
             if not user_content.strip():
-                user_content = "이 이미지 봐줘!" if image_part else "안녕 마리야!"
+                user_content = "이 이미지 봐줘!" if image_part else f"안녕 {bot_name()}{josa(bot_name(), '아야')}!"
 
             # 🗣️ [맥락 주입] 이번 유저의 '직전 대화'를 먼저 확보 (저장은 응답 성공 시 한 쌍으로)
             author_key = str(message.author.id)
@@ -629,7 +634,7 @@ class MariGPT(commands.Cog):
                 return self._add_user_fact(message.author.id, fact)
 
             def check_my_wallet() -> str:
-                """지금 대화하고 있는 이 유저 본인의 에바(재화) 잔액을 확인합니다.
+                """지금 대화하고 있는 이 유저 본인의 서버 재화 잔액을 확인합니다.
                 "내 지갑 얼마야", "나 돈 얼마 있어" 같은 질문에 이 도구를 쓰세요.
                 🔒 이 도구는 파라미터가 없어서 구조적으로 대화 상대 본인의 지갑만 볼 수 있고,
                 다른 사람의 지갑은 절대 조회할 수 없습니다. 다른 사람 지갑을 물어보면
@@ -645,7 +650,7 @@ class MariGPT(commands.Cog):
                 # 처리되는 도중에 이 도구가 끼어들면 그 사이 잔액을 통째로 덮어쓸 수 있었어요.
                 # 조회만 하면 되는 도구니까 쓰기 없이 읽기만 합니다. (지갑은 출석·송금 때 생겨요)
                 balance = economy_cog._load_raw_economy().get(str(message.author.id), 0)
-                return f"{message.author.display_name}님의 현재 잔액은 {balance:,} 에바예요."
+                return f"{message.author.display_name}님의 현재 잔액은 {balance:,} {currency()}{josa(currency(), '이에요예요')}."
 
             def check_my_portfolio() -> str:
                 """지금 대화하고 있는 이 유저 본인의 주식 포트폴리오(보유 종목, 평가금액, 수익률)를 확인합니다.
@@ -686,7 +691,7 @@ class MariGPT(commands.Cog):
 
                 total_rate = ((total_eval - total_purchase) / total_purchase * 100) if total_purchase > 0 else 0
                 summary = f"{message.author.display_name}님의 포트폴리오: " + ", ".join(lines)
-                summary += f" / 총 평가금액 {total_eval:,} 에바 (전체 수익률 {total_rate:+.1f}%)"
+                summary += f" / 총 평가금액 {total_eval:,} {currency()} (전체 수익률 {total_rate:+.1f}%)"
                 return summary
 
             # 🚦 재시도 예산을 두 종류로 나눠서 관리합니다. 원인도 회복 속도도 달라서요.
@@ -737,7 +742,7 @@ class MariGPT(commands.Cog):
                                 print(f"⚠️ [빈 응답] 구글이 내용 없는 답을 돌려줬어요. {empty_retry_delay}초 후 다시 물어봅니다... ({empty_retries}/{max_empty_retries})")
                                 await asyncio.sleep(empty_retry_delay)
                                 continue
-                            await message.channel.send(f"{message.author.mention} 음.. 마리가 지금 잠깐 딴생각 하느라 못 들었나 봐요. 다시 한번 말해줄래요?")
+                            await message.channel.send(f"{message.author.mention} 음.. {bot_name()}{josa(bot_name(), '이가')} 지금 잠깐 딴생각 하느라 못 들었나 봐요. 다시 한번 말해줄래요?")
                             return
 
                         # 🗣️ 이번 턴(유저 말 + 마리 답)을 한 쌍으로 저장 (파일 영구 저장)
@@ -747,7 +752,7 @@ class MariGPT(commands.Cog):
                         await message.channel.send(f"{message.author.mention} {reply}")
                         # 🏷️ [신규] 명령어 응답과 헷갈리지 않도록, GPT 답변이라는 걸 여기서 직접 명시해서 기록
                         if message.guild:
-                            self._append_log_entry(message.guild.id, "마리", reply, source="GPT 응답")
+                            self._append_log_entry(message.guild.id, bot_name(), reply, source="GPT 응답")
                         return
                 
                 except Exception as e:

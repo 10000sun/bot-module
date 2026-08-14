@@ -12,6 +12,7 @@ from mari_storage import atomic_json_save, atomic_json_save_or_raise, safe_json_
 from mari_settings import feature_gate, has_admin_or_role, load_settings, send_log_embed
 from mari_state import load_ledger, record_ledger, record_ledger_many
 from mari_utils import MariView, chunk_lines, describe_user_error, portfolio_value
+from mari_names import currency, josa
 
 # 🧩 [정리] 예전엔 여기 `from cogs.shop import WalletGiftView`가 있었어요. /지갑에 붙는
 # 선물 버튼인데, 아이템은 상점 데이터라 UI·로직이 MariShop 쪽에 있거든요.
@@ -31,7 +32,7 @@ class UndoGiveSelect(discord.ui.Select):
             total = sum(abs(e["delta"]) for e in b["rows"])
             when = b["ts"][5:16].replace("T", " ")
             icon = "📤" if b["kind"] == "관리자 지급" else "📥"
-            label = f"{icon} {when} · {total:,} 에바"
+            label = f"{icon} {when} · {total:,} {currency()}"
             desc = f"{b['kind']} · 대상 {len(b['rows'])}명 · {b['detail'][:50]}"
             options.append(discord.SelectOption(label=label[:100], description=desc[:100], value=b["id"]))
 
@@ -112,16 +113,22 @@ class WalletCleanConfirmView(MariView):
         self.stop()
         await interaction.followup.send("🚫 취소했어요. 지갑은 하나도 지워지지 않았어요.", ephemeral=True)
 
-class TransferAmountModal(discord.ui.Modal, title="💸 에바 보내기"):
+class TransferAmountModal(discord.ui.Modal, title="💸 송금"):
     """멤버를 우클릭해서 송금할 때 금액만 받는 창.
 
     받을 사람은 우클릭한 그 사람으로 이미 정해져 있어서, 금액만 적으면 끝이에요.
+
+    ⚠️ 제목과 입력칸 이름은 클래스 자리가 아니라 __init__에서 정합니다. 클래스 본문은
+       봇이 켜질 때 딱 한 번 실행되기 때문에, 재화 이름을 거기서 넣으면 `/초기설정`으로
+       이름을 바꿔도 이 창만 옛 이름으로 남아요.
     """
 
-    금액 = discord.ui.TextInput(label="보낼 에바", placeholder="예) 1000", max_length=12)
+    금액 = discord.ui.TextInput(label="금액", placeholder="예) 1000", max_length=12)
 
     def __init__(self, economy_cog, receiver: discord.Member):
         super().__init__()
+        self.title = f"💸 {currency()} 보내기"
+        self.금액.label = f"보낼 {currency()}"
         self.economy_cog = economy_cog
         self.receiver = receiver
 
@@ -165,7 +172,7 @@ class MariEconomy(commands.Cog):
         self.midnight_reset_loop.start()
 
         # 🖱️ [신규] 멤버 우클릭 → 앱 → 에바 보내기 (받을 사람 고르는 단계가 사라져요)
-        self.transfer_menu = app_commands.ContextMenu(name="에바 보내기", callback=self.transfer_menu_callback)
+        self.transfer_menu = app_commands.ContextMenu(name="송금하기", callback=self.transfer_menu_callback)
         self.bot.tree.add_command(self.transfer_menu)
 
     def cog_unload(self):
@@ -292,9 +299,9 @@ class MariEconomy(commands.Cog):
 
     # ========== 🧾 [신규] 에바 거래 내역 / 지급 되돌리기 / 서버 통계 ==========
 
-    지갑내역 = app_commands.Group(name="지갑내역", description="에바 입출금 내역을 확인해요.")
+    지갑내역 = app_commands.Group(name="지갑내역", description=f"{currency()} 입출금 내역을 확인해요.")
 
-    @지갑내역.command(name="조회", description="내 에바가 언제 얼마나 들어오고 나갔는지 확인해요.")
+    @지갑내역.command(name="조회", description=f"내 {currency()}{josa(currency(), '이가')} 언제 얼마나 들어오고 나갔는지 확인해요.")
     @app_commands.describe(개수="한 번에 볼 내역 수 (기본 15개, 최대 50개)")
     @app_commands.guild_only()
     async def ledger_view(self, interaction: discord.Interaction, 개수: Optional[int] = 15):
@@ -320,7 +327,7 @@ class MariEconomy(commands.Cog):
         total_out = sum(-e["delta"] for e in entries if e["delta"] < 0)
 
         embed = discord.Embed(
-            title=f"🧾 {interaction.user.display_name}님의 에바 거래 내역",
+            title=f"🧾 {interaction.user.display_name}님의 {currency()} 거래 내역",
             description="\n".join(lines)[:4000],
             color=0x5ce6b4,
         )
@@ -328,7 +335,7 @@ class MariEconomy(commands.Cog):
                               f"총 입금 {total_in:,} / 총 출금 {total_out:,}")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    @지갑내역.command(name="유저조회", description="[관리자] 특정 유저의 에바 거래 내역을 확인해요.")
+    @지갑내역.command(name="유저조회", description=f"[관리자] 특정 유저의 {currency()} 거래 내역을 확인해요.")
     @app_commands.describe(유저="내역을 확인할 유저", 개수="한 번에 볼 내역 수 (기본 15개, 최대 50개)")
     @app_commands.guild_only()
     async def ledger_view_user(self, interaction: discord.Interaction,
@@ -354,7 +361,7 @@ class MariEconomy(commands.Cog):
             lines.append(f"`{when}` {sign}{e['delta']:,}{bal}\n　└ {e['kind']}{detail}{revert}")
 
         embed = discord.Embed(
-            title=f"🧾 {유저.display_name}님의 에바 거래 내역",
+            title=f"🧾 {유저.display_name}님의 {currency()} 거래 내역",
             description="\n".join(lines)[:4000],
             color=0x5ce6b4,
         )
@@ -437,15 +444,15 @@ class MariEconomy(commands.Cog):
             fields=[
                 ("원래 처리", f"{kind} · {rows[0].get('detail','')}", False),
                 ("대상 인원", f"{len(rows)}명", True),
-                ("되돌린 총액", f"{total:,} 에바", True),
+                ("되돌린 총액", f"{total:,} {currency()}", True),
                 ("처리 관리자", interaction.user.mention, True),
             ],
         )
         await interaction.followup.send(
-            f"✅ `{kind}` 건을 되돌렸어요. (대상 {len(rows)}명 · 총 {total:,} 에바)", ephemeral=True
+            f"✅ `{kind}` 건을 되돌렸어요. (대상 {len(rows)}명 · 총 {total:,} {currency()})", ephemeral=True
         )
 
-    @app_commands.command(name="통계", description="서버 활동 요약을 보여줘요. (출석률·에바 유통량·거래 활발도)")
+    @app_commands.command(name="통계", description=f"서버 활동 요약을 보여줘요. (출석률·{currency()} 유통량·거래 활발도)")
     @app_commands.guild_only()
     async def server_stats(self, interaction: discord.Interaction):
         await interaction.response.defer()
@@ -499,8 +506,8 @@ class MariEconomy(commands.Cog):
             timestamp=dt.datetime.now(dt.timezone.utc),
         )
         embed.add_field(
-            name="💰 에바 유통량",
-            value=(f"총 **{total_eva:,}** 에바 (지갑 {holders}명)\n"
+            name=f"💰 {currency()} 유통량",
+            value=(f"총 **{total_eva:,}** {currency()} (지갑 {holders}명)\n"
                    f"평균 {avg_eva:,} · 중앙값 {median_eva:,}\n"
                    f"상위 10명이 전체의 **{top10_share:.1f}%** 보유"
                    + (f"\n⚠️ 마이너스 잔고 {negatives}명" if negatives else "")),
@@ -526,14 +533,14 @@ class MariEconomy(commands.Cog):
         embed.add_field(
             name="📈 주식",
             value=(f"상장 **{len(stocks_dict)}종목** · 투자자 **{investors}명**\n"
-                   f"주식 평가총액 **{stock_value:,}** 에바"),
+                   f"주식 평가총액 **{stock_value:,}** {currency()}"),
             inline=False,
         )
 
         # 💬 채팅량 (내용·작성자는 저장하지 않고 개수만 셉니다)
         embed.add_field(name="💬 채팅량", value=self._build_chat_stats_text(), inline=False)
 
-        embed.set_footer(text="에바 유통량·주식은 현재 서버에 남아있는 멤버 기준이에요")
+        embed.set_footer(text=f"{currency()} 유통량·주식은 현재 서버에 남아있는 멤버 기준이에요")
         await interaction.followup.send(embed=embed)
 
     def _build_chat_stats_text(self) -> str:
@@ -592,7 +599,7 @@ class MariEconomy(commands.Cog):
 
     # --- 슬래시 명령어 구현 ---
 
-    @app_commands.command(name="지갑", description="본인의 에바 잔고와 보유 중인 아이템 목록을 확인해요")
+    @app_commands.command(name="지갑", description=f"본인의 {currency()} 잔고와 보유 중인 아이템 목록을 확인해요")
     @app_commands.describe(
         member="확인할 멤버 선택 (비워두면 본인 지갑)",
         전체="서버 인원 전체의 지갑을 표로 한꺼번에 조회해요. (관리자·상점주인 전용)"
@@ -657,7 +664,7 @@ class MariEconomy(commands.Cog):
         # 2. 화폐 정보 필드 (크고 깔끔하게 강조)
         embed.add_field(
             name="🪙 보유 화폐", 
-            value=f"**{balance:,} 에바**를 보유 중이세요.", 
+            value=f"**{balance:,} {currency()}**{josa(currency(), '을를')} 보유 중이세요.", 
             inline=False
         )
         
@@ -776,16 +783,16 @@ class MariEconomy(commands.Cog):
             )
             if idx == len(chunks) - 1:
                 embed.add_field(name="총 인원", value=f"{len(rows)}명", inline=True)
-                embed.add_field(name="💰 지갑 합계", value=f"{total:,} 에바", inline=True)
-                embed.add_field(name="📈 주식 평가액 합계", value=f"{total_stock:,} 에바", inline=True)
-                embed.add_field(name=total_label, value=f"**{total + total_stock:,} 에바**", inline=False)
+                embed.add_field(name="💰 지갑 합계", value=f"{total:,} {currency()}", inline=True)
+                embed.add_field(name="📈 주식 평가액 합계", value=f"{total_stock:,} {currency()}", inline=True)
+                embed.add_field(name=total_label, value=f"**{total + total_stock:,} {currency()}**", inline=False)
                 if not stock_cog:
                     embed.add_field(name="⚠️ 참고", value="주식 시스템을 불러올 수 없어서 주식 평가액이 0으로 표시됐어요.", inline=False)
             embed.set_footer(text=f"조회자: {interaction.user.display_name}")
             await interaction.followup.send(embed=embed, ephemeral=True)
 
-    @app_commands.command(name="송금", description="다른 사람에게 에바를 송금해요!")
-    @app_commands.describe(member="돈을 받을 멤버 선택", amount="보낼 에바 수량")
+    @app_commands.command(name="송금", description=f"다른 사람에게 {currency()}{josa(currency(), '을를')} 송금해요!")
+    @app_commands.describe(member="돈을 받을 멤버 선택", amount=f"보낼 {currency()} 수량")
     async def transfer_money_slash(self, interaction: discord.Interaction, member: discord.Member, amount: int):
         if await feature_gate(interaction, "transfer", "송금"):
             return
@@ -829,7 +836,7 @@ class MariEconomy(commands.Cog):
             if sender_balance < 0:
                 error = "❌ 현재 잔고가 마이너스(-) 상태이므로 송금할 수 없어요! 😢"
             elif sender_balance < amount:
-                error = f"❌ 잔고가 부족합니다! (보유 잔고: {sender_balance:,} 에바)"
+                error = f"❌ 잔고가 부족합니다! (보유 잔고: {sender_balance:,} {currency()})"
             else:
                 data[sender_id] = sender_balance - amount
                 data[receiver_id] = data[receiver_id] + amount
@@ -844,18 +851,18 @@ class MariEconomy(commands.Cog):
         record_ledger(sender_id, -amount, sender_after, "송금 보냄", f"→ {member.display_name}")
         record_ledger(receiver_id, amount, receiver_after, "송금 받음", f"← {interaction.user.display_name}")
 
-        await interaction.response.send_message(f"💸 {interaction.user.mention}님이 {member.mention}님에게 **{amount:,} 에바**를 보냈어요! 배달 완료! ✨")
+        await interaction.response.send_message(f"💸 {interaction.user.mention}님이 {member.mention}님에게 **{amount:,} {currency()}**{josa(currency(), '을를')} 보냈어요! 배달 완료! ✨")
 
         await self._log_economy_action(
             title="💸 [송금 완료]",
             description=f"**송금 유저:** {interaction.user.mention}\n"
                         f"**수신 유저:** {member.mention}\n"
-                        f"**송금 액수:** {amount:,} 에바\n"
-                        f"**송금자 잔여:** {sender_after:,} 에바",
+                        f"**송금 액수:** {amount:,} {currency()}\n"
+                        f"**송금자 잔여:** {sender_after:,} {currency()}",
             color=0x3498db
         )
 
-    @app_commands.command(name="지급", description="[관리자] 특정 유저 또는 특정 역할을 가진 모든 유저에게 에바를 지급합니다.")
+    @app_commands.command(name="지급", description=f"[관리자] 특정 유저 또는 특정 역할을 가진 모든 유저에게 {currency()}{josa(currency(), '을를')} 지급합니다.")
     @app_commands.guild_only()
     async def give_money(self, interaction: discord.Interaction, 금액: int, 유저: Optional[discord.Member] = None, 역할: Optional[discord.Role] = None):
         # 1. 관리자 권한 확인 (/지갑청소·/랭킹 등과 같은 기준을 쓰도록 공용 헬퍼에 위임)
@@ -864,7 +871,7 @@ class MariEconomy(commands.Cog):
         
         # 2. 금액 검증
         if 금액 <= 0:
-            return await interaction.response.send_message("❌ 지급할 금액은 1 에바 이상이어야 합니다.", ephemeral=True)
+            return await interaction.response.send_message(f"❌ 지급할 금액은 1 {currency()} 이상이어야 합니다.", ephemeral=True)
             
         # 3. 대상 인자 값 유효성 검사 (둘 다 안 넣었거나 둘 다 넣은 경우 방어)
         if 유저 is None and 역할 is None:
@@ -905,19 +912,19 @@ class MariEconomy(commands.Cog):
 
         # 7. 경제 로그 채널에 깔끔한 통합 영수증 발송
         await send_log_embed(
-            self.bot, "economy_log", "에바 일괄 지급 기록이에요.",
+            self.bot, "economy_log", f"{currency()} 일괄 지급 기록이에요.",
             fields=[
                 ("지급 대상", target_mention_str, False),
-                ("지급 금액", f"{금액:,} 에바", True),
+                ("지급 금액", f"{금액:,} {currency()}", True),
                 ("처리 관리자", interaction.user.mention, True),
             ],
         )
 
         # 8. 명령어 호출 완료 피드백
-        await interaction.followup.send(f"✅ {target_mention_str}에게 `{금액:,} 에바`를 지급 완료했어요.")
+        await interaction.followup.send(f"✅ {target_mention_str}에게 `{금액:,} {currency()}`{josa(currency(), '을를')} 지급 완료했어요.")
 
 
-    @app_commands.command(name="회수", description="[관리자] 특정 유저 또는 특정 역할을 가진 모든 유저에게서 에바를 회수합니다.")
+    @app_commands.command(name="회수", description=f"[관리자] 특정 유저 또는 특정 역할을 가진 모든 유저에게서 {currency()}{josa(currency(), '을를')} 회수합니다.")
     @app_commands.guild_only()
     async def take_money(self, interaction: discord.Interaction, 금액: int, 유저: Optional[discord.Member] = None, 역할: Optional[discord.Role] = None):
         # 1. 관리자 권한 확인 (/지갑청소·/랭킹 등과 같은 기준을 쓰도록 공용 헬퍼에 위임)
@@ -926,7 +933,7 @@ class MariEconomy(commands.Cog):
         
         # 2. 금액 검증
         if 금액 <= 0:
-            return await interaction.response.send_message("❌ 회수할 금액은 1 에바 이상이어야 합니다.", ephemeral=True)
+            return await interaction.response.send_message(f"❌ 회수할 금액은 1 {currency()} 이상이어야 합니다.", ephemeral=True)
             
         # 3. 대상 인자 값 유효성 검사
         if 유저 is None and 역할 is None:
@@ -967,16 +974,16 @@ class MariEconomy(commands.Cog):
 
         # 7. 경제 로그 채널에 깔끔한 통합 영수증 발송
         await send_log_embed(
-            self.bot, "economy_log", "에바 일괄 회수 기록이에요.",
+            self.bot, "economy_log", f"{currency()} 일괄 회수 기록이에요.",
             fields=[
                 ("회수 대상", target_mention_str, False),
-                ("회수 금액", f"{금액:,} 에바", True),
+                ("회수 금액", f"{금액:,} {currency()}", True),
                 ("처리 관리자", interaction.user.mention, True),
             ],
         )
 
         # 8. 명령어 호출 완료 피드백
-        await interaction.followup.send(f"✅ {target_mention_str}에게서 `{금액:,} 에바`를 회수 완료했어요.")
+        await interaction.followup.send(f"✅ {target_mention_str}에게서 `{금액:,} {currency()}`{josa(currency(), '을를')} 회수 완료했어요.")
 
     @app_commands.command(name="지갑청소", description="[관리자] 서버를 나간 사람들의 지갑 데이터를 일괄 삭제하여 정리합니다.")
     @app_commands.guild_only()
@@ -1012,7 +1019,7 @@ class MariEconomy(commands.Cog):
 
         total = sum(bal for _, bal in targets)
         top = sorted(targets, key=lambda t: t[1], reverse=True)
-        preview = "\n".join(f"• `{uid}` — {bal:,} 에바" for uid, bal in top[:10])
+        preview = "\n".join(f"• `{uid}` — {bal:,} {currency()}" for uid, bal in top[:10])
         if len(targets) > 10:
             preview += f"\n... 외 {len(targets) - 10}명"
 
@@ -1020,7 +1027,7 @@ class MariEconomy(commands.Cog):
             title="🧹 지갑청소 — 정말 지울까요?",
             description=(
                 f"서버에 없는 유저 **{len(targets)}명**의 지갑을 삭제합니다.\n"
-                f"파기될 유령 잔고: 총 **{total:,} 에바**\n\n"
+                f"파기될 유령 잔고: 총 **{total:,} {currency()}**\n\n"
                 f"⚠️ 한 번 지우면 **백업 복원 말고는 되돌릴 방법이 없어요.**"
             ),
             color=0xE67E22,
@@ -1085,18 +1092,18 @@ class MariEconomy(commands.Cog):
         await interaction.followup.send(
             f"🧹 **[지갑 데이터 청소 완료]**\n"
             f"서버를 퇴장한 유저 **{cleaned_count}명**의 지갑 데이터를 성공적으로 파기했어요!\n"
-            f"정리된 유령 잔고 규모: 총 **{recovered_eva:,} 에바**{note}"
+            f"정리된 유령 잔고 규모: 총 **{recovered_eva:,} {currency()}**{note}"
         )
         await self._log_economy_action(
             title="🧹 [디비 청소 작업 수행]",
             description=f"**작업자:** {interaction.user.mention}\n"
                         f"**정리된 유저 수:** {cleaned_count} 명\n"
-                        f"**파기된 총 에바:** {recovered_eva:,} 에바",
+                        f"**파기된 총 {currency()}:** {recovered_eva:,} {currency()}",
             color=0x95a5a6
         )
 
-    @app_commands.command(name="출석보상설정", description="[관리자] 하루 출석체크 시 지급할 기본 에바 보상 액수를 조정합니다.")
-    @app_commands.describe(amount="새로 지정할 출석 에바 보상 액수")
+    @app_commands.command(name="출석보상설정", description=f"[관리자] 하루 출석체크 시 지급할 기본 {currency()} 보상 액수를 조정합니다.")
+    @app_commands.describe(amount=f"새로 지정할 출석 {currency()} 보상 액수")
     @app_commands.guild_only()
     async def set_attendance_reward_slash(self, interaction: discord.Interaction, amount: int):
         if not self._is_shop_owner(interaction):
@@ -1104,7 +1111,7 @@ class MariEconomy(commands.Cog):
             return
 
         if amount <= 0:
-            await interaction.response.send_message("❌ 보상 금액은 최소 **1 에바** 이상으로 설정해야 합니다! (음수 및 0 불가)", ephemeral=True)
+            await interaction.response.send_message(f"❌ 보상 금액은 최소 **1 {currency()}** 이상으로 설정해야 합니다! (음수 및 0 불가)", ephemeral=True)
             return
 
         async with self.bot.economy_lock:
@@ -1115,18 +1122,18 @@ class MariEconomy(commands.Cog):
 
         await interaction.response.send_message(
             f"⚙️ **[출석 보상 변경 완료]**\n"
-            f"출석체크 기본 보상이 기존 **{old_amount:,} 에바**에서 ➡️ **{amount:,} 에바**로 변경됐어요!"
+            f"출석체크 기본 보상이 기존 **{old_amount:,} {currency()}**에서 ➡️ **{amount:,} {currency()}**{josa(currency(), '으로로')} 변경됐어요!"
         )
 
         await self._log_economy_action(
             title="⚙️ [출석 보상 변경 알림]",
             description=f"**설정 변경자:** {interaction.user.mention}\n"
-                        f"**이전 보상:** {old_amount:,} 에바\n"
-                        f"**새로운 보상:** {amount:,} 에바",
+                        f"**이전 보상:** {old_amount:,} {currency()}\n"
+                        f"**새로운 보상:** {amount:,} {currency()}",
             color=0x9b59b6
         )
 
-    @app_commands.command(name="출석", description="매일 한 번 출석체크를 하고 에바를 받아요!")
+    @app_commands.command(name="출석", description=f"매일 한 번 출석체크를 하고 {currency()}{josa(currency(), '을를')} 받아요!")
     async def do_attendance_slash(self, interaction: discord.Interaction):
         if await feature_gate(interaction, "attendance", "출석"):
             return
@@ -1208,6 +1215,6 @@ class MariEconomy(commands.Cog):
         await interaction.followup.send(
             f"📅 **{interaction.user.display_name}님 출석 완료!**\n"
             f"{rank_comment}\n"
-            f"🪙 보상으로 **{reward:,} 에바**가 지갑에 지급됐어요!\n"
+            f"🪙 보상으로 **{reward:,} {currency()}**{josa(currency(), '이가')} 지갑에 지급됐어요!\n"
             f"📊 총 출석 횟수: **{total_attendance_days}회째** ✨"
         )

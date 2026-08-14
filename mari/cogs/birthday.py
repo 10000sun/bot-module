@@ -9,6 +9,7 @@ from mari_config import BIRTHDAY_FILE, BIRTHDAY_MENTION_ROLE_ID, KST, SETTINGS_F
 from mari_alerts import report_loop_error
 from mari_storage import atomic_json_save_or_raise, safe_json_load
 from mari_settings import feature_gate, is_feature_enabled, load_settings, send_log_embed
+from mari_names import bot_name
 
 class MariBirthday(commands.Cog):
     """마리봇 생일 알림 및 유저 데이터 관리 시스템 (설정 기능 분리 버전)"""
@@ -66,7 +67,7 @@ class MariBirthday(commands.Cog):
     # ---------------------------------------------------------
     # 📌 명령어 그룹 생성 (/생일)
     # ---------------------------------------------------------
-    생일 = app_commands.Group(name="생일", description="마리봇 생일 관련 시스템이에요.")
+    생일 = app_commands.Group(name="생일", description=f"{bot_name()}봇 생일 관련 시스템이에요.")
 
     @생일.command(name="등록", description="본인의 생일을 등록합니다. (예: 2000년 7월 24일 -> 년: 2000, 월: 7, 일: 24)")
     @app_commands.guild_only()
@@ -207,7 +208,7 @@ class MariBirthday(commands.Cog):
                     
                     date_str = f"`{birth_year}년 {current_month}월 {current_day}일`" if birth_year else f"`{current_month}월 {current_day}일`"
                     embed.add_field(name="날짜", value=date_str, inline=True)
-                    embed.set_footer(text="마리 생일 알림 시스템", icon_url=self.bot.user.display_avatar.url)
+                    embed.set_footer(text=f"{bot_name()} 생일 알림 시스템", icon_url=self.bot.user.display_avatar.url)
                     
                     try:
                         # 🏷️ [신규] 스레드에서만 축하하는 게 아니라, 본문 자체에도 지정된 역할을

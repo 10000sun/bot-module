@@ -26,6 +26,7 @@ from mari_config import CHRONICLE_FILE, KST
 from mari_settings import member_has_admin_or_role
 from mari_storage import atomic_json_save_or_raise, safe_json_load
 from mari_utils import MariView
+from mari_names import server_name
 
 # 🏷️ 사건 분류. 앞에 붙는 이모지는 목록에서 한눈에 구분하려고 쓰는 거예요.
 CHRONICLE_TAGS = ["이벤트", "기록", "사건", "인물", "공지"]
@@ -105,7 +106,7 @@ class ChroniclePageView(MariView):
         # 정렬을 뒤집거나 필터가 바뀌면 페이지 번호가 범위를 벗어날 수 있어서 여기서 맞춰줍니다.
         self.page = max(0, min(self.page, total_pages - 1))
 
-        title = "📜 에바스타운 연대기"
+        title = f"📜 {server_name()} 연대기"
         if self.tag:
             title += f" · {TAG_EMOJI.get(self.tag, '')}{self.tag}"
         embed = discord.Embed(title=title, color=0x5CE6B4)

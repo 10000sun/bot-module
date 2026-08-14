@@ -42,6 +42,7 @@ from mari_config import BASE_DIR, DISCORD_TOKEN, intents
 from mari_alerts import send_alert_sync
 from mari_client import MariBotClient
 from mari_state import state
+from mari_names import bot_name, josa
 
 bot = MariBotClient(command_prefix="/", intents=intents)
 
@@ -64,7 +65,7 @@ async def main():
     except Exception as e:
         print(f"❌ 아이디 데이터를 읽을 수 없어요: {type(e).__name__}: {e}")
         send_alert_sync(
-            "🔴 마리봇 기동 실패",
+            f"🔴 {bot_name()}봇 기동 실패",
             f"`ids.json`을 읽지 못해서 봇을 시작할 수 없어요.\n\n**{type(e).__name__}**: {e}",
         )
         return
@@ -75,15 +76,15 @@ async def main():
         # 토큰이 재발급되면 예전 토큰은 즉시 무효가 돼요. 가장 흔한 기동 실패 원인입니다.
         print("❌ 봇 토큰이 올바르지 않아요. 디스코드 개발자 포털에서 토큰을 다시 확인해 주세요.")
         send_alert_sync(
-            "❌ 마리봇 로그인 실패",
+            f"❌ {bot_name()}봇 로그인 실패",
             "봇 토큰이 유효하지 않아요. 토큰이 재발급됐는지 확인하고 .env를 갱신해 주세요.",
         )
     except Exception as e:
-        print("❗예외 발생! 마리가 깜짝 놀랐어요:", e)
+        print(f"❗예외 발생! {bot_name()}{josa(bot_name(), '이가')} 깜짝 놀랐어요:", e)
         traceback.print_exc()
         # 🚨 [신규] 예상 못한 종료는 반드시 관리자에게 알립니다.
         send_alert_sync(
-            "🔴 마리봇이 예기치 않게 종료됐어요",
+            f"🔴 {bot_name()}봇이 예기치 않게 종료됐어요",
             f"**{type(e).__name__}**: {e}\n\n```\n{traceback.format_exc()[-1200:]}\n```",
         )
         # ⚙️ 프로세스를 0이 아닌 코드로 끝내야 systemd/도커의 자동 재시작이 동작해요.
@@ -102,9 +103,9 @@ if __name__ == "__main__":
         asyncio.run(main())
     except KeyboardInterrupt:
         # 관리자가 직접 껐을 때. 크래시와 구분해서 알려야 새벽에 헛걸음하지 않아요.
-        print("\n👋 마리봇을 수동으로 종료했어요.")
+        print(f"\n👋 {bot_name()}봇을 수동으로 종료했어요.")
         send_alert_sync(
-            "🟡 마리봇이 수동으로 종료됐어요",
+            f"🟡 {bot_name()}봇이 수동으로 종료됐어요",
             "관리자가 직접 봇을 껐어요. (Ctrl+C)",
             color=0xF1C40F,
         )

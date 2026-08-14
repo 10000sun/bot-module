@@ -13,6 +13,7 @@ from mari_storage import SAVE_FAILURES, safe_json_load
 from mari_settings import _get_role_ids, has_admin_or_role, load_settings
 from mari_state import state
 from mari_utils import KNOWN_PLATFORMS, _looks_like_id_entry, _split_platform_and_id, normalize_platform
+from mari_names import bot_name, currency, event_name
 
 # ========== 🧪 [신규] 관리자 전용 테스트 도구 모음 ==========
 
@@ -39,7 +40,7 @@ class MariTest(commands.Cog):
             "attendance": "📅 출석체크", "economy_log": "💰 경제 로그", "shop_log": "🛒 상점 로그",
             "stock_board": "📈 주식 전광판", "stock_log": "📊 주식 로그", "closing_log": "🔔 종가 게시판",
             "id_log": "🆔 아이디 로그", "role_log": "👥 역할 로그",
-            "birthday_announce": "🎂 생일 알림", "birthday_log": "🎉 생일 로그", "evashi_announce": "🎉 에바시 안내",
+            "birthday_announce": "🎂 생일 알림", "birthday_log": "🎉 생일 로그", "evashi_announce": f"🎉 {event_name()} 안내",
             "id_submit": "🆔 아이디 자동등록", "level_roster": "📋 아이디 명단",
         }
         settings = load_settings()
@@ -82,7 +83,7 @@ class MariTest(commands.Cog):
         role_map = settings.get("roles", {})
         role_labels = {
             "ids_admin": "🆔 아이디 관리자", "shop_admin": "🛒 상점 관리자", "stock_admin": "📈 주식 관리자",
-            "evashi_admin": "🎉 에바시 관리자",
+            "evashi_admin": f"🎉 {event_name()} 관리자",
             "chronicle_admin": "📜 연대기 관리자", "chief_role": "👑 대장",
             "test_admin": "🧪 테스트 관리자",
         }
@@ -102,14 +103,14 @@ class MariTest(commands.Cog):
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     # ---------- 3. 에바시 강제 오픈 ----------
-    @test_group.command(name="에바시", description="[관리자] 에바시 이벤트 창을 짧게 강제로 열어서 전체 흐름(리액션/마감공지/보상)을 테스트해요.")
+    @test_group.command(name="이벤트", description=f"[관리자] {event_name()} 이벤트 창을 짧게 강제로 열어서 전체 흐름(리액션/마감공지/보상)을 테스트해요.")
     @app_commands.describe(초="테스트용 창 지속시간(초). 기본 15초")
     async def test_evashi(self, interaction: discord.Interaction, 초: int = 15):
         if not self._is_server_admin(interaction):
             return await interaction.response.send_message("⛔ 서버 관리자 또는 테스트 관리자만 사용할 수 있어요.", ephemeral=True)
         games_cog = self.bot.get_cog("MariGames")
         if not games_cog:
-            return await interaction.response.send_message("❌ 에바시 시스템을 찾을 수 없어요.", ephemeral=True)
+            return await interaction.response.send_message(f"❌ {event_name()} 시스템을 찾을 수 없어요.", ephemeral=True)
 
         games_cog.evashi_participants = set()
         games_cog.evashi_first_claimed = 0
@@ -121,7 +122,7 @@ class MariTest(commands.Cog):
         games_cog.evashi_close_task = asyncio.create_task(games_cog._close_evashi_window_later(초))
 
         await interaction.response.send_message(
-            f"🧪 테스트용 에바시 창을 **{초}초** 동안 열었어요! 아무 채널에서나 \"에바시\"라고 쳐보세요.", ephemeral=True
+            f"🧪 테스트용 {event_name()} 창을 **{초}초** 동안 열었어요! 아무 채널에서나 \"{event_name()}\"라고 쳐보세요.", ephemeral=True
         )
 
     # ---------- 4. 출석초기화 ----------
@@ -174,19 +175,19 @@ class MariTest(commands.Cog):
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     # ---------- 6. 마리 상태 ----------
-    @test_group.command(name="마리상태", description="[관리자] Gemini API 연결과 RPM/RPD 사용량을 확인해요.")
+    @test_group.command(name="ai상태", description="[관리자] Gemini API 연결과 RPM/RPD 사용량을 확인해요.")
     async def test_mari_status(self, interaction: discord.Interaction):
         if not self._is_server_admin(interaction):
             return await interaction.response.send_message("⛔ 서버 관리자 또는 테스트 관리자만 사용할 수 있어요.", ephemeral=True)
         gpt_cog = self.bot.get_cog("MariGPT")
         if not gpt_cog:
-            return await interaction.response.send_message("❌ 마리 AI 시스템을 찾을 수 없어요.", ephemeral=True)
+            return await interaction.response.send_message(f"❌ {bot_name()} AI 시스템을 찾을 수 없어요.", ephemeral=True)
 
         current_time = dt.datetime.now().timestamp()
         recent_calls = [t for t in gpt_cog.minutely_timestamps if current_time - t < 60]
         daily_count = gpt_cog._get_daily_count()
 
-        embed = discord.Embed(title="🤖 마리 AI 상태", color=discord.Color.green())
+        embed = discord.Embed(title=f"🤖 {bot_name()} AI 상태", color=discord.Color.green())
         embed.add_field(name="분당 호출", value=f"{len(recent_calls)} / {gpt_cog.RPM_LIMIT}", inline=True)
         embed.add_field(name="오늘 호출", value=f"{daily_count} / {gpt_cog.RPD_LIMIT}", inline=True)
         embed.add_field(name="API 키 설정", value="✅ 있음" if gpt_cog.GEMINI_API_KEY else "❌ 없음", inline=True)
@@ -328,7 +329,7 @@ class MariTest(commands.Cog):
             reason = info.get("pending_reason") if had_pending else info.get("reason", "정보 없음")
             change = new_price - old_price
             arrow = "🔺" if change > 0 else ("🔻" if change < 0 else "➖")
-            lines.append(f"{arrow} **{name}**: {old_price:,} → {new_price:,} 에바 (사유: {reason})")
+            lines.append(f"{arrow} **{name}**: {old_price:,} → {new_price:,} {currency()} (사유: {reason})")
 
         embed = discord.Embed(
             title="🧪 종가게시 미리보기 (실제로 반영되지 않았어요)",

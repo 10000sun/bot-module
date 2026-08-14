@@ -16,6 +16,7 @@ from mari_storage import atomic_json_save_or_raise, safe_json_load
 from mari_settings import _get_role_ids, feature_gate, is_feature_enabled, load_settings, member_has_admin_or_role, save_settings, send_log_embed
 from mari_state import state
 from mari_utils import KNOWN_PLATFORMS, MariView, _looks_like_id_entry, _split_platform_and_id, extract_id_from_mention, find_guild_member_by_name, get_platform_candidates, next_misc_name, next_platform_name, normalize_platform, notify_log, parse_legacy_id_document, respond_modify
+from mari_names import bot_name, josa
 
 class ImportConfirmView(MariView):
     """/아이디목록가져오기 미리보기 결과를 실제로 등록할지 확인받는 버튼"""
@@ -221,7 +222,7 @@ class MariCore(commands.Cog):
             return None
         embed = discord.Embed(
             title=f"🎮 {user.display_name}님의 게임 아이디",
-            description="마리가 예쁘게 정리했어요~ 💖",
+            description=f"{bot_name()}{josa(bot_name(), '이가')} 예쁘게 정리했어요~ 💖",
             color=discord.Color.green(),
         )
         # 아이디를 아주 많이 등록한 사람이 있어서, 임베드 필드 25개 한도에 걸리지 않게 잘라요.
@@ -1061,7 +1062,7 @@ class MariCore(commands.Cog):
         await self._refresh_id_roster(interaction.guild)
 
     @id_group.command(name="수정", description="[관리자] 등록된 아이디를 수정해요")
-    @app_commands.describe(user="수정할 유저", platform="플랫폼명 (비워두면 마리가 목록 보여줘, 자동완성으로 이 유저가 등록해둔 플랫폼이 힌트로 떠요)", game_id="새 아이디")
+    @app_commands.describe(user="수정할 유저", platform=f"플랫폼명 (비워두면 {bot_name()}{josa(bot_name(), '이가')} 목록 보여줘, 자동완성으로 이 유저가 등록해둔 플랫폼이 힌트로 떠요)", game_id="새 아이디")
     @app_commands.guild_only()
     async def modify_id(self, interaction: discord.Interaction, user: discord.User, platform: Optional[str] = None, game_id: str = ""):
         if await feature_gate(interaction, "id", "아이디"):
@@ -1445,7 +1446,7 @@ class MariCore(commands.Cog):
         self._boot_log_printed = True
 
         try:
-            print(f"✅ 마리봇이 깨어났어요: {self.bot.user} (ID: {self.bot.user.id})")
+            print(f"✅ {bot_name()}봇이 깨어났어요: {self.bot.user} (ID: {self.bot.user.id})")
             self._print_data_status()
         except Exception as e:
             print("❗ on_ready 초기 출력 중 오류:", type(e).__name__, repr(e))

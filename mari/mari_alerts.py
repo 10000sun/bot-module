@@ -7,6 +7,7 @@ import urllib.request
 import datetime as dt
 
 from mari_config import ALERT_MENTION, ALERT_TIMEOUT, ALERT_WEBHOOK_URL
+from mari_names import bot_name
 
 def send_alert_sync(title: str, description: str, color: int = 0xE74C3C) -> None:
     """관리자 웹훅으로 상태 알림을 보냅니다. (동기 버전 — 이벤트 루프 없이도 동작)
@@ -24,7 +25,7 @@ def send_alert_sync(title: str, description: str, color: int = 0xE74C3C) -> None
             "color": color,
             "timestamp": dt.datetime.now(dt.timezone.utc).isoformat(),
         }
-        payload = {"username": "마리 상태 알림", "embeds": [embed]}
+        payload = {"username": f"{bot_name()} 상태 알림", "embeds": [embed]}
         if ALERT_MENTION:
             payload["content"] = ALERT_MENTION
             payload["allowed_mentions"] = {"parse": ["roles", "users"]}

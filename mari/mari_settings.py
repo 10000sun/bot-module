@@ -180,7 +180,10 @@ def build_log_embed(channel_key: str, description: str, fields: list = None) -> 
     if fields:
         for name, value, inline in fields:
             embed.add_field(name=name, value=value, inline=inline)
-    embed.set_footer(text="마리봇 로그 시스템")
+    # 🔁 여기서만 함수 안에서 import합니다. mari_names가 이 파일(load_settings)을 쓰기 때문에
+    #    맨 위에 두면 서로를 부르는 순환 import가 돼서 봇이 기동조차 못 해요.
+    from mari_names import bot_name
+    embed.set_footer(text=f"{bot_name()}봇 로그 시스템")
     return embed
 
 async def send_log_embed(bot: commands.Bot, channel_key: str, description: str,

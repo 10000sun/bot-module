@@ -21,6 +21,7 @@ from mari_settings import LOG_STYLES, build_log_embed, feature_gate, has_admin_o
 from mari_state import record_ledger
 from mari_utils import (MariView, chunk_lines, holding_avg_price, holding_shares,
                         portfolio_value, report_broken_transaction)
+from mari_names import currency, josa, server_name
 
 # [UI 뷰 클래스] 종가 게시 승인용 버튼 뷰
 class ClosingPriceView(MariView):
@@ -208,7 +209,7 @@ class ClosingPriceView(MariView):
             # 최근 30개의 메시지를 확인하여 봇의 장부 메시지를 수집합니다.
             async for msg in target_board_channel.history(limit=30):
                 if msg.author == self.stock_cog.bot.user and msg.embeds:
-                    if msg.embeds[0].title == "🔔 [에바증권 공개 장부]":
+                    if msg.embeds[0].title == f"🔔 [{currency()}증권 공개 장부]":
                         existing_messages.append(msg)
         except Exception as e:
             print(f"⚠️ 채널 기록 조회 실패: {e}")
@@ -224,7 +225,7 @@ class ClosingPriceView(MariView):
 
         for chunk in chunks:
             embed = discord.Embed(
-                title="🔔 [에바증권 공개 장부]",
+                title=f"🔔 [{currency()}증권 공개 장부]",
                 description=chunk,
                 color=discord.Color.green()
             )
@@ -530,7 +531,7 @@ class MariStock(commands.Cog):
                     user_bal = economy_data.get(user_id, 0)
 
                     if user_bal < total_cost:
-                        error_message = f"❌ 잔액이 부족합니다!\n(필요 에바: {total_cost:,} / 보유 에바: {user_bal:,})"
+                        error_message = f"❌ 잔액이 부족합니다!\n(필요 {currency()}: {total_cost:,} / 보유 {currency()}: {user_bal:,})"
                     else:
                         economy_data[user_id] = user_bal - total_cost
                         if hasattr(economy_cog, '_save_raw_economy'):
@@ -561,7 +562,7 @@ class MariStock(commands.Cog):
                         except Exception as save_err:
                             broken = {
                                 "user_id": user_id,
-                                "lost": f"에바 {total_cost:,}",
+                                "lost": f"{currency()} {total_cost:,}",
                                 "not_received": f"{stock_name} {amount}주",
                                 "error": save_err,
                                 "balance": economy_data[user_id],
@@ -592,9 +593,9 @@ class MariStock(commands.Cog):
             return await interaction.followup.send(error_message, ephemeral=True)
 
         stock_name, current_price, total_cost, balance_after = result
-        await interaction.followup.send(f"✅ {stock_name} 주식을 {amount}주 매수했어요!\n(체결가: {current_price:,} 에바)", ephemeral=True)
+        await interaction.followup.send(f"✅ {stock_name} 주식을 {amount}주 매수했어요!\n(체결가: {current_price:,} {currency()})", ephemeral=True)
         await self._log_to_channel(text=f"📥 {interaction.user.mention}님이 **{stock_name}**을 {amount}주 매수.\n"
-                                         f"💵 체결가: {current_price:,} 에바 | 총 차감: -{total_cost:,} 에바 | 남은 잔고: {balance_after:,} 에바")
+                                         f"💵 체결가: {current_price:,} {currency()} | 총 차감: -{total_cost:,} {currency()} | 남은 잔고: {balance_after:,} {currency()}")
 
     @stock_group.command(name="매도", description="현재가로 주식을 매도합니다. (거래채널 전용)")
     @app_commands.describe(stock="매도할 주식 선택", amount="매도할 주 수")
@@ -687,7 +688,7 @@ class MariStock(commands.Cog):
                             broken = {
                                 "user_id": user_id,
                                 "lost": f"{stock_name} {amount}주",
-                                "not_received": f"에바 {total_earning:,}",
+                                "not_received": f"{currency()} {total_earning:,}",
                                 "error": save_err,
                             }
                         else:
@@ -716,9 +717,9 @@ class MariStock(commands.Cog):
             return await interaction.followup.send(error_message, ephemeral=True)
 
         stock_name, current_price, total_earning, balance_after = result
-        await interaction.followup.send(f"✅ {stock_name} 주식을 {amount}주 매도했어요!\n(체결가: {current_price:,} 에바)", ephemeral=True)
+        await interaction.followup.send(f"✅ {stock_name} 주식을 {amount}주 매도했어요!\n(체결가: {current_price:,} {currency()})", ephemeral=True)
         await self._log_to_channel(text=f"📤 {interaction.user.mention}님이 **{stock_name}**을 {amount}주 매도.\n"
-                                         f"💵 체결가: {current_price:,} 에바 | 총 입금: +{total_earning:,} 에바 | 현재 잔고: {balance_after:,} 에바")
+                                         f"💵 체결가: {current_price:,} {currency()} | 총 입금: +{total_earning:,} {currency()} | 현재 잔고: {balance_after:,} {currency()}")
 
     @stock_group.command(name="포폴", description="본인 또는 타인의 주식 포트폴리오를 조회합니다.")
     @app_commands.describe(member="조회할 유저 (미입력 시 본인)")
@@ -758,7 +759,7 @@ class MariStock(commands.Cog):
                 timestamp=dt.datetime.now(KST)
             )
             embed.set_thumbnail(url=target.display_avatar.url)
-            embed.add_field(name="보유 지갑 잔고", value=f"`{user_bal:,}` 에바", inline=False)
+            embed.add_field(name="보유 지갑 잔고", value=f"`{user_bal:,}` {currency()}", inline=False)
 
             total_eval_asset = 0
             total_purchase_asset = 0
@@ -790,7 +791,7 @@ class MariStock(commands.Cog):
                     table_lines.append(
                         f"**{name}** | `{shares}주` 보유\n"
                         f"평단: `{avg_price:,}` ➡️ 현재가: `{current_price:,}`\n"
-                        f"평가금: `{eval_sum:,}` 에바 ({color_indicator} {sign}{profit_rate:.2f}%)"
+                        f"평가금: `{eval_sum:,}` {currency()} ({color_indicator} {sign}{profit_rate:.2f}%)"
                     )
                 
                 if table_lines:
@@ -805,9 +806,9 @@ class MariStock(commands.Cog):
                     
                     embed.add_field(
                         name="📈 총 주식 평가 요약",
-                        value=f"총 매수금액: `{total_purchase_asset:,}` 에바\n"
-                              f"총 평가금액: `{total_eval_asset:,}` 에바\n"
-                              f"총 순수익: `{total_sign}{total_profit:,}` 에바 ({total_sign}{total_rate:.2f}%)",
+                        value=f"총 매수금액: `{total_purchase_asset:,}` {currency()}\n"
+                              f"총 평가금액: `{total_eval_asset:,}` {currency()}\n"
+                              f"총 순수익: `{total_sign}{total_profit:,}` {currency()} ({total_sign}{total_rate:.2f}%)",
                         inline=False
                     )
 
@@ -890,14 +891,14 @@ class MariStock(commands.Cog):
 
         await interaction.followup.send(
             f"✅ **`{target_stock}` 변동 예약 완료**\n"
-            f"• 현재가: `{current_price:,} 에바` ➡️ **예약 종가: `{pending_price:,} 에바`**\n"
+            f"• 현재가: `{current_price:,} {currency()}` ➡️ **예약 종가: `{pending_price:,} {currency()}`**\n"
             f"• 사유: `{pending_reason}`", 
             ephemeral=True
         )
         
         # 주식변동 로그 연결 추가
         await self._log_to_channel(text=f"⚙️ {interaction.user.mention} 관리자가 **{target_stock}**의 변동을 예약함.\n"
-                                         f"• 변동값 수식: `{input_val}` ➡️ 반영 예정가: `{pending_price:,} 에바`\n"
+                                         f"• 변동값 수식: `{input_val}` ➡️ 반영 예정가: `{pending_price:,} {currency()}`\n"
                                          f"• 찌라시 사유: `{pending_reason}`")
 
     @주식변동.autocomplete('주식명')
@@ -927,7 +928,7 @@ class MariStock(commands.Cog):
         # 평가액·세금 계산까지 전부 음수로 오염됩니다. (`/주식 변동`은 이미 0 아래로는
         # 안 내려가게 막고 있어서, 그 기준을 상장 쪽에도 맞췄어요)
         if price < 0:
-            return await interaction.response.send_message("❌ 상장 가격은 0 에바 이상이어야 해요.", ephemeral=True)
+            return await interaction.response.send_message(f"❌ 상장 가격은 0 {currency()} 이상이어야 해요.", ephemeral=True)
 
         stock_data = self._load_stocks()
         if "stocks" not in stock_data:
@@ -955,10 +956,10 @@ class MariStock(commands.Cog):
         }
         self._save_stocks(stock_data)
         await self.update_stock_board_smart()
-        await interaction.response.send_message(f"📊 신규 주식 **{stock_name}**({price:,} 에바)이 성공적으로 상장됐어요.", ephemeral=True)
+        await interaction.response.send_message(f"📊 신규 주식 **{stock_name}**({price:,} {currency()}){josa(currency(), '이가')} 성공적으로 상장됐어요.", ephemeral=True)
         
         # 신규 상장 로그 연동
-        await self._log_to_channel(text=f"✨ **{interaction.user.mention}** 관리자가 새로운 주식 **[{stock_name}]**을 상장함. (상장가: `{price:,}` 에바)")
+        await self._log_to_channel(text=f"✨ **{interaction.user.mention}** 관리자가 새로운 주식 **[{stock_name}]**을 상장함. (상장가: `{price:,}` {currency()})")
 
     @stock_group.command(name="삭제", description="[관리자] 특정 주식 종목을 상장 폐지합니다.")
     @app_commands.describe(종목="삭제할 주식 선택")
@@ -1031,7 +1032,7 @@ class MariStock(commands.Cog):
             reason = info.get("reason", "정보 없음")
             last_changed = info.get("last_changed_date")
             date_text = f" (`{last_changed}` 변동)" if last_changed else ""
-            embed.add_field(name=f"🔹 {name}", value=f"현재가: `{price:,}` 에바\n💡 사유: {reason}{date_text}", inline=False)
+            embed.add_field(name=f"🔹 {name}", value=f"현재가: `{price:,}` {currency()}\n💡 사유: {reason}{date_text}", inline=False)
 
         hidden = len(stocks_dict) - self.MAX_STOCKS
         if hidden > 0:
@@ -1058,7 +1059,7 @@ class MariStock(commands.Cog):
         trend_color = CHART_UP if prices[-1] >= prices[0] else CHART_DOWN
         # 🖼️ 렌더링은 스레드로 분리 (이벤트 루프 블로킹 방지)
         buf = await asyncio.to_thread(
-            self._make_line_chart, dates, prices, f"📈 {주식명} 가격 추이", "가격 (에바)", trend_color
+            self._make_line_chart, dates, prices, f"📈 {주식명} 가격 추이", f"가격 ({currency()})", trend_color
         )
         await interaction.followup.send(file=discord.File(buf, filename="stock_graph.png"))
 
@@ -1081,7 +1082,7 @@ class MariStock(commands.Cog):
             stocks_dict = data.get("stocks", {})
             
             embed = discord.Embed(
-                title="📈 에바스타운 실시간 주식 전광판", 
+                title=f"📈 {server_name()} 실시간 주식 전광판", 
                 color=discord.Color.gold(),
                 timestamp=dt.datetime.now(KST)
             )
@@ -1102,15 +1103,15 @@ class MariStock(commands.Cog):
                     diff_percent = (diff / last_price * 100) if last_price > 0 else 0
                     
                     if diff > 0:
-                        status = f"🔺 `{diff:,}` 에바 (+{diff_percent:.2f}%)"
+                        status = f"🔺 `{diff:,}` {currency()} (+{diff_percent:.2f}%)"
                     elif diff < 0:
-                        status = f"🔻 `{diff:,}` 에바 ({diff_percent:.2f}%)"
+                        status = f"🔻 `{diff:,}` {currency()} ({diff_percent:.2f}%)"
                     else:
                         status = "➖ `변동 없음`"
 
                     embed.add_field(
                         name=f"**🔹 {name}**",
-                        value=f"> 현재가: **`{price:,}` 에바**\n"
+                        value=f"> 현재가: **`{price:,}` {currency()}**\n"
                               f"> 직전 대비: {status}\n"
                               f"> 💡 사유: {reason}{date_text}",
                         inline=False
@@ -1206,7 +1207,7 @@ class MariStock(commands.Cog):
         embed.add_field(name="대상 유저", value=멤버.mention, inline=True)
         embed.add_field(name="종목명", value=f"`{stock_name}`", inline=True)
         embed.add_field(name="지급 수량", value=f"`{갯수:,} 주`", inline=True)
-        embed.add_field(name="지급 후 수량", value=f"`{new_shares:,} 주` (평단: `{new_avg:,} 에바`)", inline=False)
+        embed.add_field(name="지급 후 수량", value=f"`{new_shares:,} 주` (평단: `{new_avg:,} {currency()}`)", inline=False)
         embed.add_field(name="담당 관리자", value=interaction.user.mention, inline=False)
         
         await self._log_to_channel(embed=embed)

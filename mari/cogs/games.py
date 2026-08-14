@@ -14,6 +14,7 @@ from mari_alerts import report_loop_error
 from mari_state import record_ledger
 from mari_utils import chunk_lines
 from mari_settings import has_admin_or_role, load_settings, save_settings, send_log_embed
+from mari_names import bot_name, currency, event_name, josa
 
 class MariGames(commands.Cog):
     """하이로우 등 미니게임 시스템"""
@@ -70,11 +71,11 @@ class MariGames(commands.Cog):
         별도로 설정해둔, 마리가 결과를 알려주는 전용 채널이에요.)"""
         ch_id = load_settings().get("channels", {}).get("evashi_announce")
         if not ch_id:
-            print("⚠️ [에바시] 안내 채널이 설정 안 돼있어서 결과 공지를 못 올렸어요. `/설정 채널 에바시`로 지정해주세요.")
+            print(f"⚠️ [{event_name()}] 안내 채널이 설정 안 돼있어서 결과 공지를 못 올렸어요. `/설정 채널 이벤트`로 지정해주세요.")
             return
         channel = guild.get_channel(ch_id) if guild else self.bot.get_channel(ch_id)
         if not channel:
-            print(f"⚠️ [에바시] 안내 채널(id={ch_id})을 찾을 수 없어서 결과 공지를 못 올렸어요.")
+            print(f"⚠️ [{event_name()}] 안내 채널(id={ch_id})을 찾을 수 없어서 결과 공지를 못 올렸어요.")
             return
         # 🐛 [버그 수정] 참가자를 전부 멘션하다 보니 사람이 많이 몰린 회차에서는 본문이
         # 디스코드 한 메세지 제한(2000자)을 넘겨 전송이 통째로 실패했어요. 멘션 하나가 22자쯤
@@ -84,7 +85,7 @@ class MariGames(commands.Cog):
             try:
                 await channel.send(part)
             except Exception as e:
-                print(f"❗ 에바시 안내 채널 발송 실패: {e}")
+                print(f"❗ {event_name()} 안내 채널 발송 실패: {e}")
                 return
 
     async def _give_evashi_reward(self, user_id: int, amount: int, *, is_first: bool = False):
@@ -102,7 +103,7 @@ class MariGames(commands.Cog):
         # 🧾 [버그 수정] 지갑에 돈이 들어오는데 원장에는 안 남고 있었어요. 송금·출석·상점·주식·
         # 캠프통장은 전부 남기는데 여기만 빠져서, 유저가 /지갑내역을 열면 에바시로 받은 돈만
         # 출처 없이 잔액에 얹혀 있었습니다. (락을 놓은 뒤에 기록해요)
-        record_ledger(user_key, amount, balance_after, "에바시 보상",
+        record_ledger(user_key, amount, balance_after, f"{event_name()} 보상",
                       "선착순" if is_first else "참여")
 
     @tasks.loop(time=[dt.time(hour=0, minute=21, tzinfo=KST), dt.time(hour=12, minute=21, tzinfo=KST)])
@@ -115,7 +116,7 @@ class MariGames(commands.Cog):
         try:
             evashi = self._load_evashi_settings()
         except Exception as e:
-            print(f"❗ [에바시] 설정을 읽지 못해 이번 회차를 건너뛰어요: {type(e).__name__}: {e}")
+            print(f"❗ [{event_name()}] 설정을 읽지 못해 이번 회차를 건너뛰어요: {type(e).__name__}: {e}")
             return
 
         self.evashi_participants = set()
@@ -124,7 +125,7 @@ class MariGames(commands.Cog):
         self.evashi_guild = None
         now = dt.datetime.now(KST)
         self.evashi_window_open_until = now + dt.timedelta(seconds=evashi["window_seconds"])
-        print(f"🎉 [에바시] 이벤트 창 열림! {evashi['window_seconds']}초 동안 '에바시'를 치면 보상을 받아요.")
+        print(f"🎉 [{event_name()}] 이벤트 창 열림! {evashi['window_seconds']}초 동안 '{event_name()}'{josa(event_name(), '을를')} 치면 보상을 받아요.")
 
         # ⏰ [신규] window_seconds 뒤에 자동으로 창을 닫고, 그때까지 모인 참가자 전원을
         # 한 번에 모아서 공지해요. (더 이상 선착순 채워지는 순간에만 알리지 않아요)
@@ -138,7 +139,7 @@ class MariGames(commands.Cog):
 
     @evashi_loop.error
     async def evashi_loop_error(self, error: BaseException):
-        await report_loop_error(self.evashi_loop, "에바시 이벤트", error)
+        await report_loop_error(self.evashi_loop, f"{event_name()} 이벤트", error)
 
     async def _close_evashi_window_later(self, window_seconds: int):
         """정확히 window_seconds가 지난 뒤 창을 닫고, 참가자 전원을 한 번에 공지합니다."""
@@ -149,7 +150,7 @@ class MariGames(commands.Cog):
         except Exception as e:
             # 🛡️ create_task로 띄운 태스크는 예외가 나도 아무 데도 안 뜨고 조용히 사라져요.
             # 그러면 참가자들은 결과 발표를 영영 못 받는데 아무도 이유를 모릅니다.
-            print(f"❗ [에바시] 마감 공지 중 오류가 났어요: {type(e).__name__}: {e}")
+            print(f"❗ [{event_name()}] 마감 공지 중 오류가 났어요: {type(e).__name__}: {e}")
             traceback.print_exception(type(e), e, e.__traceback__)
 
     async def _close_evashi_window_now(self, window_seconds: int):
@@ -164,22 +165,22 @@ class MariGames(commands.Cog):
 
         # 📢 [버그 수정] 예전엔 사람이 몰릴 때마다 개인별로 로그가 따로 남아서 도배됐었어요.
         # 이제는 창이 닫히는 시점에 딱 한 번, 참가자 전원(선착순+나머지)을 모아서 공지해요.
-        lines = [f"🎉 **에바시 이벤트 결과** (총 {len(self.evashi_participants)}명 참여)"]
+        lines = [f"🎉 **{event_name()} 이벤트 결과** (총 {len(self.evashi_participants)}명 참여)"]
         if self.evashi_first_winners:
             mentions = " ".join(f"<@{uid}>" for uid in self.evashi_first_winners)
-            lines.append(f"🥇 선착순 {len(self.evashi_first_winners)}명: {mentions}\n└ 각 {evashi['first_amount']:,} 에바 지급")
+            lines.append(f"🥇 선착순 {len(self.evashi_first_winners)}명: {mentions}\n└ 각 {evashi['first_amount']:,} {currency()} 지급")
         if rest_ids:
             mentions = " ".join(f"<@{uid}>" for uid in rest_ids)
-            lines.append(f"🎊 참가 {len(rest_ids)}명: {mentions}\n└ 각 {evashi['rest_amount']:,} 에바 지급")
+            lines.append(f"🎊 참가 {len(rest_ids)}명: {mentions}\n└ 각 {evashi['rest_amount']:,} {currency()} 지급")
 
         await self._send_evashi_announce(self.evashi_guild, "\n\n".join(lines))
 
         await send_log_embed(
-            self.bot, "economy_log", "에바시 이벤트 전체 결과 기록이에요.",
+            self.bot, "economy_log", f"{event_name()} 이벤트 전체 결과 기록이에요.",
             fields=[
                 ("총 참여 인원", f"{len(self.evashi_participants)}명", False),
-                ("선착순", f"{len(self.evashi_first_winners)}명 · 각 {evashi['first_amount']:,} 에바", False),
-                ("나머지 참가", f"{len(rest_ids)}명 · 각 {evashi['rest_amount']:,} 에바", False),
+                ("선착순", f"{len(self.evashi_first_winners)}명 · 각 {evashi['first_amount']:,} {currency()}", False),
+                ("나머지 참가", f"{len(rest_ids)}명 · 각 {evashi['rest_amount']:,} {currency()}", False),
             ],
             guild=self.evashi_guild,
         )
@@ -190,7 +191,7 @@ class MariGames(commands.Cog):
             return
         if self.evashi_window_open_until is None:
             return
-        if message.content.strip() != "에바시":
+        if message.content.strip() != event_name():
             return
 
         now = dt.datetime.now(KST)
@@ -226,7 +227,7 @@ class MariGames(commands.Cog):
             pass
 
     # ---------- 관리자 설정 명령어 ----------
-    @app_commands.command(name="에바시설정", description="[관리자] 에바시 이벤트의 선착순 인원/금액을 설정합니다.")
+    @app_commands.command(name="이벤트설정", description=f"[관리자] {event_name()} 이벤트의 선착순 인원/금액을 설정합니다.")
     @app_commands.guild_only()
     @app_commands.describe(
         선착순인원="큰 보상을 받을 선착순 인원 수",
@@ -243,15 +244,15 @@ class MariGames(commands.Cog):
         지속시간초: Optional[int] = None,
     ):
         if not self._is_evashi_admin(interaction):
-            return await interaction.response.send_message("⛔ 권한이 없어요. 에바시 관리자만 설정할 수 있어요.", ephemeral=True)
+            return await interaction.response.send_message(f"⛔ 권한이 없어요. {event_name()} 관리자만 설정할 수 있어요.", ephemeral=True)
 
         if 선착순인원 is None and 선착순금액 is None and 나머지금액 is None and 지속시간초 is None:
             evashi = self._load_evashi_settings()
             return await interaction.response.send_message(
-                f"ℹ️ **현재 에바시 설정**\n"
+                f"ℹ️ **현재 {event_name()} 설정**\n"
                 f"└ 선착순 인원: {evashi['first_count']}명\n"
-                f"└ 선착순 금액: {evashi['first_amount']:,} 에바\n"
-                f"└ 나머지 금액: {evashi['rest_amount']:,} 에바\n"
+                f"└ 선착순 금액: {evashi['first_amount']:,} {currency()}\n"
+                f"└ 나머지 금액: {evashi['rest_amount']:,} {currency()}\n"
                 f"└ 지속시간: {evashi['window_seconds']}초",
                 ephemeral=True,
             )
@@ -265,18 +266,18 @@ class MariGames(commands.Cog):
         if 선착순금액 is not None:
             if 선착순금액 < 0: return await interaction.response.send_message("❌ 선착순금액은 0 이상이어야 해요.", ephemeral=True)
             evashi["first_amount"] = 선착순금액
-            logs.append(f"선착순 금액: {선착순금액:,} 에바")
+            logs.append(f"선착순 금액: {선착순금액:,} {currency()}")
         if 나머지금액 is not None:
             if 나머지금액 < 0: return await interaction.response.send_message("❌ 나머지금액은 0 이상이어야 해요.", ephemeral=True)
             evashi["rest_amount"] = 나머지금액
-            logs.append(f"나머지 금액: {나머지금액:,} 에바")
+            logs.append(f"나머지 금액: {나머지금액:,} {currency()}")
         if 지속시간초 is not None:
             if 지속시간초 <= 0: return await interaction.response.send_message("❌ 지속시간초는 1 이상이어야 해요.", ephemeral=True)
             evashi["window_seconds"] = 지속시간초
             logs.append(f"지속시간: {지속시간초}초")
 
         self._save_evashi_settings(evashi)
-        await interaction.response.send_message("✅ 에바시 설정을 업데이트했어요.\n" + "\n".join(f"└ {l}" for l in logs), ephemeral=True)
+        await interaction.response.send_message(f"✅ {event_name()} 설정을 업데이트했어요.\n" + "\n".join(f"└ {l}" for l in logs), ephemeral=True)
 
     @app_commands.command(name="하이로우", description="하이로우 게임 시작!")
     @app_commands.guild_only()
@@ -284,7 +285,7 @@ class MariGames(commands.Cog):
         gid = interaction.guild.id
         self.current_numbers[gid] = random.randint(1, 100)
         self.active_games.add(gid)
-        embed = discord.Embed(title="🔮 마리의 하이로우 게임 안내!", color=discord.Color.blurple())
+        embed = discord.Embed(title=f"🔮 {bot_name()}의 하이로우 게임 안내!", color=discord.Color.blurple())
         embed.add_field(name="게임 방법", value="다음 숫자가 높을지/낮을지 맞혀보세요!", inline=False)
         embed.add_field(name="참여 방법", value="/하이 또는 /로우", inline=False)
         await interaction.response.send_message(embed=embed)
@@ -308,7 +309,7 @@ class MariGames(commands.Cog):
         cur = self.current_numbers[gid]
         nxt = random.randint(1, 100)
         win = (guess == "하이" and nxt > cur) or (guess == "로우" and nxt < cur)
-        text = "✨ 정답이에요! 마리가 감동하며 윙크~ 😉✨" if win else "😭 틀렸어요... 마리가 삐죽! 다음엔 꼭 맞춰요!"
+        text = f"✨ 정답이에요! {bot_name()}{josa(bot_name(), '이가')} 감동하며 윙크~ 😉✨" if win else f"😭 틀렸어요... {bot_name()}{josa(bot_name(), '이가')} 삐죽! 다음엔 꼭 맞춰요!"
         embed = discord.Embed(title="💗 하이로우 결과!", color=discord.Color.pink())
         embed.add_field(name="현재 숫자", value=str(cur), inline=True)
         embed.add_field(name="예측", value=guess, inline=True)

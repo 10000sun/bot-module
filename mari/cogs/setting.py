@@ -9,6 +9,8 @@ from discord.ext import commands
 from mari_config import KST
 from mari_utils import MariView
 from mari_settings import FEATURE_KEYS, FEATURE_LIST_TEXT, _get_role_ids, is_super_admin, load_settings, save_settings, send_log_embed, set_all_features_enabled, set_feature_enabled
+from mari_names import (MAX_NAME_LENGTH, NAME_FIELDS, bot_name, currency, event_name,
+                        get_names, josa, save_names, validate_name)
 
 class RoleGrantView(MariView):
     """/역할부여에서 직접 역할을 골라 줄 때 쓰는 뷰.
@@ -40,12 +42,102 @@ class RoleGrantView(MariView):
         await self.setting_cog._apply_role_changes(interaction, self.member, list(roles))
 
 
+class InitialSetupModal(discord.ui.Modal, title="🏷️ 이름 설정"):
+    """`/초기설정` — 서버마다 다른 이름을 한 창에서 받아 settings.json에 저장합니다.
+
+    입력칸을 손으로 나열하지 않고 mari_names.NAME_FIELDS를 보고 만들어요. 나중에 받을
+    이름이 하나 늘어도 여기는 그대로 두면 됩니다.
+
+    ⚠️ 디스코드 모달은 입력칸이 **최대 5개**예요. NAME_FIELDS가 그보다 많아지면 창을
+       나누거나 명령을 쪼개야 합니다. (지금은 4개)
+    """
+
+    MAX_INPUTS = 5
+
+    def __init__(self):
+        super().__init__()
+        current = get_names()
+        self.inputs = {}
+        for key, field in list(NAME_FIELDS.items())[:self.MAX_INPUTS]:
+            item = discord.ui.TextInput(
+                label=field["label"],
+                placeholder=field["example"],
+                # 지금 쓰고 있는 값을 미리 채워둡니다. 한 항목만 고치러 들어온 사람이
+                # 나머지를 다시 타이핑하지 않아도 되도록이요.
+                default=current[key],
+                max_length=MAX_NAME_LENGTH,
+                required=True,
+            )
+            self.inputs[key] = item
+            self.add_item(item)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        before = get_names()
+
+        # 하나라도 규칙에 어긋나면 아무것도 저장하지 않아요. 절반만 바뀐 상태가 제일 나쁩니다.
+        values, problems = {}, []
+        for key, item in self.inputs.items():
+            ok, result = validate_name(item.value)
+            if ok:
+                values[key] = result
+            else:
+                problems.append(f"• **{NAME_FIELDS[key]['label']}** — {result}")
+
+        if problems:
+            return await interaction.response.send_message(
+                "❌ 이름을 저장하지 못했어요. 아래를 고치고 `/초기설정`을 다시 실행해주세요.\n"
+                + "\n".join(problems),
+                ephemeral=True,
+            )
+
+        try:
+            after = save_names(values)
+        except Exception as e:
+            return await interaction.response.send_message(
+                f"❌ 저장에 실패했어요: {type(e).__name__}: {e}", ephemeral=True
+            )
+
+        changed = [k for k in after if before[k] != after[k]]
+        lines = [
+            f"• {NAME_FIELDS[k]['label']}: "
+            + (f"~~{before[k]}~~ → **{after[k]}**" if k in changed else f"**{after[k]}** (그대로)")
+            for k in after
+        ]
+
+        embed = discord.Embed(
+            title="🏷️ 이름을 저장했어요",
+            description="\n".join(lines),
+            color=discord.Color.green(),
+            timestamp=dt.datetime.now(KST),
+        )
+        if changed:
+            # 왜 바로 다 안 바뀌는지 미리 알려둬야 "고장났다"는 문의가 안 옵니다.
+            embed.add_field(
+                name="ℹ️ 언제부터 보이나요",
+                value=(
+                    "메세지·임베드 문구는 **지금 바로** 새 이름으로 나가요.\n"
+                    "슬래시 명령 **설명문**은 봇을 껐다 켠 뒤 `/테스트 명령어동기화`를 해야 바뀝니다. "
+                    "(명령 설명은 봇이 켜질 때 한 번 굳어요)\n"
+                    "명령어 **이름** 자체(`/지갑`·`/이벤트설정` 등)는 이름과 무관하게 늘 그대로예요."
+                ),
+                inline=False,
+            )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+        await send_log_embed(
+            interaction.client, "role_log",
+            f"{interaction.user.mention}님이 서버 이름 설정을 바꿨어요.",
+            fields=[(NAME_FIELDS[k]["label"], f"{before[k]} → {after[k]}", True) for k in changed],
+            guild=interaction.guild,
+        )
+
+
 class MariSetting(commands.Cog):
     """봇의 모든 권한 역할 및 채널을 동적으로 변경하는 마리 설정 시스템"""
     def __init__(self, bot):
         self.bot = bot
 
-    설정 = app_commands.Group(name="설정", description="마리봇의 채널 및 관리자 역할을 동적 관리합니다.")
+    설정 = app_commands.Group(name="설정", description=f"{bot_name()}봇의 채널 및 관리자 역할을 동적 관리합니다.")
     관리자 = app_commands.Group(parent=설정, name="관리자", description="기능별 전용 관리자 역할을 설정합니다.")
     채널 = app_commands.Group(parent=설정, name="채널", description="봇 알림 및 로그 채널들을 지정합니다.")
     # 🗑️ [정리] 예전 이름은 '레벨'이었어요. 0~4레벨 등급 사다리가 원본 서버 고유 제도라
@@ -175,11 +267,11 @@ class MariSetting(commands.Cog):
     async def set_stock_admin(self, interaction: discord.Interaction, 역할: discord.Role, 동작: Optional[app_commands.Choice[str]] = None):
         await self._update_admin_role_list(interaction, "stock_admin", "주식 관리자", 역할, 동작)
 
-    @관리자.command(name="에바시", description="[관리자] 에바시 이벤트 보상 설정 권한(에바시 관리자) 역할을 추가/제거합니다. (여러 역할 동시 지정 가능)")
+    @관리자.command(name="이벤트", description=f"[관리자] {event_name()} 이벤트 보상 설정 권한({event_name()} 관리자) 역할을 추가/제거합니다. (여러 역할 동시 지정 가능)")
     @app_commands.describe(역할="추가/제거할 역할", 동작="추가 또는 제거 (기본값: 추가)")
     @app_commands.choices(동작=ADMIN_ROLE_ACTION_CHOICES)
     async def set_evashi_admin(self, interaction: discord.Interaction, 역할: discord.Role, 동작: Optional[app_commands.Choice[str]] = None):
-        await self._update_admin_role_list(interaction, "evashi_admin", "에바시 관리자", 역할, 동작)
+        await self._update_admin_role_list(interaction, "evashi_admin", f"{event_name()} 관리자", 역할, 동작)
 
     @관리자.command(name="연대기", description="[관리자] 서버 연대기를 기록·조회할 수 있는 역할을 추가/제거합니다. (여러 역할 동시 지정 가능)")
     @app_commands.describe(역할="추가/제거할 역할", 동작="추가 또는 제거 (기본값: 추가)")
@@ -202,7 +294,7 @@ class MariSetting(commands.Cog):
         save_settings(settings)
         await interaction.response.send_message(f"📌 출석체크 전용 채널이 {채널.mention}로 설정됐어요.", ephemeral=True)
 
-    @채널.command(name="경제로그", description="[관리자] 에바 지급/회수 등이 남는 로그 채널이에요.")
+    @채널.command(name="경제로그", description=f"[관리자] {currency()} 지급/회수 등이 남는 로그 채널이에요.")
     async def set_economy_log_ch(self, interaction: discord.Interaction, 채널: discord.TextChannel):
         if not self.has_channel_permission(interaction): return await interaction.response.send_message("❌ 관리자 또는 '채널관리자' 역할이 필요해요!", ephemeral=True)
         settings = load_settings()
@@ -247,14 +339,17 @@ class MariSetting(commands.Cog):
         save_settings(settings)
         await interaction.response.send_message(f"📌 마감 종가 게시 채널이 {채널.mention}로 설정됐어요.", ephemeral=True)
 
-    @채널.command(name="에바시", description="[관리자] 에바시 이벤트 선착순 마감 안내가 올라갈 채널이에요. (유저가 '에바시'를 치는 채널이 아니라, 마리가 결과를 알려주는 전용 채널이에요!)")
+    # ⚠️ 설명문에 이름을 **한 번만** 넣습니다. 예전엔 이벤트 이름 두 번 + 봇 이름 한 번이라
+    #    이름이 조금만 길어져도 디스코드 한도(100자)를 넘어 동기화가 통째로 실패했어요.
+    #    (`python tools/check_modules.py --max-names`로 확인할 수 있습니다)
+    @채널.command(name="이벤트", description=f"[관리자] {event_name()} 이벤트의 선착순 마감 안내가 올라갈 채널이에요. (유저가 단어를 치는 채널이 아니라 결과 공지 전용이에요)")
     async def set_evashi_announce_ch(self, interaction: discord.Interaction, 채널: discord.TextChannel):
         if not self.has_channel_permission(interaction): return await interaction.response.send_message("❌ 관리자 또는 '채널관리자' 역할이 필요해요!", ephemeral=True)
         settings = load_settings()
         if "channels" not in settings: settings["channels"] = {}
         settings["channels"]["evashi_announce"] = 채널.id
         save_settings(settings)
-        await interaction.response.send_message(f"📌 에바시 선착순 마감 안내 채널이 {채널.mention}로 설정됐어요. (유저는 여전히 아무 채널에서나 '에바시'를 칠 수 있어요)", ephemeral=True)
+        await interaction.response.send_message(f"📌 {event_name()} 선착순 마감 안내 채널이 {채널.mention}로 설정됐어요. (유저는 여전히 아무 채널에서나 '{event_name()}'{josa(event_name(), '을를')} 칠 수 있어요)", ephemeral=True)
 
     @채널.command(name="아이디로그", description="[관리자] 아이디 등록/수정/삭제 시 로그가 남는 채널이에요.")
     async def set_id_log_ch(self, interaction: discord.Interaction, 채널: discord.TextChannel):
@@ -278,7 +373,7 @@ class MariSetting(commands.Cog):
             ephemeral=True
         )
 
-    @채널.command(name="아이디등록", description="[관리자] 유저들이 '플랫폼 아이디' 형식으로 올리면 마리가 자동으로 등록해주는 채널이에요.")
+    @채널.command(name="아이디등록", description=f"[관리자] 유저들이 '플랫폼 아이디' 형식으로 올리면 {bot_name()}{josa(bot_name(), '이가')} 자동으로 등록해주는 채널이에요.")
     async def set_id_submit_ch(self, interaction: discord.Interaction, 채널: discord.TextChannel):
         if not self.has_channel_permission(interaction): return await interaction.response.send_message("❌ 관리자 또는 '채널관리자' 역할이 필요해요!", ephemeral=True)
         settings = load_settings()
@@ -287,7 +382,7 @@ class MariSetting(commands.Cog):
         save_settings(settings)
         await interaction.response.send_message(
             f"📌 아이디 자동등록 채널이 {채널.mention}로 설정됐어요.\n"
-            f"이제 이 채널에 `플랫폼 아이디` 형식(예: `라이엇 만해#kr1`)으로 올리면 마리가 자동으로 등록하고 원본 메세지는 삭제해요.\n"
+            f"이제 이 채널에 `플랫폼 아이디` 형식(예: `라이엇 만해#kr1`)으로 올리면 {bot_name()}{josa(bot_name(), '이가')} 자동으로 등록하고 원본 메세지는 삭제해요.\n"
             f"플랫폼을 못 알아보면 `/설정 관리자 아이디`로 지정된 분들께 '아이디 로그' 채널에서 확인을 받아요. (`/설정 채널 아이디로그`로 지정 필요)",
             ephemeral=True
         )
@@ -343,7 +438,7 @@ class MariSetting(commands.Cog):
             "role_log": "👥 역할 로그",
             "birthday_announce": "🎂 생일 알림",
             "birthday_log": "🎉 생일 로그",
-            "evashi_announce": "🎉 에바시 안내",
+            "evashi_announce": f"🎉 {event_name()} 안내",
             "id_submit": "🆔 아이디 자동등록",
             "level_roster": "📋 아이디 명단",
         }
@@ -351,14 +446,14 @@ class MariSetting(commands.Cog):
             "ids_admin": "🆔 아이디 관리자",
             "shop_admin": "🛒 상점 관리자",
             "stock_admin": "📈 주식 관리자",
-            "evashi_admin": "🎉 에바시 관리자",
+            "evashi_admin": f"🎉 {event_name()} 관리자",
             "chronicle_admin": "📜 연대기 관리자",
             "chief_role": "👑 대장 (아이디 명단용)",
             "test_admin": "🧪 테스트 관리자",
         }
 
         embed = discord.Embed(
-            title="⚙️ 마리봇 채널/역할 지정 내역",
+            title=f"⚙️ {bot_name()}봇 채널/역할 지정 내역",
             color=0x5CE6B4,
             timestamp=dt.datetime.now(KST)
         )
@@ -400,6 +495,23 @@ class MariSetting(commands.Cog):
 
         embed.set_footer(text="지정/변경은 /설정 채널, /설정 관리자 명령어로 가능합니다.")
         await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    # ========== 🏷️ [신규] 첫 기동 이름 설정 ==========
+    # 서버마다 다른 이름(재화·봇·이벤트·서버)을 관리자에게 직접 받습니다.
+    #
+    # 콘솔 입력(input())으로 받지 않는 이유: 이 봇은 systemd/도커로 돌리는 걸 전제로 짜여
+    # 있어서 표준입력이 아예 없을 수 있어요. 기동이 입력을 기다리며 멈춰버립니다.
+    # 슬래시 명령이면 서비스로 띄운 뒤에도, 나중에 이름을 바꾸고 싶어져도 똑같이 씁니다.
+    @app_commands.command(name="초기설정", description="[관리자] 서버 재화·봇·이벤트·서버 이름을 지정해요. (처음 한 번, 나중에 다시 바꿔도 됩니다)")
+    @app_commands.guild_only()
+    async def initial_setup(self, interaction: discord.Interaction):
+        # 🔒 대장(chief_role)은 일부러 뺐어요. 갓 초대한 서버에는 대장이 아직 없고,
+        #    무엇보다 봇의 정체성을 통째로 바꾸는 명령이라 진짜 서버 관리자만 써야 합니다.
+        if not interaction.user.guild_permissions.administrator:
+            return await interaction.response.send_message(
+                "❌ 서버 관리자만 쓸 수 있어요.", ephemeral=True
+            )
+        await interaction.response.send_modal(InitialSetupModal())
 
     @app_commands.command(name="감사로그", description="[관리자] 경제/상점/아이디/역할/주식/생일 로그 채널을 한 번에 모아 최신순으로 보여줍니다.")
     @app_commands.describe(개수="가져올 최대 항목 수 (기본 20, 최대 50)")

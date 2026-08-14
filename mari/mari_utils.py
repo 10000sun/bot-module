@@ -9,6 +9,7 @@ from mari_alerts import send_alert
 from mari_settings import send_log_embed
 from mari_state import record_ledger
 from mari_storage import DataSaveError
+from mari_names import bot_name, currency, josa
 
 
 # ========== 🧨 반쪽만 반영된 거래 처리 ==========
@@ -53,7 +54,7 @@ async def report_broken_transaction(
         f"**빠져나간 것:** {lost}\n"
         f"**못 받은 것:** {not_received}\n"
         f"**원인:** `{detail}`\n\n"
-        f"저장이 두 번 일어나는 거래에서 뒤쪽이 실패했어요. 에바가 복사되진 않았지만 "
+        f"저장이 두 번 일어나는 거래에서 뒤쪽이 실패했어요. {currency()}{josa(currency(), '이가')} 복사되진 않았지만 "
         f"유저가 손해를 본 상태라 `/지급`이나 `/주식 지급` 등으로 채워주셔야 합니다.\n"
         f"자세한 내용은 `/지갑내역 유저조회`와 `/테스트 데이터점검`에서 확인할 수 있어요.",
     )
@@ -328,7 +329,7 @@ async def respond_modify(inter, target_user, target, old, new, is_misc: bool):
     # inter.user 대신 실제 수정된 대상인 target_user.mention을 사용합니다.
     text = f"✅ {target_user.mention}님의 {target} 아이디가 {old} → {new}로 수정되었어요!"
     if is_misc:
-        await inter.followup.send(f"{text} 마리가 깔끔하게 바꿨어요~ 💖")
+        await inter.followup.send(f"{text} {bot_name()}{josa(bot_name(), '이가')} 깔끔하게 바꿨어요~ 💖")
     else:
         await inter.followup.send(text)
 
