@@ -141,7 +141,8 @@ def owners(kind: str) -> dict:
     여기 없는 키는 **어느 모듈의 것도 아닌 공용**으로 봅니다. 그래서 새 채널·새 데이터
     파일을 만들고 여기 등록하는 걸 깜빡해도 조용히 사라지지 않고 항상 켜진 채로 남아요.
     (빠뜨렸을 때 기능이 없어지는 쪽보다, 안 지워지는 쪽이 훨씬 덜 위험합니다.
-     빠뜨린 건 `python tools/check_modules.py`가 찾아줘요)
+     빠뜨린 건 `python tools/check_modules.py`의 '소유 표' 검사가 찾아줘요 —
+     데이터 파일·설정 명령이 다루는 채널/역할·기능 키를 실제 코드와 대조합니다)
     """
     if kind not in OWNABLE:
         raise ValueError(f"모르는 소유 항목이에요: {kind!r} (가능: {', '.join(OWNABLE)})")

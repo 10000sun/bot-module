@@ -102,6 +102,97 @@ def _walk(commands, prefix=""):
             yield name, child
 
 
+# 🤝 어느 모듈의 것도 아닌 게 **맞는** 데이터 파일. 여기 없는데 소유자도 없으면
+# modules.py에 등록을 깜빡한 것으로 보고 알려줍니다.
+SHARED_DATA_FILES = {"SETTINGS_FILE"}
+
+
+def _check_ownership(bot) -> list:
+    """modules.py의 소유 표가 실제 코드와 어긋나지 않았는지 봅니다.
+
+    소유 표(어느 모듈이 어떤 채널·역할·기능키·데이터파일을 데려오는지)는 담지 않은
+    기능의 설정 명령과 빈 JSON이 따라오는 걸 막는 장치예요. 그런데 새 채널이나 새
+    데이터 파일을 만들고 여기 등록하는 걸 깜빡하면 **아무 일도 안 일어납니다** —
+    등록 안 된 키는 '공용'으로 보고 항상 켜두거든요. (그게 안전한 기본값이라 일부러
+    그렇게 했어요. 빠뜨렸을 때 기능이 사라지는 것보다 안 지워지는 게 덜 위험하니까)
+
+    조용히 어긋나는 게 문제라 여기서 대조합니다. modules.py의 owners() 설명이
+    "빠뜨린 건 check_modules.py가 찾아줘요"라고 약속하고 있기도 하고요.
+
+    돌려주는 건 사람이 읽을 문제 목록이에요. 비어 있으면 통과.
+    """
+    import mari_config as cfg
+    from modules import MODULES, owners
+    from mari_settings import _ALL_FEATURE_KEYS
+
+    problems = []
+    known_modules = set(MODULES)
+
+    def check_module_keys(where, keys):
+        unknown = sorted(k for k in keys if k not in known_modules)
+        if unknown:
+            problems.append(f"{where}: modules.py에 없는 모듈 키 {unknown}")
+
+    # ① 데이터 파일 — 소유자가 없는데 공용 목록에도 없으면 등록을 깜빡한 거예요.
+    owned_files = owners("data_files")
+    all_files = set(cfg.json_data_files())
+    orphan = sorted(all_files - set(owned_files) - SHARED_DATA_FILES)
+    if orphan:
+        problems.append(
+            f"소유 모듈이 없는 데이터 파일 {orphan} — modules.py의 data_files에 넣거나, "
+            f"정말 공용이면 check_modules.py의 SHARED_DATA_FILES에 넣으세요")
+    phantom = sorted(set(owned_files) - all_files)
+    if phantom:
+        problems.append(f"modules.py가 가리키는데 mari_config에 없는 상수 {phantom}")
+
+    # ② 설정 명령이 다루는 채널·역할 키 — setting.py의 표가 실제로 설정 가능한 목록이에요.
+    setting_cog = bot.get_cog("MariSetting")
+    if setting_cog is not None:
+        for kind, table in (("channels", setting_cog._CHANNEL_COMMANDS),
+                            ("roles", setting_cog._ROLE_COMMANDS)):
+            missing = sorted(set(table.values()) - set(owners(kind)))
+            if missing:
+                problems.append(
+                    f"설정 명령은 있는데 modules.py의 {kind}에 없는 키 {missing} — "
+                    f"그 기능을 빼도 설정 명령이 남습니다")
+
+    # ③ 기능 킬 스위치 키
+    missing = sorted(set(_ALL_FEATURE_KEYS.values()) - set(owners("features")))
+    if missing:
+        problems.append(
+            f"modules.py의 features에 없는 기능 키 {missing} — "
+            f"그 기능을 빼도 /기능제어 선택지에 남습니다")
+
+    # ④ 다른 파일이 적어둔 모듈 키에 오타가 없는지
+    diag_cog = bot.get_cog("MariTest")
+    if diag_cog is not None:
+        check_module_keys("cogs/diagnostics.py의 _MODULE_COMMANDS", diag_cog._MODULE_COMMANDS.values())
+
+    help_cog = bot.get_cog("MariHelp")
+    if help_cog is not None:
+        tags = set()
+
+        def collect(owner):
+            if owner is None:
+                return
+            if isinstance(owner, str):
+                tags.add(owner)
+                return
+            for child in owner:
+                collect(child)
+
+        for entries in (help_cog._admin_entries(), help_cog._user_entries()):
+            for _emoji, lines in entries.values():
+                for owner, _text in lines:
+                    collect(owner)
+        check_module_keys("cogs/help.py의 도움말 태그", tags)
+
+    for spec in MODULES.values():
+        check_module_keys(f"modules.py의 '{spec.key}'.requires", spec.requires)
+
+    return problems
+
+
 async def main(label, max_names):
     import mari_config as cfg
     from mari_client import MariBotClient
@@ -142,6 +233,13 @@ async def main(label, max_names):
         print("     이대로 켜면 명령어 동기화가 통째로 실패해서 명령이 전부 사라져요.")
         print("     설명에서 이름을 한 번만 쓰거나 문구를 줄이세요.")
 
+    # 🧩 소유 표가 코드와 어긋나지 않았는지. (담은 모듈과 무관한 정적 검사예요)
+    ownership = _check_ownership(bot)
+    print(f"  소유 표     : {'✅ 코드와 일치' if not ownership else f'🚨 {len(ownership)}건 어긋남'}")
+    if ownership:
+        for problem in ownership:
+            print(f"     - {problem}")
+
     if bot.failed_modules:
         print(f"\n  🚨 실패한 모듈 {len(bot.failed_modules)}개:")
         for key, reason in bot.failed_modules:
@@ -149,7 +247,7 @@ async def main(label, max_names):
 
     await bot.close()
 
-    failed = bool(bot.failed_modules or too_long)
+    failed = bool(bot.failed_modules or too_long or ownership)
 
     # 기본 실행이면 "이름을 상한까지 늘린" 검사도 자동으로 한 번 더 돌립니다.
     # (이름은 import 시점에 설명문으로 굳기 때문에 같은 프로세스에서 두 번 볼 수 없어요)

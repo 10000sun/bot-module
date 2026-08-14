@@ -93,7 +93,12 @@ class MariHelp(commands.Cog):
 
     def _admin_categories(self):
         """관리자용 도움말 카테고리. (담긴 모듈 것만)"""
-        return self._visible({
+        return self._visible(self._admin_entries())
+
+    def _admin_entries(self):
+        """걸러내기 **전**의 관리자용 원본. 모듈 태그가 그대로 붙어 있어요.
+        (tools/check_modules.py가 태그를 검사하려고 씁니다)"""
+        return {
             "서버/시스템 관리": ("🛡️", [
                 (None, "`/초기설정` - 재화·봇·이벤트·서버 이름 지정 (봇을 처음 들였을 때 제일 먼저. 나중에 다시 바꿔도 돼요)"),
                 (None, "`/설정 관리자` - 기능별 관리자 역할 지정"),
@@ -164,11 +169,15 @@ class MariHelp(commands.Cog):
                 (None, "`/테스트 백업실행` - 매일 새벽 3시 자동 백업을 지금 즉시 실행"),
                 ("stock", "`/테스트 종가게시미리보기` - 실제 마감 없이 종가게시 결과 미리보기"),
             ]),
-        })
+        }
 
     def _user_categories(self):
         """일반 유저용 도움말 카테고리. (담긴 모듈 것만)"""
-        return self._visible({
+        return self._visible(self._user_entries())
+
+    def _user_entries(self):
+        """걸러내기 **전**의 유저용 원본. (위 _admin_entries 설명 참고)"""
+        return {
             "지갑 및 상점": ("💰", [
                 ("economy", "`/지갑` - 잔고 및 소지품 확인"),
                 ("shop", f"└ 🎁 **선물하기** 버튼으로 상점에서 산 아이템을 다른 사람에게 넘겨줄 수 있어요 ({currency()}{josa(currency(), '은는')} 안 나가요)"),
@@ -224,7 +233,7 @@ class MariHelp(commands.Cog):
                 (["gpt", ("economy", "stock")],
                  "대화 중 \"내 지갑 얼마야?\", \"내 주식 어때?\" 같은 질문도 알아서 대답해줘요 (전부 본인 것만 확인 가능)"),
             ]),
-        })
+        }
 
     @app_commands.command(name="도움말", description=f"{bot_name()}{josa(bot_name(), '이가')} 해줄 수 있는 모든 명령어를 보여드려요!")
     @app_commands.describe(관리자="관리자 전용 명령어를 보시려면 True를 선택하세요 (관리자 권한 필요)")

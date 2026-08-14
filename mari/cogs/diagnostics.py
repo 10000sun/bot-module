@@ -8,7 +8,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from mari_config import DATA_DIR, KST, json_data_files
+from mari_config import DATA_DIR, KST, json_data_files, module_active
 from mari_storage import SAVE_FAILURES, safe_json_load
 from mari_settings import _get_role_ids, has_admin_or_role, load_settings
 from mari_state import state
@@ -22,8 +22,51 @@ class MariTest(commands.Cog):
 
     test_group = app_commands.Group(name="테스트", description="[관리자] 각 시스템 점검용 테스트 명령어 모음", guild_only=True)
 
+    # 🧩 하위 명령이 어느 모듈을 점검하는지. 여기 없는 건 어느 모듈에도 안 매인
+    # 공용 점검(채널·권한·데이터·동기화·백업)이라 항상 남습니다.
+    #
+    # 진단은 코어라 항상 올라오는데, 예전엔 하위 명령이 **어떤 모듈이 담겼는지 보지
+    # 않았어요.** 게임을 안 담아도 `/테스트 이벤트`가, 주식을 안 담아도
+    # `/테스트 종가게시미리보기`가 그대로 떴습니다. 눌러도 아무 의미가 없고,
+    # 클라이언트에겐 "있는데 고장난 기능"처럼 보여요.
+    _MODULE_COMMANDS = {
+        "이벤트": "games",
+        "출석초기화": "economy",
+        "아이디파싱": "id",
+        "ai상태": "gpt",
+        "종가게시미리보기": "stock",
+    }
+
     def __init__(self, bot):
         self.bot = bot
+        # ⏱️ 코그가 트리에 등록되기 **전에** 걷어내야 해요. cog_load는 등록보다 나중에
+        #    불립니다. (cogs/setting.py의 _prune_module_commands와 같은 이유)
+        self._prune_module_commands()
+
+    def _prune_module_commands(self):
+        """이번 배포에 담기지 않은 기능의 점검 명령을 걷어냅니다.
+
+        ⚠️ 하위 명령이 0개인 그룹은 디스코드가 등록을 거부해서 **동기화 전체가
+           실패**합니다. 공용 점검이 다섯 개나 남아 있어 실제로 빌 일은 없지만,
+           나중에 그것들까지 모듈에 매이게 되면 조용히 봇이 죽어요. 방어선을 둡니다.
+        """
+        removed = []
+        for name, key in self._MODULE_COMMANDS.items():
+            if module_active(key):
+                continue
+            # 🐛 remove_command()는 지운 명령을 돌려주지 않아요(항상 None).
+            #    반환값으로 판단하면 로그에 아무것도 안 남습니다.
+            if self.test_group.get_command(name) is None:
+                continue
+            self.test_group.remove_command(name)
+            removed.append(f"/테스트 {name}")
+
+        if not self.test_group.commands:
+            self.bot.tree.remove_command(self.test_group.name)
+            removed.append("/테스트 (하위 명령이 없어서)")
+
+        if removed:
+            print(f"🧩 담지 않은 기능의 점검 명령 {len(removed)}개를 뺐어요: {', '.join(removed)}")
 
     def _is_server_admin(self, interaction: discord.Interaction) -> bool:
         # 🔑 서버 관리자 또는 '/설정 관리자 테스트'로 지정된 테스트 관리자 역할 보유자만 사용 가능
