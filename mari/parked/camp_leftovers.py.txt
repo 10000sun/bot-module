@@ -12,6 +12,21 @@ camp.py·roster.py·profile.py는 통째로 옮겼지만, 이 세 기능은 다�
 
 
 # ========================================================================
+# 【mari_config.py · 캠프 데이터 파일 경로】
+#   ⚠️ 이 상수들이 mari_config.py에 남아 있는 동안, 캠프 기능이 없는데도
+#   json_data_files()가 빈 파일을 매번 자동 생성하고 매일 백업까지 했어요.
+#   (`_FILE`로 끝나고 `.json`인 전역은 전부 데이터 파일로 취급됩니다)
+#   캠프를 되살릴 때 도로 넣으세요.
+#
+#   📌 프로필(PROFILE_FILE·PROFILE_PHOTO_DIR)도 같은 이유로 걷어냈는데, 그쪽은
+#      백업 코드까지 딸려 있어서 parked/profile_leftovers.py.txt 에 따로 모아뒀어요.
+# ========================================================================
+CAMP_TREASURY_FILE = os.path.join(DATA_DIR, "mari_camp_treasury.json") # 🏦 캠프별 세금 통장(가상 통장)
+CAMP_VISIT_FILE = os.path.join(DATA_DIR, "mari_camp_visits.json") # 🚌 [신규] 견학생 이동 현황 및 기록
+CAMP_TAX_FILE = os.path.join(DATA_DIR, "mari_camp_tax.json") # 🧾 [신규] 캠프별 세금 기준(세율 구간·룰렛 확률 등). 캠프장이 직접 수정
+
+
+# ========================================================================
 # 【진단 · 권한확인의 캠프 역할 표시】
 # ========================================================================
         if any(r.id == CAMP_LEADER_ROLE_ID for r in target.roles):
