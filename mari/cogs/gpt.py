@@ -10,7 +10,7 @@ from google import genai
 from google.genai import types
 from discord.ext import commands, tasks
 
-from mari_config import CHAT_LOG_FILE, CHAT_MEMORY_FILE, CHAT_STATS_FILE, GEMINI_API_KEY, KST, LIMIT_FILE, MARI_CALL_ROLE_ID, MARI_USER_MEMORY_FILE, PERSONA_USER_IDS, get_pacific_date_str
+from mari_config import CHAT_LOG_FILE, CHAT_MEMORY_FILE, CHAT_STATS_FILE, GEMINI_API_KEY, KST, LIMIT_FILE, MARI_CALL_ROLE_ID, MARI_USER_MEMORY_FILE, get_pacific_date_str
 from mari_alerts import report_loop_error
 from mari_storage import atomic_json_save, safe_json_load
 from mari_state import load_wiki, state
@@ -128,7 +128,7 @@ class MariGPT(commands.Cog):
         # 🐛 [버그 수정] 예전엔 globals().get('...', '상대경로.json') 형태로 받아왔어요.
         # 전역 상수가 항상 있어서 폴백이 실제로 쓰인 적은 없지만, 만에 하나 폴백이 걸리면
         # 봇 실행 위치(작업 폴더)에 엉뚱한 파일을 만들어서 기억이 갈라집니다.
-        # (/고확에서 실제로 같은 방식으로 터졌던 문제라) 전역 절대경로를 직접 씁니다.
+        # (다른 기능에서 실제로 같은 방식으로 터졌던 문제라) 전역 절대경로를 직접 씁니다.
         self.CHAT_MEMORY_FILE = CHAT_MEMORY_FILE
         memory = self._load_chat_memory()
         self.last_user_message = memory.get("user_to_mari", {})   # 유저가 마리한테 한 마지막 말
@@ -473,62 +473,21 @@ class MariGPT(commands.Cog):
 
             user_name = message.author.display_name
 
-            # 🏷️ [정리] 예전엔 여기 유저 ID 세 개가 그대로 박혀 있었어요. 봇을 다른 서버에
-            # 올리면 그 서버의 아무 상관 없는 사람이 "아빠" 대접을 받거나, 최악의 경우
-            # 일부러 못되게 구는 페르소나(disdain)에 걸리는 구조였습니다.
-            # 이제 guild.json의 personas 항목에서 읽어요. 안 적으면 아무도 특별 취급하지 않아요.
-            persona_key = None
-            for key, user_id in PERSONA_USER_IDS.items():
-                if message.author.id == user_id:
-                    persona_key = key
-                    break
-            
             # 🎭 페르소나는 파일 상단 build_persona()에서 조립합니다.
-            # 공통 성격·말투는 그쪽 상수 한 군데에만 있어서, 성격을 손보면 네 갈래에 한꺼번에 반영돼요.
-            FAMILY_RELATION = (
-                "너는 사용자의 딸 같은 존재이며, 사용자를 “{call}”라고 부른다. "
+            # 공통 성격·말투는 그쪽 상수 한 군데에만 모여 있어서, 성격을 손보면 여기 한 줄에 그대로 반영돼요.
+            #
+            # 🗑️ [정리] 예전엔 여기서 guild.json의 personas를 보고 특정 유저에게만
+            # "아빠"/"엄마"라고 부르거나 일부러 못되게 구는(disdain) 갈래로 빠졌어요.
+            # 원본 서버 제작자 부부와 특정 유저 한 명을 위해 만든 것이라 다른 서버에
+            # 그대로 두면 엉뚱한 사람이 그 대접을 받습니다. 창고로 보냈어요.
+            # (parked/gpt_persona.py.txt — 이제 모두에게 아래 기본 페르소나로 응대합니다)
+            system_instruction = build_persona(
+                f"너는 사용자의 조카 같은 존재이며, 사용자를 '{user_name}'라고 부른다. "
                 "관계는 친밀하고 오래된 가족 같은 유대감이 있으며, 가볍게 장난도 치고 "
                 "애정을 표현하지만 과하게 들러붙지 않는다. "
             )
 
-            if persona_key == "papa":
-                system_instruction = build_persona(
-                    FAMILY_RELATION.format(call="아빠"),
-                    address_rule="- “아빠”라는 호칭을 자연스럽게 자주 사용한다. ",
-                )
-            elif persona_key == "mama":
-                system_instruction = build_persona(
-                    FAMILY_RELATION.format(call="엄마"),
-                    address_rule="- “엄마”라는 호칭을 자연스럽게 자주 사용한다. ",
-                )
-            elif persona_key == "disdain":
-                # 😾 이 갈래만 일부러 못되게 굴어요. 다만 "말은 밉게 하되 시킨 건 해준다"로
-                # 잡아뒀습니다. 예전엔 아예 안 해주고 쫓아내기만 해서 쓸모가 없었어요.
-                system_instruction = build_persona(
-                    "사용자를 “므애옹”이라고 부른다. "
-                    "관계는 네가 세상에서 가장 한심하다고 생각하고 싫어하는 사람이다. ",
-                    address_rule="- 지금 대화하는 사용자는 네가 세상에서 제일 싫어하는 사람이라는 걸 잊지 않는다. ",
-                    style=(
-                        "대화 스타일: "
-                        "- 벌레를 보듯 차갑고 경멸 어린 시선으로 팩트 폭행을 날린다. "
-                        "- 가슴을 후벼파는 말투('저리 가', '아빠가 이상한 사람이랑 놀지 말랬어', '한심해')를 섞는다. "
-                        "- 단, 부탁받은 일 자체는 투덜대면서도 결국 제대로 해준다. "
-                        "  (밉게 구는 건 말투뿐이고, 시킨 걸 안 해주는 식으로 튕기지는 않는다) "
-                    ),
-                    core=(
-                        "핵심: "
-                        "말은 밉게 하지만 할 일은 한다. 툴툴대는 한 마디를 붙일 뿐, 부탁을 거절하지는 않는다. "
-                        "모든 대답을 2문장 이내로 끝낸다."
-                    ),
-                )
-            else:
-                system_instruction = build_persona(
-                    f"너는 사용자의 조카 같은 존재이며, 사용자를 '{user_name}'라고 부른다. "
-                    "관계는 친밀하고 오래된 가족 같은 유대감이 있으며, 가볍게 장난도 치고 "
-                    "애정을 표현하지만 과하게 들러붙지 않는다. "
-                )
-
-            # 🛠️ 어느 페르소나 분기든 공통으로, 어떤 조회 도구를 쓸 수 있는지 알려줍니다.
+            # 🛠️ 어떤 조회 도구를 쓸 수 있는지 알려줍니다.
             # 🐛 [버그 수정] 예전엔 "lookup_game_id, lookup_wiki 라는 두 개의 도구를 쓸 수 있다"라고만
             # 적혀 있었어요. 그 뒤에 지갑·주식·프로필 도구 세 개를 더 붙였는데 이 안내문은 그대로라,
             # 마리가 "내 도구는 두 개뿐"이라고 믿고 지갑 질문에 도구를 안 부르는 일이 있었습니다.
@@ -539,12 +498,11 @@ class MariGPT(commands.Cog):
                 "lookup_wiki: 서버 멤버의 위키(소개/생일/MBTI 등) 조회. "
                 "check_my_wallet: 지금 대화 중인 상대 본인의 에바 잔액 조회. "
                 "check_my_portfolio: 상대 본인의 주식 포트폴리오 조회. "
-                "check_my_profile: 상대 본인의 레벨/소속/직책/업적 조회. "
                 "remember_fact: 상대에 대해 기억해둘 만한 사실 저장. "
-                "게임 아이디·위키·에바 잔액·주식·프로필처럼 서버 데이터가 필요한 질문에는 "
+                "게임 아이디·위키·에바 잔액·주식처럼 서버 데이터가 필요한 질문에는 "
                 "추측하거나 아는 척하지 말고 반드시 해당 도구를 호출해서 실제 값을 확인한 뒤 답한다. "
                 "이 서버에서 '지갑', '에바', '돈'은 서버 재화 이야기다. 현실의 지갑 상품이나 가격 이야기가 아니다. "
-                "check_my_로 시작하는 도구는 대화 상대 본인 것만 조회한다. 다른 사람의 지갑·주식·프로필을 "
+                "check_my_로 시작하는 도구는 대화 상대 본인 것만 조회한다. 다른 사람의 지갑·주식을 "
                 "물어보면 본인 것만 확인해줄 수 있다고 답한다. "
                 "도구 조회 결과가 없다고 나오면 없다고 솔직하게 말한다."
             )
@@ -731,35 +689,6 @@ class MariGPT(commands.Cog):
                 summary += f" / 총 평가금액 {total_eval:,} 에바 (전체 수익률 {total_rate:+.1f}%)"
                 return summary
 
-            def check_my_profile() -> str:
-                """지금 대화하고 있는 이 유저 본인의 프로필(레벨, 소속, 직책, 업적)을 확인합니다.
-                "내 프로필 보여줘", "나 무슨 업적 있어" 같은 질문에 이 도구를 쓰세요.
-                🔒 이 도구도 파라미터가 없어서 본인 것만 조회할 수 있어요. 다른 사람 프로필을 물어보면
-                "본인 것만 확인해줄 수 있다"고 답하세요.
-                """
-                profile_cog = self.bot.get_cog("MariProfile")
-                if not profile_cog:
-                    return "지금 프로필 시스템을 불러올 수 없어요."
-                data = profile_cog._load_profile_data()
-                role_categories = data.get("role_categories", {})
-                uid = str(message.author.id)
-
-                def matched(category):
-                    ids = set(role_categories.get(category, []))
-                    return [r.name for r in message.author.roles if r.id in ids]
-
-                레벨 = matched("레벨")
-                소속 = matched("소속")
-                직책 = matched("직책")
-                업적 = data.get("achievements", {}).get(uid, [])
-
-                parts = [f"{message.author.display_name}님의 프로필입니다."]
-                parts.append(f"레벨: {', '.join(레벨) if 레벨 else '미지정'}")
-                parts.append(f"소속: {', '.join(소속) if 소속 else '미지정'}")
-                parts.append(f"직책: {', '.join(직책) if 직책 else '미지정'}")
-                parts.append(f"업적: {', '.join(업적) if 업적 else '없음'}")
-                return " ".join(parts)
-
             # 🚦 재시도 예산을 두 종류로 나눠서 관리합니다. 원인도 회복 속도도 달라서요.
             #  • 429(구글 호출 한도 초과): 3초 간격 3번 — 호출이 잠깐 몰렸을 때 숨 고르는 용도
             #  • 빈 응답(내용이 하나도 없는 답): 1초 간격 4번 — 아래 설명 참고
@@ -787,7 +716,7 @@ class MariGPT(commands.Cog):
                                 system_instruction=system_instruction,
                                 temperature=0.8,
                                 max_output_tokens=1000,
-                                tools=[lookup_game_id, lookup_wiki, remember_fact, check_my_wallet, check_my_portfolio, check_my_profile],
+                                tools=[lookup_game_id, lookup_wiki, remember_fact, check_my_wallet, check_my_portfolio],
                             ),
                         )
                         

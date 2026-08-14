@@ -1,0 +1,241 @@
+# ⛓️ 유배 · 복귀 — 창고 보관본
+#
+# 사고를 친 멤버의 역할을 **전부 저장해두고 떼어낸 뒤** '유배자' 역할 하나만 남기고,
+# 나중에 사면할 때 저장해둔 역할을 그대로 복원하는 기능이에요.
+#
+# 왜 뺐나 — 원본 서버(에바스타운)의 징계 제도입니다. '추방관'(유배 집행)과
+# '지옥간수'(사면)라는 두 직책이 서로 다른 사람에게 맡겨져 있고, 유배자는 별도 역할을
+# 달고 격리 채널로 내려가는 구조예요. 이름도 절차도 그 서버 고유라 그대로 납품할 수 없어요.
+#
+# 다만 **구조 자체는 범용입니다.** "역할 스냅샷을 떠서 백업하고 나중에 되돌린다"는
+# 골격은 임시 정지·격리·심사 대기 같은 어느 서버의 제도로도 갈아끼울 수 있어요.
+#
+# 꺼내 쓸 때 —
+#   1. 아래 블록들을 각자 원래 자리에 도로 붙입니다. (블록 제목에 적혀 있어요)
+#   2. mari_config.py 에 EXILE_DATA_FILE 을 되살립니다. ([6]번 블록)
+#      ⚠️ 이름을 반드시 `_FILE`로 끝내고 `.json`으로 두세요. json_data_files()가 그 규칙으로
+#         자동 생성·자동 백업 대상을 고릅니다. 규칙에서 벗어나면 백업에서 조용히 빠져요.
+#   3. setting.py 상단 import 를 되살립니다. 유배를 빼면서 이 셋은 쓰는 곳이 없어져
+#      setting.py 에서 걷어냈어요:
+#         from mari_config import EXILE_DATA_FILE
+#         from mari_storage import atomic_json_save_or_raise, safe_json_load
+#         from mari_settings import has_admin_or_role
+#   4. 클라이언트의 제도 이름에 맞춰 '유배/복귀/추방관/지옥간수/유배자'를 바꾸세요.
+#
+# 💾 데이터 형식 (mari_exile_data.json)
+#      {"<길드ID>": {"<유저ID>": [떼어낸 역할 ID, ...]}}
+#    복귀에 성공하면 그 유저 항목을 지웁니다. 즉 "이 파일에 있다 = 지금 유배 중"이에요.
+
+
+# ============================================================================
+# [1] cogs/setting.py — /설정 관리자 추방관 · 지옥간수 · 유배자
+# ============================================================================
+# @관리자.command 들 사이, '테스트' 관리자 설정 바로 아래에 있었어요.
+#
+# 앞의 둘은 "누가 쓸 수 있는지"(권한 역할)라 여러 개를 지정할 수 있는 공용 헬퍼
+# _update_admin_role_list 를 쓰고, '유배자'는 "어느 역할을 붙일지"(대상 역할)라
+# 단일 역할로 직접 저장합니다. 성격이 달라서 처리 방식이 갈려요.
+
+    @관리자.command(name="추방관", description="[관리자] /역할부여의 '유배' 처리를 쓸 수 있는 역할을 추가/제거합니다. (여러 역할 동시 지정 가능)")
+    @app_commands.describe(역할="추가/제거할 역할", 동작="추가 또는 제거 (기본값: 추가)")
+    @app_commands.choices(동작=ADMIN_ROLE_ACTION_CHOICES)
+    async def set_exile_officer(self, interaction: discord.Interaction, 역할: discord.Role, 동작: Optional[app_commands.Choice[str]] = None):
+        await self._update_admin_role_list(interaction, "exile_officer", "추방관", 역할, 동작)
+
+    @관리자.command(name="지옥간수", description="[관리자] /역할부여의 '복귀'(사면) 처리를 쓸 수 있는 역할을 추가/제거합니다. (여러 역할 동시 지정 가능)")
+    @app_commands.describe(역할="추가/제거할 역할", 동작="추가 또는 제거 (기본값: 추가)")
+    @app_commands.choices(동작=ADMIN_ROLE_ACTION_CHOICES)
+    async def set_hell_warden(self, interaction: discord.Interaction, 역할: discord.Role, 동작: Optional[app_commands.Choice[str]] = None):
+        await self._update_admin_role_list(interaction, "hell_warden", "지옥간수", 역할, 동작)
+
+    @관리자.command(name="유배자", description="[관리자] '유배' 처리된 유저에게 부여할 역할을 지정합니다. (권한 역할이 아니라 대상 역할이에요)")
+    async def set_exile_role(self, interaction: discord.Interaction, 역할: discord.Role):
+        if not self.has_channel_permission(interaction): return await interaction.response.send_message("❌ 관리자 또는 '채널관리자' 역할이 필요해요!", ephemeral=True)
+        settings = load_settings()
+        if "roles" not in settings: settings["roles"] = {}
+        settings["roles"]["exile_role"] = 역할.id
+        save_settings(settings)
+        await interaction.response.send_message(f"⛓️ {역할.mention} 역할이 **유배자** 역할로 지정됐어요. (`/역할부여`의 '유배' 처리 시 이 역할만 남아요)", ephemeral=True)
+
+
+# ============================================================================
+# [2] cogs/setting.py — /역할부여 의 '유배지' 파라미터
+# ============================================================================
+# grant_role 의 데코레이터·시그니처에 섞여 있던 조각들이에요. 명령 자체(/역할부여)와
+# 역할 직접 지급(RoleGrantView)은 범용이라 그대로 남아 있습니다.
+#
+# 떼어내면서 명령 설명도 같이 줄였어요:
+#   전: "[관리자] 특정 멤버에게 역할을 지급하거나 가이드/유배지 프리셋을 적용합니다."
+#   후: "[관리자] 특정 멤버에게 역할을 지급하거나 가이드 프리셋을 적용합니다."
+
+    # @app_commands.describe(...) 안에 있던 줄
+        유배지="'유배'(현재 역할 전부 뺏고 유배자 역할만 부여, 추방관 전용) 또는 '복귀'(원래 역할 복원, 지옥간수 전용)",
+
+    # 데코레이터 한 벌 통째로
+    @app_commands.choices(
+        유배지=[
+            app_commands.Choice(name="유배 (현재 역할 전부 저장 후 제거, 유배자 역할만 부여)", value="exile"),
+            app_commands.Choice(name="복귀 (저장해둔 원래 역할 복원, 유배자 역할 제거)", value="return"),
+        ],
+    )
+
+    # async def grant_role(...) 시그니처에 있던 파라미터
+        유배지: Optional[app_commands.Choice[str]] = None,
+
+
+# ============================================================================
+# [3] cogs/setting.py — grant_role() 맨 앞의 유배/복귀 처리 블록
+# ============================================================================
+# 권한 검사(`is_town_guide`) 보다도 **앞**에 있었어요. 유배는 완전히 다른 흐름이라
+# 다른 옵션과 섞이지 않게 여기서 처리하고 `return` 으로 끝냅니다.
+
+        # ⛓️ [신규] '유배지' 옵션은 완전히 별개의 흐름이라(전체 역할 교체), 다른 옵션들과
+        # 섞이지 않게 맨 앞에서 따로 처리하고 끝내요. 유배는 '추방관', 복귀(사면)는 '지옥간수'로
+        # 서로 다른 사람이 담당할 수 있게 권한을 분리했어요.
+        if 유배지 is not None:
+            if 유배지.value == "exile":
+                if not (interaction.user.guild_permissions.administrator or has_admin_or_role(interaction, "exile_officer")):
+                    return await interaction.response.send_message("❌ 유배 처리는 '추방관' 역할(또는 관리자)만 사용할 수 있어요!", ephemeral=True)
+            else:  # "return"
+                if not (interaction.user.guild_permissions.administrator or has_admin_or_role(interaction, "hell_warden")):
+                    return await interaction.response.send_message("❌ 복귀(사면) 처리는 '지옥간수' 역할(또는 관리자)만 사용할 수 있어요!", ephemeral=True)
+
+            settings = load_settings()
+            exile_role_id = settings.get("roles", {}).get("exile_role")
+            exile_role = interaction.guild.get_role(exile_role_id) if exile_role_id else None
+            if not exile_role:
+                return await interaction.response.send_message("❌ 먼저 `/설정 관리자 유배자`로 유배자 역할을 지정해주세요!", ephemeral=True)
+
+            await interaction.response.defer(ephemeral=True)
+            exile_data = safe_json_load(EXILE_DATA_FILE, {})
+            gid, uid = str(interaction.guild.id), str(멤버.id)
+
+            if 유배지.value == "exile":
+                # 현재 보유 역할(진짜 관리 가능한 역할만)을 저장해두고 전부 제거
+                #
+                # 🐛 [버그 수정] 예전엔 @everyone과 봇보다 높은 역할만 걸렀어요. 그런데 **서버 부스트
+                # 역할**(Nitro Booster, 예: 1057226954534834187)은 봇 역할보다 아래에 있어서 이 검사를
+                # 통과해 목록에 섞였습니다. 부스트 역할은 디스코드가 직접 관리하는 managed 역할이라
+                # 봇이 절대 뗄 수 없고, remove_roles는 넘긴 역할을 한 번에 처리하기 때문에 그거 하나
+                # 때문에 호출 전체가 실패해서 **역할이 하나도 안 빠졌어요.**
+                # r.managed로 거르면 부스트 역할뿐 아니라 봇 전용 역할·연동(integration) 역할까지
+                # 같이 걸러집니다. 전부 같은 이유로 제거가 불가능한 역할들이에요.
+                # (이 역할들은 저장도 하지 않아요. 어차피 복귀 때 다시 붙일 수 없고, 유배 중에도
+                #  디스코드가 알아서 유지해주는 역할이라 그대로 두는 게 맞습니다)
+                skipped = [r for r in 멤버.roles
+                           if not r.is_default() and (r.managed or r >= interaction.guild.me.top_role)]
+                current_roles = [r for r in 멤버.roles
+                                 if not r.is_default() and not r.managed and r < interaction.guild.me.top_role]
+                if not current_roles:
+                    saved_ids = []
+                else:
+                    saved_ids = [r.id for r in current_roles]
+                    try:
+                        await 멤버.remove_roles(*current_roles, reason="유배 처리")
+                    except Exception as e:
+                        return await interaction.followup.send(f"❌ 기존 역할 제거 중 오류가 발생했어요: {e}")
+
+                exile_data.setdefault(gid, {})[uid] = saved_ids
+                atomic_json_save_or_raise(EXILE_DATA_FILE, exile_data, indent=2)
+
+                try:
+                    await 멤버.add_roles(exile_role, reason="유배 처리")
+                except Exception as e:
+                    return await interaction.followup.send(f"⚠️ 기존 역할은 제거했지만, 유배자 역할 부여 중 오류가 발생했어요: {e}")
+
+                msg = f"⛓️ {멤버.mention}님을 유배했어요. (기존 역할 {len(saved_ids)}개 저장 후 제거, {exile_role.mention}만 부여)"
+                if skipped:
+                    # 뗄 수 없는 역할이 남아있다는 걸 알려야, 유배했는데 왜 저 역할이 그대로인지 헷갈리지 않아요.
+                    msg += ("\nℹ️ 아래 역할은 봇이 뗄 수 없어서 그대로 뒀어요 "
+                            "(서버 부스트·봇·연동 역할이거나 마리보다 높은 역할):\n"
+                            f"└ {', '.join(r.mention for r in skipped)}")
+                await interaction.followup.send(msg)
+                await send_log_embed(interaction.client, "role_log", "유배 처리 기록이에요.",
+                                      fields=[("실행자", interaction.user.mention, True), ("대상자", 멤버.mention, True),
+                                              ("저장된 역할 수", f"{len(saved_ids)}개", True)]
+                                             + ([("제거 못한 역할", ", ".join(r.name for r in skipped)[:1024], False)] if skipped else []),
+                                      guild=interaction.guild)
+            else:  # "return"
+                saved_ids = exile_data.get(gid, {}).get(uid)
+                if saved_ids is None:
+                    return await interaction.followup.send(f"❌ {멤버.mention}님은 유배 기록이 없어요.")
+
+                try:
+                    if exile_role in 멤버.roles:
+                        await 멤버.remove_roles(exile_role, reason="유배 복귀")
+                except Exception as e:
+                    return await interaction.followup.send(f"❌ 유배자 역할 제거 중 오류가 발생했어요: {e}")
+
+                restored, missing = [], []
+                for rid in saved_ids:
+                    role = interaction.guild.get_role(rid)
+                    if not role:
+                        missing.append(str(rid))
+                        continue
+                    try:
+                        await 멤버.add_roles(role, reason="유배 복귀")
+                        restored.append(role.mention)
+                    except Exception as e:
+                        missing.append(f"{role.name} ({e})")
+
+                del exile_data[gid][uid]
+                atomic_json_save_or_raise(EXILE_DATA_FILE, exile_data, indent=2)
+
+                msg = f"🕊️ {멤버.mention}님을 복귀시켰어요. 복원된 역할: {', '.join(restored) if restored else '없음'}"
+                if missing:
+                    msg += f"\n⚠️ 복원 실패(역할이 삭제됐거나 권한 부족): {', '.join(missing)}"
+                await interaction.followup.send(msg)
+                await send_log_embed(interaction.client, "role_log", "유배 복귀 처리 기록이에요.",
+                                      fields=[("실행자", interaction.user.mention, True), ("대상자", 멤버.mention, True),
+                                              ("복원된 역할 수", f"{len(restored)}개", True)],
+                                      guild=interaction.guild)
+            return
+
+
+# ============================================================================
+# [4] cogs/setting.py — show_channel_config()의 role_labels 항목
+# ============================================================================
+# 이 표에는 예외 처리가 딸려 있어요. 바로 아래 루프에서
+#   if key in ("chief_role", "exile_role"):
+# 로 갈라서, 이 둘만 "여러 역할 목록"이 아니라 "단일 역할"로 읽습니다.
+# 되살릴 때 그 조건문에 "exile_role" 을 도로 넣어야 표시가 깨지지 않아요.
+# (지금은 `if key in ("chief_role",):` 로 줄여뒀습니다)
+
+            "hell_warden": "😈 지옥간수 (유배 복귀/사면 권한)",
+            "exile_officer": "🏹 추방관 (유배 처리 권한)",
+            "exile_role": "⛓️ 유배자 (유배 대상 역할)",
+
+
+# ============================================================================
+# [5] cogs/diagnostics.py — test_permissions()의 role_labels 항목
+# ============================================================================
+# /테스트 권한확인 이 쓰는 표예요. setting.py 것과 별개로 한 벌 더 있습니다.
+
+            "hell_warden": "😈 지옥간수(복귀 권한)", "exile_officer": "🏹 추방관(유배 권한)", "exile_role": "⛓️ 유배자(현재 유배 중)",
+
+
+# ============================================================================
+# [6] mari_config.py — 데이터 파일 경로
+# ============================================================================
+
+EXILE_DATA_FILE = os.path.join(DATA_DIR, "mari_exile_data.json") # ⛓️ [신규] 유배 전 원래 역할 목록 백업 (복귀 시 되돌리는 용도)
+
+
+# ============================================================================
+# [7] cogs/help.py — ADMIN_CATEGORIES "정보 및 역할 관리" 안내
+# ============================================================================
+# `/역할부여` 줄 바로 아래에 딸려 있었어요.
+#
+#             "└ `유배지:유배` - 현재 역할 전부 저장 후 제거, 유배자 역할만 부여 (추방관 전용)\n"
+#             "└ `유배지:복귀` - 저장해뒀던 원래 역할 복원, 유배자 역할 제거 (지옥간수 전용)\n"
+#             "`/설정 관리자 추방관` - 유배 처리 권한 역할 지정\n"
+#             "`/설정 관리자 지옥간수` - 복귀(사면) 처리 권한 역할 지정\n"
+#             "`/설정 관리자 유배자` - 유배 시 부여할 역할 지정"
+
+
+# ============================================================================
+# [8] modules.py — setting 모듈 설명
+# ============================================================================
+# note 문구에 "역할부여·유배" 라고 적혀 있었어요. 지금은 "역할부여" 로 줄였습니다.
+#
+#         note="관리자 역할/로그 채널 지정, 기능 킬 스위치, 역할부여·유배. 이게 없으면 다른 모듈의 권한 설정을 못 해요.",

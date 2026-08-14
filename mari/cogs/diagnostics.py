@@ -38,9 +38,9 @@ class MariTest(commands.Cog):
         channel_labels = {
             "attendance": "📅 출석체크", "economy_log": "💰 경제 로그", "shop_log": "🛒 상점 로그",
             "stock_board": "📈 주식 전광판", "stock_log": "📊 주식 로그", "closing_log": "🔔 종가 게시판",
-            "global_broadcast": "📢 고확", "id_log": "🆔 아이디 로그", "role_log": "👥 역할 로그",
+            "id_log": "🆔 아이디 로그", "role_log": "👥 역할 로그",
             "birthday_announce": "🎂 생일 알림", "birthday_log": "🎉 생일 로그", "evashi_announce": "🎉 에바시 안내",
-            "id_submit": "🆔 아이디 자동등록", "level_roster": "📋 레벨별 아이디 명단",
+            "id_submit": "🆔 아이디 자동등록", "level_roster": "📋 아이디 명단",
         }
         settings = load_settings()
         channels = settings.get("channels", {})
@@ -82,9 +82,9 @@ class MariTest(commands.Cog):
         role_map = settings.get("roles", {})
         role_labels = {
             "ids_admin": "🆔 아이디 관리자", "shop_admin": "🛒 상점 관리자", "stock_admin": "📈 주식 관리자",
-            "profile_admin": "👤 프로필 관리자", "evashi_admin": "🎉 에바시 관리자",
+            "evashi_admin": "🎉 에바시 관리자",
             "chronicle_admin": "📜 연대기 관리자", "chief_role": "👑 대장",
-            "test_admin": "🧪 테스트 관리자", "hell_warden": "😈 지옥간수(복귀 권한)", "exile_officer": "🏹 추방관(유배 권한)", "exile_role": "⛓️ 유배자(현재 유배 중)",
+            "test_admin": "🧪 테스트 관리자",
         }
         has = []
         for key, label in role_labels.items():

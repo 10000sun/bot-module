@@ -29,7 +29,7 @@ class ModuleSpec:
 MODULE_SPECS = (
     ModuleSpec(
         "setting", "설정·권한·기능제어", "cogs.setting", "MariSetting", core=True,
-        note="관리자 역할/로그 채널 지정, 기능 킬 스위치, 역할부여·유배. 이게 없으면 다른 모듈의 권한 설정을 못 해요.",
+        note="관리자 역할/로그 채널 지정, 기능 킬 스위치, 역할부여. 이게 없으면 다른 모듈의 권한 설정을 못 해요.",
     ),
     ModuleSpec(
         "id", "게임 아이디 등록부", "cogs.core", "MariCore",
@@ -45,7 +45,7 @@ MODULE_SPECS = (
     ModuleSpec("games", "미니게임·보상", "cogs.games", "MariGames", requires=("economy",)),
     ModuleSpec(
         "gpt", "AI 대화", "cogs.gpt", "MariGPT",
-        note="GEMINI_API_KEY가 없으면 대화 기능만 조용히 꺼집니다. 지갑·주식·프로필 조회 도구는 "
+        note="GEMINI_API_KEY가 없으면 대화 기능만 조용히 꺼집니다. 지갑·주식 조회 도구는 "
              "해당 모듈이 함께 켜져 있을 때만 실제로 동작해요.",
     ),
     ModuleSpec("shop", "상점·인벤토리·선물", "cogs.shop", "MariShop", requires=("economy",)),

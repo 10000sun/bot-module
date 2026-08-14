@@ -1,4 +1,4 @@
-"""MariCore — 게임 아이디 등록/수정/삭제/자동등록 및 레벨별 명단 자동 게시."""
+"""MariCore — 게임 아이디 등록/수정/삭제/자동등록 및 아이디 명단 자동 게시."""
 
 import asyncio
 import os
@@ -23,8 +23,8 @@ class ImportConfirmView(MariView):
         super().__init__(timeout=300)
         self.core_cog = core_cog
         self.guild = guild
-        self.matched = matched      # (level, name, discord.Member, {platform: id})
-        self.unmatched = unmatched or []  # (level, name, {platform: id})
+        self.matched = matched      # (name, discord.Member, {platform: id})
+        self.unmatched = unmatched or []  # (name, {platform: id})
         self.processing = False     # 🔒 버튼 연타로 같은 아이디가 두 번 등록되는 것 방지
 
         # 매칭 안 된 이름이 없으면 "연결하기" 버튼은 아예 안 보이게 정리
@@ -42,7 +42,7 @@ class ImportConfirmView(MariView):
         registered_people = 0
         registered_entries = 0
 
-        for level, name, member, ids in self.matched:
+        for name, member, ids in self.matched:
             uid = str(member.id)
             for plat_label, value in ids.items():
                 self.core_cog._register_single_id(gid, uid, plat_label, value)
@@ -50,7 +50,7 @@ class ImportConfirmView(MariView):
             registered_people += 1
 
         state.save()
-        await self.core_cog._refresh_level_roster(self.guild)
+        await self.core_cog._refresh_id_roster(self.guild)
 
         for child in self.children:
             child.disabled = True
@@ -58,7 +58,7 @@ class ImportConfirmView(MariView):
 
         skipped_note = f" (연결 안 된 {len(self.unmatched)}명은 이번에 포함 안 됐어요)" if self.unmatched else ""
         await interaction.followup.send(
-            f"✅ **{registered_people}명, {registered_entries}건**의 아이디를 등록 완료했어요! 레벨 명단도 갱신했어요.{skipped_note}",
+            f"✅ **{registered_people}명, {registered_entries}건**의 아이디를 등록 완료했어요! 아이디 명단도 갱신했어요.{skipped_note}",
             ephemeral=True
         )
 
@@ -82,14 +82,13 @@ class ImportConfirmView(MariView):
 
 class UnmatchedResolveView(MariView):
     """매칭 안 된 이름을 하나씩 보여주면서, 관리자가 직접 서버 멤버를 골라 연결할 수 있게 하는 뷰"""
-    LEVEL_LABELS = {"chief": "대장", "4": "4레벨", "3": "3레벨", "2": "2레벨", "1": "1레벨", "0": "0레벨", "unknown": "레벨 미상"}
 
     def __init__(self, core_cog, guild: discord.Guild, matched: list, unmatched: list):
         super().__init__(timeout=300)
         self.core_cog = core_cog
         self.guild = guild
         self.matched = list(matched)      # 원래 매칭됐던 것 + 여기서 새로 연결한 것들이 계속 쌓여요
-        self.remaining = list(unmatched)  # 아직 처리 안 한 (level, name, ids) 큐
+        self.remaining = list(unmatched)  # 아직 처리 안 한 (name, ids) 큐
         self.still_unmatched = []         # 건너뛴 것들
         self.user_select = None
         # 🔒 연타 방지. 이 뷰는 큐를 하나씩 pop하며 진행하기 때문에, 두 번 눌리면
@@ -101,7 +100,7 @@ class UnmatchedResolveView(MariView):
         """현재 처리 중인 이름에 맞는 UserSelect로 교체합니다. (버튼들은 그대로 유지)"""
         if self.user_select is not None:
             self.remove_item(self.user_select)
-        level, name, ids = self.remaining[0]
+        name, ids = self.remaining[0]
         select = discord.ui.UserSelect(
             placeholder=f"'{name}'님을 서버 멤버 중에서 선택하세요...",
             min_values=1, max_values=1,
@@ -111,13 +110,12 @@ class UnmatchedResolveView(MariView):
         self.add_item(select)
 
     def build_embed(self) -> discord.Embed:
-        level, name, ids = self.remaining[0]
-        lvl_label = self.LEVEL_LABELS.get(level, level)
+        name, ids = self.remaining[0]
         id_lines = "\n".join(f"• {k}: {v}" for k, v in ids.items())
         embed = discord.Embed(
             title=f"🔗 이름 연결 (남은 {len(self.remaining)}명)",
             description=(
-                f"**이름:** {name}  (**{lvl_label}**)\n"
+                f"**이름:** {name}\n"
                 f"**등록될 아이디:**\n{id_lines}\n\n"
                 f"이 사람이 서버의 누구인지 아래에서 선택해주세요. 모르면 [건너뛰기]를 눌러주세요."
             ),
@@ -137,12 +135,12 @@ class UnmatchedResolveView(MariView):
         if not await self._begin(interaction):
             return
         try:
-            level, name, ids = self.remaining[0]
+            name, ids = self.remaining[0]
             picked = self.user_select.values[0]  # discord.Member 또는 discord.User
             member = picked if isinstance(picked, discord.Member) else self.guild.get_member(picked.id)
             if not member:
                 return await interaction.response.send_message("❌ 서버 멤버가 아니에요. 다시 선택해주세요.", ephemeral=True)
-            self.matched.append((level, name, member, ids))
+            self.matched.append((name, member, ids))
             await self._advance(interaction)
         finally:
             self.processing = False
@@ -152,8 +150,8 @@ class UnmatchedResolveView(MariView):
         if not await self._begin(interaction):
             return
         try:
-            level, name, ids = self.remaining[0]
-            self.still_unmatched.append((level, name, ids))
+            name, ids = self.remaining[0]
+            self.still_unmatched.append((name, ids))
             await self._advance(interaction)
         finally:
             self.processing = False
@@ -179,10 +177,10 @@ class UnmatchedResolveView(MariView):
 
     async def _finish(self, interaction: discord.Interaction):
         confirm_view = ImportConfirmView(self.core_cog, self.guild, self.matched, self.still_unmatched)
-        total_entries = sum(len(ids) for _, _, _, ids in self.matched)
+        total_entries = sum(len(ids) for _, _, ids in self.matched)
         desc = f"🔗 연결 완료! 이제 **{len(self.matched)}명** (아이디 {total_entries}건)이 등록 준비됐어요."
         if self.still_unmatched:
-            names = ", ".join(f"{n}({self.LEVEL_LABELS.get(lvl, lvl)})" for lvl, n, _ in self.still_unmatched)
+            names = ", ".join(n for n, _ in self.still_unmatched)
             desc += f"\n\n여전히 연결 안 된 {len(self.still_unmatched)}명: {names}"
         embed = discord.Embed(title="📦 아이디 목록 일괄 가져오기 (연결 완료)", description=desc[:4000], color=discord.Color.orange())
         await interaction.response.edit_message(embed=embed, view=confirm_view)
@@ -291,35 +289,37 @@ class MariCore(commands.Cog):
         existing[actual] = game_id
         return actual
 
-    # ========== 📋 [신규] 레벨별 아이디 명단 자동 유지 ==========
-    def _get_member_level_key(self, member: discord.Member, settings: Optional[dict] = None) -> Optional[str]:
-        """멤버의 레벨 구분 키를 돌려줍니다. 'chief' 또는 '0'~'4', 해당 없으면 None.
+    # ========== 📋 [신규] 아이디 명단 자동 유지 ==========
+    #
+    # 🗑️ [정리] 예전엔 이 명단이 **0~4레벨 등급 사다리**를 중심으로 짜여 있었어요.
+    # 등급제는 원본 서버 고유 제도라 통째로 걷어냈습니다. (parked/core_levels.py.txt)
+    # 지금은 "대장 / 그 외 멤버" 두 칸이라 어느 서버에서나 바로 씁니다.
+    #
+    # ⚠️ settings.json 의 키 이름(channels.level_roster, level_roster_message_ids)은
+    #    일부러 옛 이름 그대로 뒀어요. 이미 돌고 있는 봇의 설정 파일에 들어 있는 값이라
+    #    이름을 바꾸면 업데이트하는 순간 지정해둔 채널을 잃어버립니다.
+    def _is_chief(self, member: discord.Member, settings: Optional[dict] = None) -> bool:
+        """이 멤버가 '대장' 역할(`/설정 명단 대장`으로 지정)을 갖고 있는지.
+
         🐛 [성능 버그 수정] 예전엔 이 함수가 불릴 때마다 매번 load_settings()로 파일을 새로
-        읽었는데, /명단이나 레벨 명단 자동 갱신처럼 서버 멤버 전원을 한 명씩 순회하며
-        이 함수를 부르는 곳에서는 그게 "멤버 수만큼 파일을 반복해서 여는" 것과 같았어요.
-        멤버가 몇백 명이면 몇백 번 파일을 열게 되는 구조라 체감상 느려질 수 있었어요.
-        이제 settings를 미리 한 번만 읽어서 넘겨줄 수 있게 했고, 안 넘기면 예전처럼 그때
-        한 번만 읽어요 (단일 호출용 하위 호환)."""
+        읽었는데, 명단 자동 갱신처럼 서버 멤버 전원을 한 명씩 순회하며 이 함수를 부르는
+        곳에서는 그게 "멤버 수만큼 파일을 반복해서 여는" 것과 같았어요. 멤버가 몇백 명이면
+        몇백 번 파일을 열게 되는 구조라 체감상 느려질 수 있었어요. 이제 settings를 미리
+        한 번만 읽어서 넘겨줄 수 있게 했고, 안 넘기면 예전처럼 그때 한 번만 읽어요."""
         if settings is None:
             settings = load_settings()
         chief_role_id = settings.get("roles", {}).get("chief_role")
-        if chief_role_id and any(r.id == chief_role_id for r in member.roles):
-            return "chief"
-        # 🗑️ [정리] 예전엔 여기서 명단 코그의 레벨 역할 표를 빌려 와 "이 사람은 몇 레벨"까지
-        # 돌려줬어요. 레벨 사다리는 원본 서버 고유 제도라 창고(parked/roster.py)로 옮겼고,
-        # 그래서 지금은 대장 역할만 판별합니다.
-        #
-        # ⚠️ 이 파일에는 아직 레벨을 전제로 한 코드가 남아 있어요. (레벨별 아이디 명단 게시,
-        # LEVEL_LABELS, /아이디 가져오기의 레벨 파싱 등) 지금은 이 함수가 항상 None을
-        # 돌려주므로 전원이 "레벨 미상"으로 묶여 동작에는 문제가 없지만, 레벨 개념을 아예
-        # 걷어낼지 아니면 등급 체계를 설정으로 뺄지는 아직 정하지 않았습니다.
-        return None
+        return bool(chief_role_id and any(r.id == chief_role_id for r in member.roles))
 
-    LEVEL_TITLES = {"chief": "대장", "4": "4LEVEL", "3": "3LEVEL", "2": "2LEVEL", "1": "1LEVEL", "0": "0레벨"}
-    LEVEL_ANSI_COLORS = {"chief": "2;41", "4": "2;35", "3": "2;34", "2": "2;34", "1": "2;36", "0": "2;33"}
+    # 📛 명단 블록의 제목과 색. ANSI 색은 디스코드 ```ansi 코드블록에서만 먹혀요.
+    # (앞자리 2는 흐리게, 41은 배경 빨강이라 대장 칸만 반전돼 보입니다)
+    ROSTER_SECTIONS = (
+        ("chief", "대장", "2;41"),
+        ("member", "멤버", "2;34"),
+    )
 
-    async def _refresh_level_roster(self, guild: discord.Guild, force_repost: bool = False):
-        """등록/수정/삭제가 일어날 때마다 호출되어, 레벨별 아이디 명단 채널을 최신 상태로 다시 게시합니다.
+    async def _refresh_id_roster(self, guild: discord.Guild, force_repost: bool = False):
+        """등록/수정/삭제가 일어날 때마다 호출되어, 아이디 명단 채널을 최신 상태로 다시 게시합니다.
         force_repost=True면 내용이 그대로여도 무조건 전체를 지우고 순서대로 새로 게시해요. (수동 "갱신" 트리거용)"""
         try:
             async with self.bot.settings_lock:
@@ -334,18 +334,19 @@ class MariCore(commands.Cog):
                 gid = str(guild.id)
                 guild_ids_data = state.user_ids.get(gid, {})
 
-                buckets: dict = {"chief": [], "4": [], "3": [], "2": [], "1": [], "0": []}
+                # 🗑️ [정리] 예전엔 여기서 레벨 역할을 보고 0~4레벨 칸에 나눠 담았어요.
+                # 그런데 레벨 역할표가 창고로 간 뒤로는 아무 칸에도 안 걸리는 사람이 명단에서
+                # **통째로 빠져** 있었습니다. 이제 대장이 아니면 전부 '멤버' 칸에 들어가요.
+                buckets: dict = {"chief": [], "member": []}
                 for member in guild.members:
                     if member.bot:
                         continue
-                    lvl = self._get_member_level_key(member, settings)
-                    if lvl:
-                        buckets[lvl].append(member)
-                for lvl in buckets:
-                    buckets[lvl].sort(key=lambda m: m.display_name.lower())
+                    buckets["chief" if self._is_chief(member, settings) else "member"].append(member)
+                for key in buckets:
+                    buckets[key].sort(key=lambda m: m.display_name.lower())
 
-                # 📦 [개선] 레벨별로 각각 독립된 블록을 만들고, 레벨 경계를 넘어서 섞이지 않게 분할합니다.
-                # (예전엔 그냥 2000자 넘으면 뚝 잘라서, 한 레벨이 메세지 두 개에 걸쳐 어중간하게 잘릴 수 있었어요)
+                # 📦 [개선] 칸마다 각각 독립된 블록을 만들고, 칸 경계를 넘어서 섞이지 않게 분할합니다.
+                # (예전엔 그냥 2000자 넘으면 뚝 잘라서, 한 칸이 메세지 두 개에 걸쳐 어중간하게 잘릴 수 있었어요)
                 CHUNK_LIMIT = 1800  # ```ansi 코드블록 오버헤드 감안
 
                 def split_lines_to_chunks(block_lines: list) -> list:
@@ -362,13 +363,13 @@ class MariCore(commands.Cog):
                     return result
 
                 chunks = []
-                header = "에바스타운 아이디 목록"
-                for lvl in ["chief", "4", "3", "2", "1", "0"]:
-                    members = buckets[lvl]
+                header = "게임 아이디 목록"
+                for key, title, color in self.ROSTER_SECTIONS:
+                    members = buckets[key]
                     if not members:
                         continue
-                    color = self.LEVEL_ANSI_COLORS[lvl]
-                    block_lines = [header, "", f"\u001b[{color}m{self.LEVEL_TITLES[lvl]}\u001b[0m", ""]
+                    label = title if key == "chief" else f"{title} ({len(members)}명)"
+                    block_lines = [header, "", f"\u001b[{color}m{label}\u001b[0m", ""]
                     for m in members:
                         ids = guild_ids_data.get(str(m.id), {})
                         block_lines.append(f"[\u001b[{color}m{m.display_name}\u001b[0m]")
@@ -381,14 +382,14 @@ class MariCore(commands.Cog):
 
                     block_text = "\n".join(block_lines).rstrip()
                     if len(block_text) <= CHUNK_LIMIT:
-                        # 이 레벨은 통째로 메세지 하나에 딱 들어감
+                        # 이 칸은 통째로 메세지 하나에 딱 들어감
                         chunks.append(block_text)
                     else:
-                        # 레벨 하나가 너무 커서 어쩔 수 없이 그 레벨 안에서만 쪼갬 (다른 레벨과는 안 섞임)
+                        # 칸 하나가 너무 커서 어쩔 수 없이 그 칸 안에서만 쪼갬 (다른 칸과는 안 섞임)
                         chunks.extend(split_lines_to_chunks(block_lines))
 
                 if not chunks:
-                    chunks = ["(등록된 레벨 멤버가 없어요)"]
+                    chunks = ["(명단에 올릴 멤버가 없어요)"]
 
                 # 📢 [신규] 아이디 관리자가 /아이디공지로 작성한 공지사항을 맨 끝에 별도 블록으로 추가
                 notice_text = settings.get("id_roster_notice", "").strip()
@@ -422,7 +423,7 @@ class MariCore(commands.Cog):
                         try:
                             await old_messages[i].edit(content=content)
                         except Exception as e:
-                            print(f"⚠️ 레벨 명단 수정 실패, 전체 재게시로 전환: {e}")
+                            print(f"⚠️ 아이디 명단 수정 실패, 전체 재게시로 전환: {e}")
                             need_full_repost = True
                             break
 
@@ -440,16 +441,16 @@ class MariCore(commands.Cog):
                             msg = await channel.send(content)
                             new_ids.append(msg.id)
                         except Exception as e:
-                            print(f"⚠️ 레벨 명단 게시 실패: {e}")
+                            print(f"⚠️ 아이디 명단 게시 실패: {e}")
                 else:
                     new_ids = [m.id for m in old_messages]
 
                 settings["level_roster_message_ids"] = new_ids
                 save_settings(settings)
         except Exception as e:
-            print(f"⚠️ 레벨 명단 갱신 중 오류: {e}")
+            print(f"⚠️ 아이디 명단 갱신 중 오류: {e}")
 
-    @id_group.command(name="공지", description="[관리자] 레벨 명단 맨 아래에 공지사항 한 줄을 추가하거나 확인해요. (아이디 관리자 전용)")
+    @id_group.command(name="공지", description="[관리자] 아이디 명단 맨 아래에 공지사항 한 줄을 추가하거나 확인해요. (아이디 관리자 전용)")
     @app_commands.describe(
         내용="추가할 공지 내용 (줄바꿈은 \\n 입력, 생략하면 지금 공지를 보여줘요)",
         덮어쓰기="True로 하면 추가가 아니라 기존 공지 전체를 이 내용으로 완전히 바꿔치기해요",
@@ -462,7 +463,7 @@ class MariCore(commands.Cog):
             return await interaction.response.send_message("❌ 권한이 없어요! 관리자에게 역할을 받아주세요.", ephemeral=True)
 
         # 🔒 등록 채널의 자동 명단 갱신과 동시에 settings.json을 건드릴 수 있어서 같은 잠금을 써요.
-        # ⚠️ asyncio.Lock은 재진입이 안 되니까, _refresh_level_roster 호출은 반드시 이 블록 밖에서 해요.
+        # ⚠️ asyncio.Lock은 재진입이 안 되니까, _refresh_id_roster 호출은 반드시 이 블록 밖에서 해요.
         need_refresh = False
         async with self.bot.settings_lock:
             settings = load_settings()
@@ -485,18 +486,18 @@ class MariCore(commands.Cog):
                 # 안 맞았어요. 이제는 기본이 "이어붙이기(추가)"이고, 완전 교체는 덮어쓰기 옵션을 켰을 때만 해요.
                 if 덮어쓰기:
                     settings["id_roster_notice"] = 내용
-                    msg = "✅ 공지사항을 통째로 새로 바꿨어요! 레벨 명단 맨 아래에 반영할게요."
+                    msg = "✅ 공지사항을 통째로 새로 바꿨어요! 아이디 명단 맨 아래에 반영할게요."
                 else:
                     existing = settings.get("id_roster_notice", "").strip()
                     settings["id_roster_notice"] = f"{existing}\n{내용}" if existing else 내용
-                    msg = "✅ 공지사항에 추가했어요! 레벨 명단 맨 아래에 반영할게요."
+                    msg = "✅ 공지사항에 추가했어요! 아이디 명단 맨 아래에 반영할게요."
 
                 save_settings(settings)
                 await interaction.response.send_message(msg, ephemeral=True)
                 need_refresh = True
 
         if need_refresh:
-            await self._refresh_level_roster(interaction.guild)
+            await self._refresh_id_roster(interaction.guild)
 
     @id_group.command(name="새로고침", description="[관리자] ids.json 파일을 다시 읽어와 메모리 데이터를 갱신해요. (파일을 직접 수정한 뒤 꼭 실행!)")
     @app_commands.guild_only()
@@ -523,7 +524,7 @@ class MariCore(commands.Cog):
             f"이제 `/아이디 목록` 갱신하시면 파일 내용 그대로 반영돼요.",
             ephemeral=True
         )
-        await self._refresh_level_roster(interaction.guild, force_repost=True)
+        await self._refresh_id_roster(interaction.guild, force_repost=True)
 
     @id_group.command(name="대기열정리", description="[관리자] 쌓여있는 아이디 확인 대기 요청을 전부 비워요. (엉뚱한 등록 사고 방지용)")
     @app_commands.guild_only()
@@ -597,7 +598,7 @@ class MariCore(commands.Cog):
 
         if removed_count:
             state.save()
-            await self._refresh_level_roster(interaction.guild)
+            await self._refresh_id_roster(interaction.guild)
             await interaction.followup.send(
                 f"🧹 중복 정리 완료! **{affected_people}명**에게서 중복 항목 **{removed_count}건**을 삭제했어요. 명단도 갱신했어요.",
                 ephemeral=True
@@ -605,9 +606,9 @@ class MariCore(commands.Cog):
         else:
             await interaction.followup.send("✨ 중복된 항목이 없었어요!", ephemeral=True)
 
-    # ========== 📦 [신규] 기존 레벨별 아이디 목록 문서 일괄 가져오기 ==========
-    @id_group.command(name="가져오기", description="[관리자] 예전에 쓰던 레벨별 아이디 목록 게시글을 .txt 파일로 올리면 한 번에 등록해요.")
-    @app_commands.describe(파일="레벨별 아이디 목록 전체를 담은 .txt 파일")
+    # ========== 📦 [신규] 기존 아이디 목록 문서 일괄 가져오기 ==========
+    @id_group.command(name="가져오기", description="[관리자] 예전에 쓰던 아이디 목록 게시글을 .txt 파일로 올리면 한 번에 등록해요.")
+    @app_commands.describe(파일="아이디 목록 전체를 담은 .txt 파일")
     @app_commands.guild_only()
     async def import_legacy_id_list(self, interaction: discord.Interaction, 파일: discord.Attachment):
         member = interaction.guild.get_member(interaction.user.id)
@@ -627,19 +628,17 @@ class MariCore(commands.Cog):
             return await interaction.followup.send("❌ 파일에서 아무 항목도 인식하지 못했어요. 형식을 확인해주세요.", ephemeral=True)
 
         guild = interaction.guild
-        matched = []    # (level, name, member, id_dict)
-        unmatched = []  # (level, name, id_dict)
+        matched = []    # (name, member, id_dict)
+        unmatched = []  # (name, id_dict)
 
-        for level, people in parsed.items():
-            for name, ids in people.items():
-                found = find_guild_member_by_name(guild, name)
-                if found:
-                    matched.append((level, name, found, ids))
-                else:
-                    unmatched.append((level, name, ids))
+        for name, ids in parsed.items():
+            found = find_guild_member_by_name(guild, name)
+            if found:
+                matched.append((name, found, ids))
+            else:
+                unmatched.append((name, ids))
 
-        total_entries = sum(len(ids) for _, _, _, ids in matched)
-        level_labels = {"chief": "대장", "4": "4레벨", "3": "3레벨", "2": "2레벨", "1": "1레벨", "0": "0레벨", "unknown": "레벨 미상"}
+        total_entries = sum(len(ids) for _, _, ids in matched)
 
         desc = (
             f"📄 총 **{len(matched) + len(unmatched)}명** 인식, 그중 **{len(matched)}명 매칭 성공** (아이디 {total_entries}건)\n"
@@ -647,7 +646,7 @@ class MariCore(commands.Cog):
             f"바로 **[확정]** 하시거나, **[🔗 매칭 안 된 이름 연결하기]**로 직접 서버 멤버를 골라 연결할 수 있어요. (5분 내 미클릭 시 자동 취소)"
         )
         if unmatched:
-            names_text = ", ".join(f"{n}({level_labels.get(lvl, lvl)})" for lvl, n, _ in unmatched[:30])
+            names_text = ", ".join(n for n, _ in unmatched[:30])
             if len(unmatched) > 30:
                 names_text += f" 외 {len(unmatched) - 30}명"
             desc += f"\n\n**매칭 실패 목록**\n{names_text}"
@@ -820,7 +819,7 @@ class MariCore(commands.Cog):
             f"{message.author.mention} 님이 확인 답변을 거쳐 {member_label}님의 아이디 {verb}했어요.",
             guild=guild,
         )
-        await self._refresh_level_roster(guild)
+        await self._refresh_id_roster(guild)
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
@@ -844,7 +843,7 @@ class MariCore(commands.Cog):
         if log_ch_id and message.channel.id == log_ch_id:
             return await self._resolve_id_pending_from_reply(message)
 
-        # 🔄 [신규] 레벨 명단 채널에서 아이디 관리자(또는 서버 관리자)가 "갱신"이라고 치면
+        # 🔄 [신규] 아이디 명단 채널에서 아이디 관리자(또는 서버 관리자)가 "갱신"이라고 치면
         # 그 자리에서 바로 새로고침해요. (평소엔 등록/수정/삭제할 때만 자동 갱신되니까,
         # 급하게 바로 반영하고 싶을 때 쓰는 수동 트리거예요)
         roster_ch_id = channels.get("level_roster")
@@ -860,7 +859,7 @@ class MariCore(commands.Cog):
                 await message.delete()
             except Exception:
                 pass
-            await self._refresh_level_roster(message.guild, force_repost=True)
+            await self._refresh_id_roster(message.guild, force_repost=True)
             confirm = await message.channel.send(f"🔄 {message.author.mention}님이 명단을 갱신했어요.")
             await asyncio.sleep(5)
             try:
@@ -971,7 +970,7 @@ class MariCore(commands.Cog):
 
         if registered:
             state.save()
-            await self._refresh_level_roster(message.guild)
+            await self._refresh_id_roster(message.guild)
             # 🐛 [버그 수정] 수동 /아이디 등록은 로그가 남는데, 자동등록 채널은 이 로그 전송이
             # 아예 빠져있었어요. 이제 자동등록도 똑같이 id_log 채널에 기록이 남아요.
             await send_log_embed(
@@ -1059,7 +1058,7 @@ class MariCore(commands.Cog):
             fields=[("등록 결과", summary, False)],
             guild=interaction.guild,
         )
-        await self._refresh_level_roster(interaction.guild)
+        await self._refresh_id_roster(interaction.guild)
 
     @id_group.command(name="수정", description="[관리자] 등록된 아이디를 수정해요")
     @app_commands.describe(user="수정할 유저", platform="플랫폼명 (비워두면 마리가 목록 보여줘, 자동완성으로 이 유저가 등록해둔 플랫폼이 힌트로 떠요)", game_id="새 아이디")
@@ -1135,7 +1134,7 @@ class MariCore(commands.Cog):
             
             await respond_modify(interaction, user, target, old, game_id, is_misc=True)
             await notify_log(interaction, user, target, old, game_id)
-            await self._refresh_level_roster(interaction.guild)
+            await self._refresh_id_roster(interaction.guild)
             return
 
         candidates = get_platform_candidates(state.user_ids[gid][uid], platform)
@@ -1149,7 +1148,7 @@ class MariCore(commands.Cog):
             state.save()
             await respond_modify(interaction, user, target, old, game_id, is_misc=False)
             await notify_log(interaction, user, target, old, game_id)
-            await self._refresh_level_roster(interaction.guild)
+            await self._refresh_id_roster(interaction.guild)
             return
 
         text = "\n".join(f"{i+1}. {k}: {v}" for i, (k, v) in enumerate(candidates))
@@ -1176,7 +1175,7 @@ class MariCore(commands.Cog):
         state.save()
         await respond_modify(interaction, user, target, old, game_id, is_misc=False)
         await notify_log(interaction, user, target, old, game_id)
-        await self._refresh_level_roster(interaction.guild)
+        await self._refresh_id_roster(interaction.guild)
 
     # 🐛 [버그 수정] 예전엔 platform이 고정된 10개짜리 드롭다운이라, "닌텐도"·"GTA"·"군번" 같은
     # 자유롭게 등록된 플랫폼은 목록에 없어서 수정 자체가 불가능했어요. 이제는 자유 텍스트 +
@@ -1247,7 +1246,7 @@ class MariCore(commands.Cog):
                     f"{interaction.user.mention} 님이 탈퇴자 {len(leavers)}명을 삭제했어요.",
                     guild=interaction.guild,
                 )
-                await self._refresh_level_roster(interaction.guild)
+                await self._refresh_id_roster(interaction.guild)
             else:
                 await interaction.followup.send("취소했어요! 😊")
             return
@@ -1294,7 +1293,7 @@ class MariCore(commands.Cog):
                 f"{interaction.user.mention} 님이 <@{uid}>님의 `{target}` 아이디를 삭제했어요.",
                 guild=interaction.guild,
             )
-            await self._refresh_level_roster(interaction.guild)
+            await self._refresh_id_roster(interaction.guild)
             return
 
         candidates = get_platform_candidates(state.user_ids.get(gid, {}).get(uid, {}), platform)
@@ -1307,7 +1306,7 @@ class MariCore(commands.Cog):
             del state.user_ids[gid][uid][target]
             state.save()
             await interaction.followup.send(f"✅ <@{uid}>님의 `{target}` 아이디가 삭제되었어요.")
-            await self._refresh_level_roster(interaction.guild)
+            await self._refresh_id_roster(interaction.guild)
             return
 
         text = "\n".join(f"{i+1}. {k}: {v}" for i, (k, v) in enumerate(candidates))
@@ -1333,7 +1332,7 @@ class MariCore(commands.Cog):
         del state.user_ids[gid][uid][target]
         state.save()
         await interaction.followup.send(f"✅ <@{uid}>님의 `{target}` 아이디가 삭제되었어요.")
-        await self._refresh_level_roster(interaction.guild)
+        await self._refresh_id_roster(interaction.guild)
 
     # 🐛 [버그 수정] user 파라미터가 일반 텍스트라 디스코드 클라이언트가 채널에 캐싱된
     # 사람만 멘션 힌트로 보여주고 있었어요. 자동완성을 직접 붙여서 서버 전체 멤버를

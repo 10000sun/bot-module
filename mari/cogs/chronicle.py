@@ -169,7 +169,7 @@ class ChroniclePinModal(discord.ui.Modal, title="📜 연대기에 박제"):
 
     제목 = discord.ui.TextInput(
         label="제목",
-        placeholder="한 줄로 요약해 주세요 (예: 악동캠프 첫 우승)",
+        placeholder="한 줄로 요약해 주세요 (예: 길드 첫 우승)",
         max_length=100,
     )
     메모 = discord.ui.TextInput(

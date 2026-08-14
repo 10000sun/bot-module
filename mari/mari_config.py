@@ -113,31 +113,26 @@ STOCKS_FILE = os.path.join(DATA_DIR, "mari_stocks.json")
 ECONOMY_FILE = os.path.join(DATA_DIR, "mari_economy.json")
 SHOP_FILE = os.path.join(DATA_DIR, "mari_shop.json")
 SHOP_TRANSACTIONS_FILE = os.path.join(DATA_DIR, "mari_shop_transactions.json")  # 💰 [신규] /정산용 구매·되팔기 거래 내역
-VISIT_PASS_ASK_FILE = os.path.join(DATA_DIR, "mari_visit_pass_ask.json")  # 🎫 [신규] 견학권 구매자에게 보낸 "어느 캠프?" DM 대기열
 CHRONICLE_FILE = os.path.join(DATA_DIR, "mari_chronicle.json")  # 📜 [신규] 서버 연대기 (서버에서 일어난 일을 날짜순으로 축적)
 SNOOZE_FILE = os.path.join(DATA_DIR, "mari_snooze.json")  # ⏰ [신규] '나중에 답장' 예약 목록 (우클릭으로 미뤄둔 메시지)
 LIMIT_FILE = os.path.join(DATA_DIR, "mari_limit.json")
 SETTINGS_FILE = os.path.join(DATA_DIR, "mari_settings.json") # 💡 신규 설정 파일
 BIRTHDAY_FILE = os.path.join(DATA_DIR, "mari_birthday.json")
-PROFILE_FILE = os.path.join(DATA_DIR, "mari_profile.json")  # 👤 [신규] 유저 프로필(레벨/소속/직책/업적/사진) 저장
 CHAT_MEMORY_FILE = os.path.join(DATA_DIR, "mari_chat_memory.json") # 💬 유저별 마지막 대화 기억 파일
 CHAT_LOG_FILE = os.path.join(DATA_DIR, "mari_chat_log.json") # 📜 서버별 최근 채팅 로그(맥락 참고용, 개수는 MariGPT.CHAT_LOG_MAXLEN 참고)
 MARI_USER_MEMORY_FILE = os.path.join(DATA_DIR, "mari_user_memory.json") # 🧠 [신규] 유저별 장기 기억(사실 목록)
 ID_PENDING_FILE = os.path.join(DATA_DIR, "mari_id_pending.json") # 🆔 [신규] 아이디 자동등록 중 플랫폼이 불명확해 관리자 확인이 필요한 대기열
-CAMP_TREASURY_FILE = os.path.join(DATA_DIR, "mari_camp_treasury.json") # 🏦 캠프별 세금 통장(가상 통장)
-CAMP_VISIT_FILE = os.path.join(DATA_DIR, "mari_camp_visits.json") # 🚌 [신규] 견학생 이동 현황 및 기록
-CAMP_TAX_FILE = os.path.join(DATA_DIR, "mari_camp_tax.json") # 🧾 [신규] 캠프별 세금 기준(세율 구간·룰렛 확률 등). 캠프장이 직접 수정
 PORTFOLIO_HISTORY_FILE = os.path.join(DATA_DIR, "mari_portfolio_history.json") # 📈 [신규] 종가게시 시점 유저별 포트폴리오 총 가치 스냅샷
-EXILE_DATA_FILE = os.path.join(DATA_DIR, "mari_exile_data.json") # ⛓️ [신규] 유배 전 원래 역할 목록 백업 (복귀 시 되돌리는 용도)
 LEDGER_FILE = os.path.join(DATA_DIR, "mari_ledger.json") # 🧾 [신규] 에바 입출금 원장 (유저 거래내역 조회 / 지급 되돌리기용)
 CHAT_STATS_FILE = os.path.join(DATA_DIR, "mari_chat_stats.json") # 💬 [신규] 날짜별 채팅 "개수"만 세는 통계 (내용·작성자 미저장)
 HEARTBEAT_FILE = os.path.join(DATA_DIR, "mari_heartbeat.txt") # 💓 [신규] 봇이 살아있음을 외부 감시 도구에 알리는 심장박동 파일
-# 🖼️ [신규] 프로필 사진 원본을 보관하는 폴더.
-# 예전엔 디스코드 첨부파일 URL을 그대로 저장했는데, 그 링크는 서명이 붙어 있어 하루 이틀이면
-# 만료돼서 프로필 사진이 조용히 깨졌어요. 이제 이미지를 여기에 받아두고 매번 첨부해서 보여줍니다.
-# ⚠️ 이름이 _DIR로 끝나므로 json_data_files()에는 잡히지 않아요. (자동 백업 대상은 .json만)
-PROFILE_PHOTO_DIR = os.path.join(DATA_DIR, "profile_photos")
 BACKUP_DIR = os.path.join(DATA_DIR, "backups") # 💾 매일 자동 백업이 쌓이는 폴더
+
+# 🗑️ [정리] 창고로 간 기능들의 데이터 파일 상수도 같이 걷어냈어요.
+# (mari_profile.json / mari_visit_pass_ask.json / mari_camp_*.json / mari_exile_data.json,
+#  그리고 프로필 사진 폴더 PROFILE_PHOTO_DIR)
+# 남겨두면 아래 json_data_files()가 이 이름들을 자동으로 주워서, 아무도 안 쓰는 빈 JSON을
+# 배포마다 새로 만들고 매일 백업까지 합니다. 되살릴 때는 각 parked/*.txt 를 참고하세요.
 
 
 def migrate_legacy_data_files():
@@ -289,17 +284,6 @@ def _as_id(value, where: str) -> int:
         return 0
 
 
-def _id_map(section_name: str) -> dict:
-    """{이름: ID} 형태의 섹션을 읽어요. 값이 {"role": ID, ...} 꼴이어도 ID만 뽑아냅니다."""
-    result = {}
-    for key, raw in _section(section_name).items():
-        value = raw.get("role") if isinstance(raw, dict) else raw
-        role_id = _as_id(value, f"{section_name}.{key}")
-        if role_id:
-            result[key] = role_id
-    return result
-
-
 _ROLES = _section("roles")
 
 
@@ -312,41 +296,12 @@ def _role(key: str) -> int:
 # 🗑️ [정리] 예전엔 여기에 캠프 역할(CAMP_ROLE_IDS·CAMP_LEADER_ROLE_ID·JEONYUL_ROLE_ID)과
 # 레벨/소속 역할표(LEVEL_ROLES·AFFILIATIONS)도 함께 있었어요. 전부 원본 서버 고유 제도라
 # 기능째로 창고(parked/)로 옮기면서 설정도 같이 걷어냈습니다.
-GOHWAK_MENTION_ROLE_ID = _role("broadcast_mention")  # /고확 방송에 함께 멘션할 역할
+# 🎂 [이름 변경] 예전 이름은 GOHWAK_MENTION_ROLE_ID(= /고확 방송에 함께 멘션할 역할)였어요.
+# 원본 서버에서는 고확과 생일 알림이 **같은 역할(시민권)** 을 태그해서 상수 하나를 공유했는데,
+# 고확을 창고(parked/games_broadcast.py.txt)로 보내면서 남은 사용처가 생일 알림뿐이라
+# 그 쓰임에 맞는 이름으로 바꿨습니다. 고확을 되살릴 땐 별도 키를 새로 만드세요.
+BIRTHDAY_MENTION_ROLE_ID = _role("birthday_mention")  # 생일 알림 때 함께 멘션할 역할
 MARI_CALL_ROLE_ID = _role("bot_mention")             # 이 역할을 멘션하면 봇을 부른 것으로 취급
-TOWN_GUIDE_ROLE_ID = _role("town_guide")             # 입주 절차를 진행하는 역할
-
-
-# 🧭 [신규] 입주 절차 프리셋 (/역할부여의 "가이드"). 서버마다 절차가 완전히 다르므로 설정으로 뺐어요.
-# 형식: {"guide1": {"label": "가이드1 (입주심사 추가)", "add": [ID...], "remove": [ID...]}}
-def _load_onboarding() -> dict:
-    presets = {}
-    for key, raw in _section("onboarding").items():
-        if not isinstance(raw, dict):
-            GUILD_CONFIG_WARNINGS.append(f"'onboarding.{key}'는 객체({{...}})여야 해요. 건너뜁니다.")
-            continue
-        add = [_as_id(v, f"onboarding.{key}.add") for v in raw.get("add", []) or []]
-        remove = [_as_id(v, f"onboarding.{key}.remove") for v in raw.get("remove", []) or []]
-        add = [i for i in add if i]
-        remove = [i for i in remove if i]
-        if not add and not remove:
-            GUILD_CONFIG_WARNINGS.append(f"'onboarding.{key}'에 추가/제거할 역할이 하나도 없어요. 건너뜁니다.")
-            continue
-        presets[key] = {
-            # 선택지에 그대로 보이는 이름이에요. 디스코드 한도가 100자입니다.
-            "label": str(raw.get("label") or key)[:100],
-            "add": add,
-            "remove": remove,
-        }
-    return presets
-
-
-ONBOARDING_PRESETS = _load_onboarding()
-
-# 🎭 [신규] 특정 사람에게만 다르게 반응하는 AI 페르소나 (cogs/gpt.py).
-# 원본 서버에서는 제작자 부부와 특정 유저 한 명의 ID가 코드에 그대로 박혀 있었어요.
-# 형식: {"papa": 123..., "mama": 456...} — 안 적으면 전부 기본 페르소나로 응대합니다.
-PERSONA_USER_IDS = _id_map("personas")
 
 
 # 🧩 [신규] 이 배포에 담을 기능 목록. 실제 정의는 modules.py에 있어요.
@@ -380,11 +335,7 @@ def report_guild_config() -> None:
         for warning in GUILD_CONFIG_WARNINGS:
             print(f" • {warning}")
     else:
-        print(
-            f"🏷️ 서버 설정을 읽었어요. "
-            f"역할 {len(_ROLES)}개 · 입주 프리셋 {len(ONBOARDING_PRESETS)}개 · "
-            f"페르소나 {len(PERSONA_USER_IDS)}개"
-        )
+        print(f"🏷️ 서버 설정을 읽었어요. 역할 {len(_ROLES)}개")
 
 
 report_guild_config()

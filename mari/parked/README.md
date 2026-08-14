@@ -39,6 +39,10 @@
 | `roster.py` | 레벨·소속 명단 | 0~4레벨 등급 사다리와 소속 조직 기준으로 멤버를 필터링 |
 | `profile.py` | 프로필 카드 | 닉네임/아이디/레벨/소속/직책/업적 카드. 위 레벨·소속 개념 위에 세워져 있음 |
 
+⚠️ `profile.py`를 꺼낼 때는 `profile_leftovers.py.txt`와 `gpt_persona.py.txt`의
+`check_my_profile` 도구도 **반드시 같이** 꺼내세요. 코그만 되살리면 관리자 역할을
+지정할 명령도, 사진을 백업할 코드도, AI가 프로필을 읽을 도구도 없습니다.
+
 ### 다른 파일에서 떼어낸 조각 (`.py.txt`)
 
 여러 파일에 흩어져 있던 부분을 오려 모은 것이라 **그 자체로는 실행되지 않습니다.**
@@ -49,3 +53,19 @@
 |---|---|---|
 | `shop_visit_pass.py.txt` | 견학권 구매 처리 | `cogs/shop.py` — 사면 DM으로 "어느 캠프로 갈래?"를 묻고 상점주인에게 전달 |
 | `camp_leftovers.py.txt` | 캠프·명단이 남긴 잔가지 | `cogs/diagnostics.py`(세금 미리보기·캠프 중복검사·권한표시), `cogs/economy.py`(캠프별 지갑 조회) |
+| `profile_leftovers.py.txt` | 프로필이 남긴 잔가지 | `cogs/setting.py`(`/설정 관리자 프로필`·역할표), `cogs/diagnostics.py`(권한표), `cogs/backup.py`(사진 폴더 백업), `mari_config.py`(파일 경로) |
+| `games_broadcast.py.txt` | 고확 (고성능 확성기) | `cogs/games.py`(`/고확`·되돌리기), `cogs/setting.py`(채널 지정), `cogs/diagnostics.py`, `mari_config.py`, `guild.example.json` |
+| `setting_exile.py.txt` | 유배 · 복귀 | `cogs/setting.py`(`/역할부여`의 유배지 처리, 추방관·지옥간수·유배자 설정), `cogs/diagnostics.py`, `mari_config.py` |
+| `setting_onboarding.py.txt` | 타운가이드 · 입주 프리셋 | `cogs/setting.py`(가이드 선택지·프리셋 적용), `mari_config.py`(`ONBOARDING_PRESETS`), `cogs/help.py`, `guild.example.json` |
+| `gpt_persona.py.txt` | AI 페르소나 · 프로필 조회 도구 | `cogs/gpt.py`(아빠/엄마/disdain 분기, `check_my_profile`), `mari_config.py`, `guild.example.json` |
+| `core_levels.py.txt` | 0~4레벨 등급 사다리 | `cogs/core.py`(레벨별 명단 게시·레벨 판별), `mari_utils.py`(레벨별 문서 파서), `cogs/setting.py`(`/설정 레벨`) |
+
+### 데이터 파일도 같이 걷어냈어요
+
+창고로 간 기능이 쓰던 `mari_config.py`의 파일 경로 상수는 전부 지웠습니다.
+(`PROFILE_FILE`, `PROFILE_PHOTO_DIR`, `VISIT_PASS_ASK_FILE`, `CAMP_TREASURY_FILE`,
+`CAMP_VISIT_FILE`, `CAMP_TAX_FILE`, `EXILE_DATA_FILE`)
+
+남겨두면 `json_data_files()`가 이름만 보고 주워가서, **아무도 안 쓰는 빈 JSON을
+배포마다 새로 만들고 매일 백업**합니다. 꺼내 쓸 때 각 `.txt`에 적힌 상수를 도로
+넣어주세요. 이름은 반드시 `_FILE`로 끝내고 `.json`이어야 자동 생성·백업에 잡힙니다.

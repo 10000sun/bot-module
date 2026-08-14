@@ -362,19 +362,33 @@ def extract_id_from_mention(mention: str) -> Optional[str]:
     m = MENTION_USER_RE.match(mention.strip())
     return m.group(1) if m else None
 
-# 🆔 [신규] 예전에 수기로 관리하던 "레벨별 아이디 목록" 게시글(```ansi 코드블록)을
-# 파싱해서 {레벨: {이름: {플랫폼: 아이디}}} 구조로 뽑아내는 함수입니다. (/아이디목록가져오기용)
-_ANSI_CODE_RE = re.compile(r"\[[\d;]*m")
+# 🆔 [신규] 예전에 수기로 관리하던 "아이디 목록" 게시글(```ansi 코드블록)을
+# 파싱해서 {이름: {플랫폼: 아이디}} 구조로 뽑아내는 함수입니다. (/아이디 가져오기용)
+#
+# 🐛 [버그 수정] 예전엔 색상 코드(`[2;41m`)만 지우고 그 앞의 ESC 문자(\u001b)는
+# 그대로 남겼어요. 명단은 "\u001b[2;41m대장\u001b[0m" 형태로 올라가니까, 디스코드에서
+# 원문을 복사해 .txt로 올리면 이름이 "\u001b마리\u001b"로 들어옵니다. 그러면
+# find_guild_member_by_name이 아무도 못 찾아 전원이 매칭 실패로 떨어지고, 등급 헤더도
+# 인식이 안 돼 사람 이름으로 새요. 이제 ESC까지 같이 먹습니다.
+# (ESC 없이 색상 코드만 남은 문서도 처리되게 ? 로 선택 처리했어요)
+_ANSI_CODE_RE = re.compile(r"\u001b?\[[\d;]*m")
 _INVISIBLE_CHARS_RE = re.compile(r"[\u200b-\u200f\u2066-\u2069\ufeff]")
+# 🪜 등급 헤더("대장", "4레벨", "3LEVEL"...)를 알아보는 정규식.
+# 등급제 자체는 걷어냈지만(parked/core_levels.py.txt), 옛 문서에는 이 줄이 그대로
+# 들어 있어요. **읽어서 버리려고** 남겨둡니다. 안 그러면 등급 이름이 사람 이름으로
+# 오인돼서 "4레벨"이라는 멤버가 등록될 수 있어요.
 _LEVEL_HEADER_RE = re.compile(r"^(대장|\(?(\d)\s*레벨\)?|(\d)\s*LEVEL)$", re.IGNORECASE)
 _NAME_HEADER_RE = re.compile(r"^\[([^\[\]]+)\]$")
 
 def parse_legacy_id_document(text: str) -> dict:
-    """레벨별 아이디 목록 게시글 원문을 파싱합니다.
-    반환값: {"chief": {"이름": {"플랫폼": "값"}}, "4": {...}, "3": {...}, "2": {...}, "1": {...}, "0": {...}}
-    인식 못한 레벨 밖의 항목은 "unknown" 키에 모아둡니다."""
-    result = {"chief": {}, "4": {}, "3": {}, "2": {}, "1": {}, "0": {}, "unknown": {}}
-    current_level = "unknown"
+    """예전에 쓰던 아이디 목록 게시글 원문을 파싱합니다.
+    반환값: {"이름": {"플랫폼": "값", ...}, ...}
+
+    🗑️ [정리] 예전엔 등급별로 나눠서 {레벨: {이름: {...}}} 2단 구조를 돌려줬어요.
+    등급제를 걷어내면서(parked/core_levels.py.txt) 평평한 1단 구조가 됐습니다.
+    등급 헤더 줄은 여전히 알아보고 **건너뜁니다.** 옛 문서를 그대로 올려도
+    등급 이름이 사람으로 잘못 등록되지 않아요."""
+    result: dict = {}
     current_name = None
 
     for raw_line in text.split("\n"):
@@ -388,13 +402,8 @@ def parse_legacy_id_document(text: str) -> dict:
         if not line:
             continue
 
-        level_match = _LEVEL_HEADER_RE.match(line)
-        if level_match:
-            if line == "대장":
-                current_level = "chief"
-            else:
-                digit = level_match.group(2) or level_match.group(3)
-                current_level = digit if digit in result else "unknown"
+        # 등급 헤더 줄은 이름이 아니므로 그냥 버려요. (아래 이름 인식으로 새지 않게)
+        if _LEVEL_HEADER_RE.match(line):
             current_name = None
             continue
 
@@ -402,17 +411,17 @@ def parse_legacy_id_document(text: str) -> dict:
         if name_match:
             current_name = name_match.group(1).strip()
             if current_name:
-                result[current_level].setdefault(current_name, {})
+                result.setdefault(current_name, {})
             continue
 
         if current_name and ":" in line:
             label, _, value = line.partition(":")
             label, value = label.strip(), value.strip()
             if label and value:
-                result[current_level][current_name][label] = value
+                result[current_name][label] = value
 
-    # 사람이 하나도 없는 레벨은 정리
-    return {lvl: people for lvl, people in result.items() if people}
+    # 아이디가 하나도 안 딸린 이름은 등록할 게 없으니 빼요.
+    return {name: ids for name, ids in result.items() if ids}
 
 # 🧹 [신규] 백그라운드 자동 삭제 유틸리티
 # asyncio.create_task로 만든 태스크는 어디에도 참조가 없으면 실행 도중 GC될 수 있어서,

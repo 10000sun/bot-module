@@ -6,7 +6,7 @@ import shutil
 import datetime as dt
 from discord.ext import commands, tasks
 
-from mari_config import BACKUP_DIR, KST, PROFILE_PHOTO_DIR, json_data_files
+from mari_config import BACKUP_DIR, KST, json_data_files
 from mari_alerts import report_loop_error, send_alert
 
 # ========== 💾 [신규] 자동 백업 시스템 ==========
@@ -96,18 +96,11 @@ class MariBackup(commands.Cog):
                 failed.append((os.path.basename(path), f"{type(e).__name__}: {e}"))
                 print(f"❗ [자동 백업] {os.path.basename(path)} 복사 실패: {type(e).__name__}: {e}")
 
-        # 🖼️ 프로필 사진 원본도 같이 백업해요.
-        # json_data_files()는 이름이 .json으로 끝나는 것만 골라내기 때문에(.env가 백업에 섞이는 걸
-        # 막으려고 일부러 그렇게 해뒀어요) 이미지 폴더는 여기서 따로 챙겨야 합니다.
-        # 안 챙기면 유저 프로필 사진만 복원할 방법이 없어져요.
-        if os.path.isdir(PROFILE_PHOTO_DIR):
-            photo_dst = os.path.join(target_dir, os.path.basename(PROFILE_PHOTO_DIR))
-            try:
-                shutil.copytree(PROFILE_PHOTO_DIR, photo_dst, dirs_exist_ok=True)
-                copied += len(os.listdir(PROFILE_PHOTO_DIR))
-            except Exception as e:
-                failed.append(("profile_photos/", f"{type(e).__name__}: {e}"))
-                print(f"❗ [자동 백업] 프로필 사진 폴더 복사 실패: {type(e).__name__}: {e}")
+        # 🗑️ [정리] 여기서 프로필 사진 폴더(PROFILE_PHOTO_DIR)를 따로 챙겨 복사했어요.
+        # 프로필 기능이 창고로 가면서 그 폴더를 만드는 코드가 없어져 늘 비어 있었습니다.
+        # 프로필을 되살릴 땐 이 블록도 같이 되살리세요 (parked/profile_leftovers.py.txt [5]).
+        # ⚠️ json_data_files()는 .json으로 끝나는 것만 고르므로, 이미지·첨부 같은 폴더를
+        #    새로 만든다면 반드시 여기에 손으로 추가해야 백업에 들어갑니다.
 
         # 🏷️ 일부만 복사됐다면 폴더 이름에 표시를 남겨요.
         # 겉보기엔 멀쩡한 백업 폴더가 사실 반쪽이었다는 걸 복구하려는 순간에 알게 되면 늦습니다.

@@ -1,0 +1,240 @@
+# 🧭 타운가이드 · 입주 가이드 프리셋 — 창고 보관본
+#
+# 신규 멤버의 입주 절차(여행자 → 입주심사 → 시민권)를 `/역할부여` 한 번으로 처리하는
+# 기능이에요. "가이드1을 고르면 이 역할을 빼고 저 역할을 준다"는 묶음(프리셋)을
+# guild.json 에 적어두고, 명령 선택지로 띄웁니다.
+#
+# 왜 뺐나 — 절차의 단계 수도, 단계마다 주고받는 역할도 서버마다 완전히 다릅니다.
+# '타운가이드'라는 담당 직책 이름도 원본 서버(에바스타운) 것이에요.
+#
+# ⚠️ 헷갈리기 쉬운 점 — `/역할부여` **명령 자체는 지우지 않았습니다.** 역할을 직접
+#    골라서 주는 부분(RoleGrantView + _apply_role_changes)은 어느 서버에서나 쓰는
+#    범용 기능이라 그대로 남아 있어요. 여기 있는 건 '가이드' 선택지 쪽뿐입니다.
+#
+# 🔑 권한이 어떻게 바뀌었나 —
+#    전: 서버 관리자 **또는** '타운가이드' 역할(guild.json 의 roles.town_guide)
+#    후: 서버 관리자만
+#    타운가이드를 빼고 나니 설정으로 지정할 수 있는 역할이 하나도 안 남아서, 남은
+#    경로인 '서버 관리자'만 남겼어요. 임의의 역할을 부여할 수 있는 명령이라
+#    아무 역할에나 열어주면 권한 상승 통로가 됩니다.
+#    나중에 필요하면 `/설정 관리자 역할부여` 같은 설정 명령을 새로 만들어
+#    _update_admin_role_list 로 붙이는 게 이 봇의 기존 방식과 맞습니다.
+#
+# 꺼내 쓸 때 —
+#   1. 아래 블록들을 각자 원래 자리에 도로 붙입니다.
+#   2. setting.py 상단 import 를 되살립니다. (프리셋을 빼면서 걷어냈어요)
+#         from mari_config import ONBOARDING_PRESETS, TOWN_GUIDE_ROLE_ID
+#      help.py 도 `from mari_config import TOWN_GUIDE_ROLE_ID` 를 쓰고 있었습니다.
+#   3. guild.example.json 에 onboarding 섹션과 roles.town_guide 를 되살립니다.
+#
+# ⚠️ 빈 선택지 함정 — app_commands.choices() 에 **빈 리스트를 넘기면 디스코드가 명령
+#    등록을 거부해서 동기화가 통째로 실패합니다.** 그래서 _with_guide_choices 는
+#    프리셋이 하나도 없으면 데코레이터를 아예 안 붙여요. 이 패턴을 지우지 마세요.
+
+
+# ============================================================================
+# [1] mari_config.py — 프리셋 로더와 역할 상수
+# ============================================================================
+# TOWN_GUIDE_ROLE_ID 는 BIRTHDAY_MENTION_ROLE_ID / MARI_CALL_ROLE_ID 와 나란히
+# 있었고, _load_onboarding() 은 그 바로 아래에 있었어요.
+
+TOWN_GUIDE_ROLE_ID = _role("town_guide")             # 입주 절차를 진행하는 역할
+
+
+# 🧭 [신규] 입주 절차 프리셋 (/역할부여의 "가이드"). 서버마다 절차가 완전히 다르므로 설정으로 뺐어요.
+# 형식: {"guide1": {"label": "가이드1 (입주심사 추가)", "add": [ID...], "remove": [ID...]}}
+def _load_onboarding() -> dict:
+    presets = {}
+    for key, raw in _section("onboarding").items():
+        if not isinstance(raw, dict):
+            GUILD_CONFIG_WARNINGS.append(f"'onboarding.{key}'는 객체({{...}})여야 해요. 건너뜁니다.")
+            continue
+        add = [_as_id(v, f"onboarding.{key}.add") for v in raw.get("add", []) or []]
+        remove = [_as_id(v, f"onboarding.{key}.remove") for v in raw.get("remove", []) or []]
+        add = [i for i in add if i]
+        remove = [i for i in remove if i]
+        if not add and not remove:
+            GUILD_CONFIG_WARNINGS.append(f"'onboarding.{key}'에 추가/제거할 역할이 하나도 없어요. 건너뜁니다.")
+            continue
+        presets[key] = {
+            # 선택지에 그대로 보이는 이름이에요. 디스코드 한도가 100자입니다.
+            "label": str(raw.get("label") or key)[:100],
+            "add": add,
+            "remove": remove,
+        }
+    return presets
+
+
+ONBOARDING_PRESETS = _load_onboarding()
+
+
+# ============================================================================
+# [2] mari_config.py — report_guild_config()의 기동 로그 문구
+# ============================================================================
+# 프리셋 개수를 같이 찍고 있었어요. 지금은 그 항목만 빠졌습니다.
+#
+#         print(
+#             f"🏷️ 서버 설정을 읽었어요. "
+#             f"역할 {len(_ROLES)}개 · 입주 프리셋 {len(ONBOARDING_PRESETS)}개 · "
+#             f"페르소나 {len(PERSONA_USER_IDS)}개"
+#         )
+
+
+# ============================================================================
+# [3] cogs/setting.py — 모듈 최상단, RoleGrantView 클래스 바로 아래
+# ============================================================================
+
+# 🧭 [신규] 입주 절차 프리셋(/역할부여의 "가이드") 선택지를 guild.json에서 만들어요.
+# 예전엔 프리셋 2종과 그 안에서 주고받을 역할 ID가 전부 코드에 박혀 있어서, 서버마다
+# 다른 입주 절차를 담으려면 코드를 고쳐야 했습니다.
+_GUIDE_CHOICES = [
+    app_commands.Choice(name=preset["label"], value=key)
+    for key, preset in ONBOARDING_PRESETS.items()
+]
+
+
+def _with_guide_choices(func):
+    """프리셋이 하나라도 설정돼 있을 때만 '가이드' 선택지를 답니다.
+
+    ⚠️ 빈 리스트를 넘기면 디스코드가 명령어 등록을 거부해서 동기화 전체가 실패해요.
+    입주 절차를 안 쓰는 서버에서는 선택지 없이 두면 됩니다. (프리셋이 없으면 아래
+    _apply_role_changes도 자연스럽게 아무것도 안 해요)
+    """
+    return app_commands.choices(가이드=_GUIDE_CHOICES)(func) if _GUIDE_CHOICES else func
+
+
+# ============================================================================
+# [4] cogs/setting.py — /역할부여 의 '가이드' 파라미터와 권한 검사
+# ============================================================================
+# 명령 설명도 같이 줄였어요:
+#   전: "[관리자] 특정 멤버에게 역할을 지급하거나 가이드 프리셋을 적용합니다."
+#   후: "[관리자] 특정 멤버에게 역할을 지급합니다."
+
+    # ✨ [권한 변경] 인사관리자 대신 타운가이드(ID 기준) 권한으로 변경   ← 원래 있던 주석
+
+    # @app_commands.describe(...) 안에 있던 줄
+        가이드="설정된 가이드 프리셋을 적용합니다 (선택)",
+
+    # grant_role 바로 위 데코레이터
+    @_with_guide_choices
+
+    # async def grant_role(...) 시그니처에 있던 파라미터
+        가이드: Optional[app_commands.Choice[str]] = None,
+
+    # 함수 본문 맨 앞의 권한 검사 (지금은 서버 관리자 단독 검사로 바뀌었어요)
+        # 1. 권한 검사 (서버 최고 관리자이거나, '타운가이드' 역할 ID를 가지고 있는지 확인)
+        is_admin = interaction.user.guild_permissions.administrator
+        is_town_guide = any(role.id == TOWN_GUIDE_ROLE_ID for role in interaction.user.roles)
+
+        if not (is_admin or is_town_guide):
+            return await interaction.response.send_message("❌ 권한이 없어요! 최고 관리자나 '타운가이드' 역할이 필요합니다.", ephemeral=True)
+
+    # 본문 끝의 분기 (지금은 항상 RoleSelect 뷰를 띄웁니다)
+        # 🐛 [버그 수정] 예전엔 역할1~역할5, 딱 5개까지만 하드코딩된 파라미터로 지급할 수 있었는데
+        # 한 사람한테 5개 넘게 줘야 할 때는 명령어를 여러 번 나눠 쳐야 했어요. 이제는 디스코드
+        # 자체 역할 선택 UI(RoleSelect)를 써서 최대 25개(디스코드 자체 한도)까지 한 번에 골라서
+        # 줄 수 있게 바꿨어요. 가이드 프리셋을 고르면 이 선택 과정 없이 바로 적용돼요.
+        if 가이드 is None:
+            view = RoleGrantView(self, 멤버)
+            return await interaction.response.send_message(
+                f"{멤버.mention}님에게 부여할 역할을 아래에서 선택해주세요. (최대 25개까지 한 번에 가능)",
+                view=view, ephemeral=True
+            )
+
+        await interaction.response.defer(ephemeral=True)
+        await self._apply_role_changes(interaction, 멤버, [], 가이드)
+
+
+# ============================================================================
+# [5] cogs/setting.py — _apply_role_changes()의 프리셋 순회 블록
+# ============================================================================
+# 함수 시그니처에서도 마지막 인자 `가이드` 가 빠졌어요. 되살릴 때 같이 넣으세요:
+#   async def _apply_role_changes(self, interaction, 멤버, roles_to_add: list,
+#                                 가이드: Optional[app_commands.Choice[str]] = None):
+# docstring 도 "역할 직접 지급(RoleSelect) 및 가이드 프리셋 적용 + ..." 이었습니다.
+#
+# 위치: "3. 일반 다중 역할 부여 처리" 루프와 "5. 결과 메시지 조합" 사이.
+
+        # 4. 가이드 프리셋 처리 (정직하게 빼고 넣기)
+        #
+        # 🗑️ [정리] 예전엔 여기가 `if 가이드.value == "guide1": ... elif == "guide2": ...` 로
+        # 나뉘어 있었고, 주고받을 역할 ID가 그 안에 숫자로 박혀 있었어요. 프리셋을 하나 더
+        # 만들려면 거의 같은 코드를 통째로 복사해야 했고, 실제로 제거/추가 처리가 두 벌
+        # 중복돼 있었습니다. 이제 설정에 적힌 프리셋을 그대로 순회해요.
+        if 가이드 is not None:
+            preset = ONBOARDING_PRESETS.get(가이드.value)
+            if preset is None:
+                # 설정에서 프리셋을 지웠는데 디스코드에 옛 선택지가 아직 남아있는 경우예요.
+                # (명령어 동기화가 퍼지는 데 시간이 걸립니다)
+                failed_actions.append(f"`{가이드.name}` 프리셋이 설정에 없어요. 관리자에게 문의해 주세요.")
+            else:
+                label = preset["label"]
+
+                # 4-1. 정직하게 역할 제거 진행
+                for rid in preset["remove"]:
+                    role = interaction.guild.get_role(rid)
+                    if role and role in 멤버.roles:
+                        try:
+                            await 멤버.remove_roles(role)
+                            success_removed.append(f"`{role.name}`")
+                        except discord.Forbidden:
+                            failed_actions.append(f"{label} 제거 실패: `{role.name}` (봇 역할 순위 부족)")
+                        except Exception as e:
+                            failed_actions.append(f"{label} 제거 실패: `{role.name}` ({e})")
+
+                # 4-2. 정직하게 역할 추가 진행
+                for rid in preset["add"]:
+                    role = interaction.guild.get_role(rid)
+                    if not role:
+                        failed_actions.append(f"{label} 지급 실패: 서버에서 ID `{rid}` 역할을 찾을 수 없어요.")
+                        continue
+                    try:
+                        await 멤버.add_roles(role)
+                        success_added.append(f"{role.mention} *({label})*")
+                    except discord.Forbidden:
+                        failed_actions.append(f"{label} 지급 실패: `{role.name}` (봇 역할 순위 부족)")
+                    except Exception as e:
+                        failed_actions.append(f"{label} 지급 실패: `{role.name}` ({e})")
+
+    # 그리고 함수 끝, 로그 필드를 모으는 곳에 있던 두 줄
+            if 가이드:
+                fields.append(("선택 템플릿", f"`{가이드.name}`", False))
+
+
+# ============================================================================
+# [6] cogs/help.py — 관리자 도움말 열람 권한
+# ============================================================================
+# 타운가이드도 관리자 도움말을 볼 수 있게 목록에 끼워 넣고 있었어요.
+# (`from mari_config import TOWN_GUIDE_ROLE_ID` 도 이것 때문에 있었습니다)
+#
+#                 admin_role_ids.add(TOWN_GUIDE_ROLE_ID)
+#
+# 안내 문구도 "또는 가이드 프리셋 적용" 부분이 빠졌어요:
+#             "`/역할부여` - 특정 멤버 역할 지급(최대 25개까지 선택 UI로) 또는 가이드 프리셋 적용"
+
+
+# ============================================================================
+# [7] guild.example.json — onboarding 섹션과 roles.town_guide
+# ============================================================================
+#   "roles": {
+#     "_town_guide": "신규 입주 절차를 진행하는 역할. /역할부여와 /도움말 관리자 모드에서 씁니다.",
+#     "town_guide": 0
+#   },
+#   "onboarding": {
+#     "_설명": [
+#       "/역할부여 의 '가이드' 프리셋이에요. 신규 입주 절차가 서버마다 완전히 달라서 설정으로 뺐습니다.",
+#       "label 은 선택지에 그대로 보이는 이름(100자 이내), add/remove 는 역할 ID 목록.",
+#       "키 이름(guide1 등)은 아무렇게나 지어도 되고, 개수 제한도 없어요.",
+#       "입주 절차를 안 쓰면 통째로 비워두세요. 그러면 '가이드' 선택지 자체가 사라집니다."
+#     ],
+#     "guide1": {
+#       "label": "가이드1 (입주심사 추가)",
+#       "add": [0],
+#       "remove": []
+#     },
+#     "guide2": {
+#       "label": "가이드2 (심사 통과 → 정식 입주)",
+#       "add": [0, 0],
+#       "remove": [0]
+#     }
+#   },

@@ -1,0 +1,254 @@
+# 🪜 레벨 등급 사다리 (아이디 등록부) — 창고 보관본
+#
+# 게임 아이디 명단을 **0~4레벨 + 대장** 으로 묶어서 채널에 게시하던 코드예요.
+# 멤버가 가진 역할로 레벨을 판별하고, 레벨마다 다른 ANSI 색으로 블록을 만들어
+# "대장 → 4 → 3 → 2 → 1 → 0 → 공지" 순서로 메세지를 올렸습니다.
+#
+# 왜 뺐나 — 0~4레벨 등급제는 원본 서버(에바스타운)의 제도입니다. 등급 개수도,
+# 이름도, 승급 규칙도 그 서버 것이라 다른 서버에 그대로 납품할 수 없어요.
+# 레벨 역할표(LEVEL_ROLES) 자체는 이미 명단 기능과 함께 parked/roster.py 로 갔고,
+# 그 뒤로 이 파일의 레벨 코드는 **전원이 "레벨 미상"으로 묶이는 껍데기** 상태로
+# 남아 있었습니다. 이번에 그 껍데기까지 걷어냈어요.
+#
+# 지금 남은 명단은 —
+#   👑 대장  (settings.json 의 roles.chief_role. `/설정 명단 대장` 으로 지정)
+#   멤버     (그 외 전원, 닉네임 가나다순)
+#   NOTE     (`/아이디 공지` 로 붙이는 공지 블록)
+# 대장 구분만 남기고 등급은 없앴습니다. 어느 서버에서나 바로 쓸 수 있는 형태예요.
+#
+# 🔑 설정 키는 일부러 옛 이름 그대로 뒀습니다 —
+#   settings.json 의 `channels.level_roster` 와 `level_roster_message_ids`,
+#   그리고 `roles.chief_role` 은 이미 돌고 있는 봇의 실제 설정 파일에 들어 있는
+#   값이에요. 키 이름을 바꾸면 업데이트하는 순간 **지정해둔 채널을 잃어버리고**
+#   기존 명단 메세지를 못 찾아 통째로 다시 올립니다. 코드 쪽 이름만 바꿨어요.
+#   (_refresh_level_roster → _refresh_id_roster)
+#
+# 다시 등급제를 붙이려면 —
+#   레벨 목록을 코드에 박지 말고 guild.json 설정으로 두세요. 예:
+#     "levels": [
+#       {"key": "lv4", "label": "4LEVEL", "role": 123..., "color": "2;35"},
+#       {"key": "lv3", "label": "3LEVEL", "role": 456..., "color": "2;34"}
+#     ]
+#   그러면 아래 buckets 순회를 이 목록 순서대로 돌리기만 하면 됩니다.
+#   ⚠️ 설정이 비었을 때 명단이 통째로 사라지지 않도록, 아무 등급에도 안 걸린
+#      사람을 담을 "미분류" 칸을 반드시 남겨두세요. (예전 코드에는 그게 없어서
+#      레벨 역할이 사라진 뒤 명단이 "(등록된 레벨 멤버가 없어요)" 하나로 비었습니다)
+
+
+# ============================================================================
+# [1] mari_utils.py — 레벨별 문서 파서
+# ============================================================================
+# /아이디 가져오기 가 쓰던 파서입니다. 레벨 헤더("대장", "4레벨", "3LEVEL"...)를
+# 만나면 그 아래 사람들을 해당 레벨 칸에 담았어요.
+#
+# 지금은 같은 함수가 레벨 헤더를 **읽어서 버리기만** 하고(그래야 이름으로 오인하지
+# 않으니까요) {이름: {플랫폼: 값}} 평평한 사전을 돌려줍니다. 옛 문서도 그대로
+# 가져올 수 있고, 레벨 정보만 안 쓰는 셈이에요.
+# _LEVEL_HEADER_RE 는 그 "건너뛰기" 용도로 지금도 살아 있습니다.
+
+def parse_legacy_id_document(text: str) -> dict:
+    """레벨별 아이디 목록 게시글 원문을 파싱합니다.
+    반환값: {"chief": {"이름": {"플랫폼": "값"}}, "4": {...}, "3": {...}, "2": {...}, "1": {...}, "0": {...}}
+    인식 못한 레벨 밖의 항목은 "unknown" 키에 모아둡니다."""
+    result = {"chief": {}, "4": {}, "3": {}, "2": {}, "1": {}, "0": {}, "unknown": {}}
+    current_level = "unknown"
+    current_name = None
+
+    for raw_line in text.split("\n"):
+        # 코드블록 펜스(```ansi, ```)나 마크다운 헤더(#로 시작) 줄은 건너뜀
+        stripped_fence = raw_line.strip()
+        if stripped_fence.startswith("```") or stripped_fence.startswith("#"):
+            continue
+
+        line = _ANSI_CODE_RE.sub("", raw_line)
+        line = _INVISIBLE_CHARS_RE.sub("", line).strip()
+        if not line:
+            continue
+
+        level_match = _LEVEL_HEADER_RE.match(line)
+        if level_match:
+            if line == "대장":
+                current_level = "chief"
+            else:
+                digit = level_match.group(2) or level_match.group(3)
+                current_level = digit if digit in result else "unknown"
+            current_name = None
+            continue
+
+        name_match = _NAME_HEADER_RE.match(line)
+        if name_match:
+            current_name = name_match.group(1).strip()
+            if current_name:
+                result[current_level].setdefault(current_name, {})
+            continue
+
+        if current_name and ":" in line:
+            label, _, value = line.partition(":")
+            label, value = label.strip(), value.strip()
+            if label and value:
+                result[current_level][current_name][label] = value
+
+    # 사람이 하나도 없는 레벨은 정리
+    return {lvl: people for lvl, people in result.items() if people}
+
+
+# ============================================================================
+# [2] cogs/core.py — 멤버의 레벨 판별
+# ============================================================================
+# 지금은 대장 여부만 보는 _is_chief(member, settings) -> bool 로 줄었어요.
+#
+# ⚠️ 아래 성능 주석은 지금 코드에도 그대로 유효합니다. 명단을 새로 그릴 때
+#    서버 멤버 전원에 대해 이 함수를 부르기 때문에, settings 를 미리 한 번만
+#    읽어서 넘기는 형태를 유지하세요.
+
+    def _get_member_level_key(self, member: discord.Member, settings: Optional[dict] = None) -> Optional[str]:
+        """멤버의 레벨 구분 키를 돌려줍니다. 'chief' 또는 '0'~'4', 해당 없으면 None.
+        🐛 [성능 버그 수정] 예전엔 이 함수가 불릴 때마다 매번 load_settings()로 파일을 새로
+        읽었는데, /명단이나 레벨 명단 자동 갱신처럼 서버 멤버 전원을 한 명씩 순회하며
+        이 함수를 부르는 곳에서는 그게 "멤버 수만큼 파일을 반복해서 여는" 것과 같았어요.
+        멤버가 몇백 명이면 몇백 번 파일을 열게 되는 구조라 체감상 느려질 수 있었어요.
+        이제 settings를 미리 한 번만 읽어서 넘겨줄 수 있게 했고, 안 넘기면 예전처럼 그때
+        한 번만 읽어요 (단일 호출용 하위 호환)."""
+        if settings is None:
+            settings = load_settings()
+        chief_role_id = settings.get("roles", {}).get("chief_role")
+        if chief_role_id and any(r.id == chief_role_id for r in member.roles):
+            return "chief"
+        # (여기서 명단 코그의 레벨 역할 표를 빌려 와 '이 사람은 몇 레벨'까지 돌려줬어요.
+        #  그 표는 parked/roster.py 의 LEVEL_ROLES 입니다)
+        return None
+
+
+# ============================================================================
+# [3] cogs/core.py — 레벨별 제목·색상 표
+# ============================================================================
+# 지금은 대장/멤버 두 칸짜리 상수로 줄었습니다.
+#
+# ANSI 색상 코드는 디스코드 ```ansi 코드블록에서만 먹혀요. 앞자리 2는 흐리게(dim),
+# 뒷자리가 색입니다. 41은 배경색(빨강)이라 대장만 눈에 띄게 반전돼 보였어요.
+
+    LEVEL_TITLES = {"chief": "대장", "4": "4LEVEL", "3": "3LEVEL", "2": "2LEVEL", "1": "1LEVEL", "0": "0레벨"}
+    LEVEL_ANSI_COLORS = {"chief": "2;41", "4": "2;35", "3": "2;34", "2": "2;34", "1": "2;36", "0": "2;33"}
+
+
+# ============================================================================
+# [4] cogs/core.py — _refresh_level_roster() 안의 레벨별 묶음/게시
+# ============================================================================
+# 함수 전체가 아니라, 레벨에 의존하던 부분만 잘라 왔어요. 나머지(잠금, 메세지
+# 수정 vs 전체 재게시 판단, 공지 블록 붙이기)는 지금 코드에 그대로 살아 있습니다.
+
+                # (1) 레벨별로 멤버를 나눠 담기
+                buckets: dict = {"chief": [], "4": [], "3": [], "2": [], "1": [], "0": []}
+                for member in guild.members:
+                    if member.bot:
+                        continue
+                    lvl = self._get_member_level_key(member, settings)
+                    if lvl:
+                        buckets[lvl].append(member)
+                for lvl in buckets:
+                    buckets[lvl].sort(key=lambda m: m.display_name.lower())
+
+                # (2) 레벨마다 독립된 블록을 만들고, 레벨 경계를 넘어 섞이지 않게 분할
+                # 📦 [개선] 예전엔 그냥 2000자 넘으면 뚝 잘라서, 한 레벨이 메세지 두 개에
+                # 걸쳐 어중간하게 잘릴 수 있었어요.
+                chunks = []
+                header = "에바스타운 아이디 목록"
+                for lvl in ["chief", "4", "3", "2", "1", "0"]:
+                    members = buckets[lvl]
+                    if not members:
+                        continue
+                    color = self.LEVEL_ANSI_COLORS[lvl]
+                    block_lines = [header, "", f"\u001b[{color}m{self.LEVEL_TITLES[lvl]}\u001b[0m", ""]
+                    for m in members:
+                        ids = guild_ids_data.get(str(m.id), {})
+                        block_lines.append(f"[\u001b[{color}m{m.display_name}\u001b[0m]")
+                        if ids:
+                            for plat, val in ids.items():
+                                block_lines.append(f"{plat} : {val}")
+                        else:
+                            block_lines.append("(등록된 아이디 없음)")
+                        block_lines.append("")
+
+                    block_text = "\n".join(block_lines).rstrip()
+                    if len(block_text) <= CHUNK_LIMIT:
+                        # 이 레벨은 통째로 메세지 하나에 딱 들어감
+                        chunks.append(block_text)
+                    else:
+                        # 레벨 하나가 너무 커서 어쩔 수 없이 그 레벨 안에서만 쪼갬 (다른 레벨과는 안 섞임)
+                        chunks.extend(split_lines_to_chunks(block_lines))
+
+                if not chunks:
+                    chunks = ["(등록된 레벨 멤버가 없어요)"]
+
+# 🏷️ header 문자열 "에바스타운 아이디 목록" 은 원본 서버 이름이 박혀 있던 자리예요.
+#    지금은 "게임 아이디 목록" 으로 바꿔뒀습니다. (서버 이름 변수화는 별도 작업)
+
+
+# ============================================================================
+# [5] cogs/core.py — /아이디 가져오기 의 레벨 처리
+# ============================================================================
+# 파서가 레벨별 사전을 돌려주니 두 겹으로 돌면서 (level, name, ids) 를 만들었어요.
+# 지금은 파서가 평평한 사전을 주므로 한 겹만 돕니다.
+
+        matched = []    # (level, name, member, id_dict)
+        unmatched = []  # (level, name, id_dict)
+
+        for level, people in parsed.items():
+            for name, ids in people.items():
+                found = find_guild_member_by_name(guild, name)
+                if found:
+                    matched.append((level, name, found, ids))
+                else:
+                    unmatched.append((level, name, ids))
+
+        total_entries = sum(len(ids) for _, _, _, ids in matched)
+        level_labels = {"chief": "대장", "4": "4레벨", "3": "3레벨", "2": "2레벨", "1": "1레벨", "0": "0레벨", "unknown": "레벨 미상"}
+
+        # ... 매칭 실패 목록을 찍을 때 레벨을 괄호로 붙였어요
+            names_text = ", ".join(f"{n}({level_labels.get(lvl, lvl)})" for lvl, n, _ in unmatched[:30])
+
+
+# ============================================================================
+# [6] cogs/core.py — UnmatchedResolveView 의 레벨 표시
+# ============================================================================
+# 이름 연결 UI에서 "이 사람 몇 레벨이었는지"를 같이 보여줬어요. 튜플에서 level이
+# 빠지면서 전부 (name, ids) / (name, member, ids) 두세 칸으로 줄었습니다.
+
+    LEVEL_LABELS = {"chief": "대장", "4": "4레벨", "3": "3레벨", "2": "2레벨", "1": "1레벨", "0": "0레벨", "unknown": "레벨 미상"}
+
+    # build_embed() 안
+        level, name, ids = self.remaining[0]
+        lvl_label = self.LEVEL_LABELS.get(level, level)
+        ...
+                f"**이름:** {name}  (**{lvl_label}**)\n"
+
+    # _finish() 안, 아직 연결 안 된 사람들을 나열할 때
+            names = ", ".join(f"{n}({self.LEVEL_LABELS.get(lvl, lvl)})" for lvl, n, _ in self.still_unmatched)
+
+
+# ============================================================================
+# [7] cogs/setting.py — /설정 레벨 대장
+# ============================================================================
+# 서브그룹 이름이 '레벨' 이었어요. 등급제를 걷어내면서 `/설정 명단 대장` 으로
+# 옮겼습니다. (명령 자체와 settings 키 chief_role 은 그대로예요)
+
+    레벨 = app_commands.Group(parent=설정, name="레벨", description="레벨별 아이디 명단(로스터) 자동 관리 설정입니다.")
+
+    @레벨.command(name="대장", description="[관리자] 레벨 명단에서 '대장' 칸으로 따로 표시할 역할을 지정합니다.")
+
+
+# ============================================================================
+# [8] 문구만 바뀐 곳들 (되살릴 때 같이 손보세요)
+# ============================================================================
+# cogs/core.py   모듈 docstring   "... 및 레벨별 명단 자동 게시."
+# cogs/core.py   /아이디 공지      "레벨 명단 맨 아래에 ..."
+# cogs/core.py   /아이디 가져오기   "예전에 쓰던 레벨별 아이디 목록 게시글을 ..."
+# cogs/setting.py  /설정 채널 아이디목록  "레벨별 아이디 명단이 자동으로 갱신되어 올라갈 채널이에요."
+# cogs/setting.py  channel_labels        "level_roster": "📋 레벨별 아이디 명단"
+# cogs/setting.py  role_labels           "chief_role": "👑 대장 (레벨 명단용)"
+# cogs/diagnostics.py  channel_labels    "level_roster": "📋 레벨별 아이디 명단"
+# cogs/help.py   "게임 아이디 관리" 카테고리 4줄:
+#     "`/설정 채널 아이디목록` - 레벨별 아이디 명단이 자동 갱신될 채널 지정\n"
+#     "`/설정 레벨 대장` - 명단에서 '대장' 칸으로 표시할 역할 지정\n"
+#     "`/아이디 가져오기` - 예전에 쓰던 레벨별 아이디 목록 게시글(.txt)을 한 번에 등록\n"
+#     "`/아이디 공지` - 레벨 명단 맨 아래에 공지 한 줄 추가 (...)\n"
