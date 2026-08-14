@@ -1,6 +1,6 @@
 # 다음에 할 일
 
-*2026-08-14 기준. 두 PC로 갈렸던 작업을 합치고, 로그인 직전까지 실제로 띄워 확인한 상태입니다.*
+*2026-08-15 기준. 두 PC로 갈렸던 작업을 합치고, 로그인 직전까지 실제로 띄워 확인한 상태입니다.*
 
 ## 지금 어디까지 왔나
 
@@ -32,7 +32,8 @@
 
 현재 상태: 모듈 14개, 슬래시 명령 34개. `python tools/check_modules.py` 로 확인 가능.
 
-**코드에 남은 서버 고유 이름은 이제 없습니다.** (주석·독스트링만 예외 — 아래 참고)
+**코드에 남은 서버 고유 이름은 이제 없습니다.** 주석·독스트링까지 정리했고,
+일부러 남긴 두 곳만 예외예요. (아래 '다음에 할 것 → 그 외' 참고)
 
 ---
 
@@ -244,7 +245,7 @@ python -m venv .venv
 
 .venv\Scripts\python tools/check_help.py                    # 도움말 ↔ 실제 명령 (조합 7개)
 .venv\Scripts\python tools/check_help.py shop birthday      # 이 조합만
-.venv\Scripts\python tools/check_guild.py                    # guild.json 읽기 (등급·명단 칸·옛 키)
+.venv\Scripts\python tools/check_guild.py                   # guild.json 읽기 (등급·명단 칸·옛 키)
 ```
 
 셋 다 문제가 있으면 종료 코드 1로 끝나요. 기능을 빼거나 추가했다면 **세 개를 전부**
