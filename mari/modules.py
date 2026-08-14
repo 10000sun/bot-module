@@ -29,7 +29,7 @@ class ModuleSpec:
 MODULE_SPECS = (
     ModuleSpec(
         "setting", "설정·권한·기능제어", "cogs.setting", "MariSetting", core=True,
-        note="관리자 역할/로그 채널 지정, 기능 킬 스위치, 역할부여·유배. 이게 없으면 다른 모듈의 권한 설정을 못 해요.",
+        note="관리자 역할/로그 채널 지정, 기능 킬 스위치, 역할부여. 이게 없으면 다른 모듈의 권한 설정을 못 해요.",
     ),
     ModuleSpec(
         "id", "게임 아이디 등록부", "cogs.core", "MariCore",

@@ -362,19 +362,42 @@ def extract_id_from_mention(mention: str) -> Optional[str]:
     m = MENTION_USER_RE.match(mention.strip())
     return m.group(1) if m else None
 
-# 🆔 [신규] 예전에 수기로 관리하던 "레벨별 아이디 목록" 게시글(```ansi 코드블록)을
-# 파싱해서 {레벨: {이름: {플랫폼: 아이디}}} 구조로 뽑아내는 함수입니다. (/아이디목록가져오기용)
-_ANSI_CODE_RE = re.compile(r"\[[\d;]*m")
+# 🆔 [신규] 예전에 수기로 관리하던 "아이디 목록" 게시글(```ansi 코드블록)을
+# 파싱해서 {구획: {이름: {플랫폼: 아이디}}} 구조로 뽑아내는 함수입니다. (/아이디 가져오기용)
+# 🐛 [버그 수정] 예전엔 `\[[\d;]*m`만 지웠어요. 디스코드에서 그대로 복사하면 색 코드가
+# `[2;41m`처럼 대괄호만 남아서 그걸로 충분했는데, 원본 메세지를 파일로 내려받으면 앞에
+# **ESC 문자가 같이** 들어옵니다. 그러면 색 코드만 지워지고 ESC는 줄에 남아서
+# '대장'이 '(ESC)대장(ESC)'이 되고, 구획 제목도 사람 이름도 하나도 안 잡혔어요.
+_ANSI_CODE_RE = re.compile(r"\x1b?\[[\d;]*m")
 _INVISIBLE_CHARS_RE = re.compile(r"[\u200b-\u200f\u2066-\u2069\ufeff]")
-_LEVEL_HEADER_RE = re.compile(r"^(대장|\(?(\d)\s*레벨\)?|(\d)\s*LEVEL)$", re.IGNORECASE)
 _NAME_HEADER_RE = re.compile(r"^\[([^\[\]]+)\]$")
 
-def parse_legacy_id_document(text: str) -> dict:
-    """레벨별 아이디 목록 게시글 원문을 파싱합니다.
-    반환값: {"chief": {"이름": {"플랫폼": "값"}}, "4": {...}, "3": {...}, "2": {...}, "1": {...}, "0": {...}}
-    인식 못한 레벨 밖의 항목은 "unknown" 키에 모아둡니다."""
-    result = {"chief": {}, "4": {}, "3": {}, "2": {}, "1": {}, "0": {}, "unknown": {}}
-    current_level = "unknown"
+UNSECTIONED_LABEL = "미분류"   # 어느 구획에도 안 들어간 사람들을 담는 자리
+
+
+def _section_lookup_key(text: str) -> str:
+    """구획 제목을 비교할 때 쓰는 형태. 대소문자와 공백 차이는 무시해요.
+    ('4 LEVEL'과 '4level'을 같은 제목으로 봅니다)"""
+    return "".join(text.split()).lower()
+
+
+def parse_legacy_id_document(text: str, section_labels=()) -> dict:
+    """예전에 쓰던 아이디 목록 게시글 원문을 파싱합니다.
+
+    section_labels — 구획 제목으로 인정할 이름들. 보통 guild.json의 등급 이름(RANKS의
+                     label)을 그대로 넘겨요. 등급을 안 쓰는 서버는 비워두면 됩니다.
+
+    반환값: {"구획 이름": {"사람 이름": {"플랫폼": "값"}}}
+    구획 제목을 만나기 전에 나온 사람은 "미분류"에 모입니다.
+
+    🪜 [정리] 예전엔 '대장 / N레벨 / N LEVEL'이라는 원본 서버의 등급 이름이 정규식에
+    박혀 있었어요. 이제 어떤 이름을 구획으로 볼지는 부르는 쪽이 정합니다.
+    """
+    known = {_section_lookup_key(label): label for label in section_labels if str(label).strip()}
+    result = {label: {} for label in known.values()}
+    result[UNSECTIONED_LABEL] = {}
+
+    current_section = UNSECTIONED_LABEL
     current_name = None
 
     for raw_line in text.split("\n"):
@@ -388,13 +411,9 @@ def parse_legacy_id_document(text: str) -> dict:
         if not line:
             continue
 
-        level_match = _LEVEL_HEADER_RE.match(line)
-        if level_match:
-            if line == "대장":
-                current_level = "chief"
-            else:
-                digit = level_match.group(2) or level_match.group(3)
-                current_level = digit if digit in result else "unknown"
+        section = known.get(_section_lookup_key(line))
+        if section is not None:
+            current_section = section
             current_name = None
             continue
 
@@ -402,17 +421,17 @@ def parse_legacy_id_document(text: str) -> dict:
         if name_match:
             current_name = name_match.group(1).strip()
             if current_name:
-                result[current_level].setdefault(current_name, {})
+                result[current_section].setdefault(current_name, {})
             continue
 
         if current_name and ":" in line:
             label, _, value = line.partition(":")
             label, value = label.strip(), value.strip()
             if label and value:
-                result[current_level][current_name][label] = value
+                result[current_section][current_name][label] = value
 
-    # 사람이 하나도 없는 레벨은 정리
-    return {lvl: people for lvl, people in result.items() if people}
+    # 사람이 하나도 없는 구획은 정리
+    return {section: people for section, people in result.items() if people}
 
 # 🧹 [신규] 백그라운드 자동 삭제 유틸리티
 # asyncio.create_task로 만든 태스크는 어디에도 참조가 없으면 실행 도중 GC될 수 있어서,

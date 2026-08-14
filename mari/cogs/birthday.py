@@ -5,7 +5,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 
-from mari_config import BIRTHDAY_FILE, GOHWAK_MENTION_ROLE_ID, KST, SETTINGS_FILE
+from mari_config import ANNOUNCE_MENTION_ROLE_ID, BIRTHDAY_FILE, KST, SETTINGS_FILE
 from mari_alerts import report_loop_error
 from mari_storage import atomic_json_save_or_raise, safe_json_load
 from mari_settings import feature_gate, is_feature_enabled, load_settings, send_log_embed
@@ -210,13 +210,12 @@ class MariBirthday(commands.Cog):
                     embed.set_footer(text="마리 생일 알림 시스템", icon_url=self.bot.user.display_avatar.url)
                     
                     try:
-                        # 🏷️ [신규] 스레드에서만 축하하는 게 아니라, 본문 자체에도 시민권 역할을
+                        # 🏷️ [신규] 스레드에서만 축하하는 게 아니라, 본문 자체에도 역할을
                         # 태그해서 서버 전체가 알림을 받을 수 있게 했어요.
-                        # 🏛️ 시민권 역할. 예전엔 여기 역할 ID가 그대로 박혀 있었는데,
-                        # /고확이 멘션하는 역할과 **완전히 같은 값**이라 이미 상수로 있었어요.
-                        # 두 곳에 따로 적어두면 역할이 바뀔 때 한쪽만 고치게 됩니다.
-                        citizen_role = guild.get_role(GOHWAK_MENTION_ROLE_ID)
-                        tag_text = citizen_role.mention if citizen_role else ""
+                        # 어느 역할을 부를지는 guild.json의 roles.announce_mention이 정합니다.
+                        # 안 정해뒀으면 멘션 없이 그냥 올라가요.
+                        announce_role = guild.get_role(ANNOUNCE_MENTION_ROLE_ID)
+                        tag_text = announce_role.mention if announce_role else ""
 
                         # 1. 축하 알림 메시지 전송 (시민권 태그 + 생일자 멘션)
                         msg = await announce_ch.send(

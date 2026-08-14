@@ -214,7 +214,8 @@ class ShopActionButtons(MariView):
                     # 예전엔 위 add_roles await보다 먼저 읽은 사본을 그대로 저장했어요.
                     # 그 await이 걸린 동안 economy_lock을 잡지 않는 코드(`/상점 사용`,
                     # `/상점 항목추가` 등)가 shop.json에 쓴 내용이 통째로 되돌아갔습니다.
-                    # (같은 사고가 예전에 확성기 쪽에서 터진 적이 있어요 — games.py 상단 주석 참고)
+                    # (아이템 소모 기능 쪽에서 같은 사고가 터진 적이 있어요.
+                    #  shop.json을 건드리는 모든 코드가 economy_lock 하나를 지나가야 합니다)
                     data = self.cog._load_shop()
                     board = self.cog._get_board(data, self.channel_id)
                     if board is None:
@@ -988,7 +989,7 @@ class MariShop(commands.Cog):
 
         정확한 이름(exact)으로 먼저 찾고, 그게 하나도 없을 때만 keyword가 이름에 들어간 걸로
         넓혀서 찾아요. (관리자가 상품명 앞뒤에 이모지나 수식어를 붙여 등록하는 일이 잦아서,
-        `/고확`이 '확성기'를 찾을 때 쓰는 것과 같은 방식이에요)
+        이름이 정확히 일치하지 않아도 찾아줘야 해요)
         """
         data = self._load_shop()
         user_key = str(user_id)
@@ -1064,7 +1065,8 @@ class MariShop(commands.Cog):
     def restore_items(self, user_id, taken: list):
         """consume_items_by_name으로 깎은 아이템을 되돌립니다. (뒤 단계가 실패했을 때 호출)
 
-        `/고확`이 방송 전송에 실패하면 확성기를 되돌려주는 것과 같은 역할이에요.
+        아이템을 먼저 깎고 실제 동작을 나중에 하는 기능들이 있어요. 그래야 연타로 눌렀을 때
+        하나로 두 번 쓰는 일이 없거든요. 대신 뒷단계가 실패하면 여기서 도로 넣어줘야 합니다.
         """
         if not taken:
             return

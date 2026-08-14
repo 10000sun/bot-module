@@ -17,6 +17,12 @@ VISIT_PASS_ASK_FILE 설정을 그 클라이언트 개념에 맞게 새로 만들
   • 기한 만료 처리와 중복 접수 방지(_visit_pass_inflight)
 """
 
+# 📁 대기열 파일 경로도 mari_config.py에서 걷어냈습니다. 이 상수가 거기 남아 있는 동안,
+#    견학권 기능이 없는데도 json_data_files()가 빈 파일을 매번 만들고 매일 백업까지 했어요.
+#    (`_FILE`로 끝나고 `.json`인 전역은 전부 데이터 파일로 취급됩니다) 되살릴 때 도로 넣으세요.
+#
+# VISIT_PASS_ASK_FILE = os.path.join(DATA_DIR, "mari_visit_pass_ask.json")  # 🎫 [신규] 견학권 구매자에게 보낸 "어느 캠프?" DM 대기열
+
 # ⚠️ 아래는 원래 파일에서 떼어낸 그대로입니다. import도 원본 기준이에요.
 # import datetime as dt
 # import discord

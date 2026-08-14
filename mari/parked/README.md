@@ -37,6 +37,7 @@
 | `camp.py` | 캠프 세금·통장·견학 | 서버를 3개 캠프(악동/나래/여백)로 나누고, 캠프별 세금과 공용 통장을 운영. '전율'이 전체 감독 |
 | `mari_tax.py` | 세율 구간·누진세·보유세 계산 | 위 캠프 세금의 계산기 |
 | `roster.py` | 레벨·소속 명단 | 0~4레벨 등급 사다리와 소속 조직 기준으로 멤버를 필터링 |
+| | | ⚠️ **등급 사다리 자체는 창고에 있지 않아요.** 아이디 명단(`cogs/core.py`)이 `guild.json`의 `ranks`로 그대로 지원합니다. 여기 있는 건 그 위에 얹혀 있던 `/명단` 필터링 명령이에요 |
 | `profile.py` | 프로필 카드 | 닉네임/아이디/레벨/소속/직책/업적 카드. 위 레벨·소속 개념 위에 세워져 있음 |
 
 ### 다른 파일에서 떼어낸 조각 (`.py.txt`)
@@ -48,4 +49,8 @@
 | 파일 | 원래 기능 | 어디서 떼어냈나 |
 |---|---|---|
 | `shop_visit_pass.py.txt` | 견학권 구매 처리 | `cogs/shop.py` — 사면 DM으로 "어느 캠프로 갈래?"를 묻고 상점주인에게 전달 |
-| `camp_leftovers.py.txt` | 캠프·명단이 남긴 잔가지 | `cogs/diagnostics.py`(세금 미리보기·캠프 중복검사·권한표시), `cogs/economy.py`(캠프별 지갑 조회) |
+| `camp_leftovers.py.txt` | 캠프·명단·프로필이 남긴 잔가지 | `cogs/diagnostics.py`(세금 미리보기·캠프 중복검사·권한표시), `cogs/economy.py`(캠프별 지갑 조회), `mari_config.py`(데이터 파일 경로), `cogs/backup.py`(프로필 사진 백업) |
+| `games_broadcast.py.txt` | 고확(고성능 확성기) | `cogs/games.py`(명령 본체), `cogs/setting.py`·`cogs/diagnostics.py`(채널 설정·라벨), `mari_config.py`(멘션 역할) |
+| `setting_exile.py.txt` | 유배·복귀(사면) | `cogs/setting.py` — `/역할부여`의 `유배지` 옵션과 추방관·지옥간수·유배자 역할 설정 |
+| `setting_onboarding.py.txt` | 타운가이드·입주 가이드 프리셋 | `cogs/setting.py`(`/역할부여`의 가이드 선택지), `mari_config.py`(프리셋 로더), `cogs/help.py`(도움말 열람 권한) |
+| `gpt_persona.py.txt` | AI 페르소나 분기·프로필 조회 도구 | `cogs/gpt.py` — 특정 유저를 '아빠/엄마'로 부르거나 냉대하던 갈래, `check_my_profile` 도구 |

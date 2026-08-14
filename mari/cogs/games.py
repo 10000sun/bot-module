@@ -1,8 +1,7 @@
-"""MariGames — 하이로우 게임, 에바시 선착순 이벤트, 고성능 확성기."""
+"""MariGames — 하이로우 게임, 에바시 선착순 이벤트."""
 
 import random
 import asyncio
-import os
 import traceback
 import datetime as dt
 from typing import Optional
@@ -10,9 +9,8 @@ import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 
-from mari_config import GOHWAK_MENTION_ROLE_ID, KST, SHOP_FILE
-from mari_alerts import report_loop_error, send_alert
-from mari_storage import atomic_json_save_or_raise, safe_json_load
+from mari_config import KST
+from mari_alerts import report_loop_error
 from mari_state import record_ledger
 from mari_utils import chunk_lines
 from mari_settings import has_admin_or_role, load_settings, save_settings, send_log_embed
@@ -21,8 +19,7 @@ class MariGames(commands.Cog):
     """하이로우 등 미니게임 시스템"""
 
     def __init__(self, bot):
-        # 🐛 [버그 수정] 이 코그에는 원래 __init__이 없어서 self.bot이 보장되지 않았어요
-        # (그래서 고확 명령어에 getattr(self, "bot", None) 방어 코드가 있었던 거예요).
+        # 🐛 [버그 수정] 이 코그에는 원래 __init__이 없어서 self.bot이 보장되지 않았어요.
         # 이제 정식으로 저장해서 에바시 기능(백그라운드 스케줄러, on_message)에서도 안전하게 씁니다.
         self.bot = bot
 
@@ -44,13 +41,6 @@ class MariGames(commands.Cog):
         self.evashi_guild = None              # 이번 창에서 첫 참가자가 나온 길드 (마감 공지 보낼 곳)
         self.evashi_close_task = None         # 창을 정확히 window_seconds 뒤에 닫고 결과를 공지하는 예약 태스크
 
-        # 🐛 [버그 수정] 예전엔 여기 self._shop_file_lock = asyncio.Lock()으로 **이 코그 전용**
-        # 잠금을 따로 만들어 썼어요. 그런데 shop.json을 쓰는 다른 기능(상점 구매·되팔기·선물,
-        # 견학권 차감)은 전부 bot.economy_lock을 잡습니다. 서로 다른 잠금이라 상대를 전혀 막지
-        # 못해서, /고확이 확성기를 깎는 사이 역할 아이템 구매가 shop.json을 통째로 덮어쓰면
-        # (구매는 add_roles를 await 하는 동안 파일 사본을 들고 있어요) 확성기 차감이 되돌려져요.
-        # 즉 확성기 하나로 방송을 여러 번 할 수 있었습니다.
-        # 이제 shop.json을 건드리는 모든 코드가 같은 잠금(economy_lock) 하나를 지나갑니다.
         self.evashi_loop.start()
 
     def cog_unload(self):
@@ -326,151 +316,3 @@ class MariGames(commands.Cog):
         embed.add_field(name="결과", value=text, inline=False)
         await interaction.response.send_message(embed=embed)
         self.current_numbers[gid] = nxt
-
-
-    @app_commands.command(
-        name="고확",
-        description="인벤토리에 있는 확성기 아이템을 사용하여 전용 채널에 큰 글씨로 메시지를 전송합니다."
-    )
-    @app_commands.describe(내용="확성기로 방송할 내용 (줄바꿈은 \\n 을 입력하면 실제 줄바꿈으로 바뀌어요)")
-    async def global_broadcast(self, interaction: discord.Interaction, 내용: str):
-        # 1. 디스코드 '생각 중...' 응답 제한 시간 연장
-        await interaction.response.defer(ephemeral=True)
-
-        # 📝 [신규] 슬래시 명령어 입력창은 줄바꿈 키 입력이 안 되니까,
-        # 사용자가 문자 그대로 "\n"을 타이핑하면 그걸 실제 줄바꿈으로 바꿔줍니다.
-        내용 = 내용.replace("\\n", "\n")
-        
-        # 🐛 [버그 수정] 예전엔 여기서 `SHOP_FILE = "mari_shop.json"` 이라고 전역 상수를
-        # 상대경로로 덮어쓰고 있었어요. 봇을 스크립트 폴더가 아닌 곳에서 실행하면
-        # (작업 스케줄러/바로가기 등) 상점 파일을 못 찾거나, 최악의 경우 엉뚱한 위치에
-        # 새 mari_shop.json을 만들어서 상점 데이터가 두 갈래로 쪼개졌어요.
-        # 이제 전역의 절대경로 SHOP_FILE을 그대로 씁니다.
-        ROLE_ID = GOHWAK_MENTION_ROLE_ID
-        # ⚙️ 채널 설정 (동적 로드)
-
-        TARGET_CHANNEL_ID = load_settings().get("channels", {}).get("global_broadcast")
-        if not TARGET_CHANNEL_ID:
-            return await interaction.followup.send("❌ 고확 채널이 설정되지 않았어요.", ephemeral=True)
-
-        try:
-            # 2. 🚨 [심각한 버그 수정] 예전엔 여기서 threading.Lock을 만들어 썼어요. 두 가지 문제가 있었습니다.
-            #    ① 봇은 스레드가 아니라 비동기(코루틴)로 도는데, threading.Lock은 코루틴끼리는
-            #       전혀 막아주지 못해서 "동기화한다"는 목적 자체가 사실상 무효였어요.
-            #    ② 더 심각한 건, 이 잠금을 쥔 채로 `await`을 하고 있었다는 점이에요. 그 사이에
-            #       다른 사람이 /고확을 쓰면 그 사람은 잠금을 기다리며 **이벤트 루프 자체를 멈춰버려요.**
-            #       그러면 먼저 들어온 사람도 영영 재개되지 못해서 **봇 전체가 완전히 얼어붙습니다.**
-            #       (재시작 말고는 풀 방법이 없어요)
-            #    이제 asyncio.Lock을 쓰고, 잠금 안에서는 절대 await 하지 않도록 안내 메세지를
-            #    변수에 담아뒀다가 잠금을 빠져나온 뒤에 보냅니다.
-            # 3. 안전하게 파일 검증 및 확성기 차감 진행
-            error_message = None
-            async with self.bot.economy_lock:
-                if not os.path.exists(SHOP_FILE):
-                    error_message = f"❌ 상점 데이터 파일(`{SHOP_FILE}`)이 존재하지 않아요."
-
-                if error_message is None:
-                    data = safe_json_load(SHOP_FILE, {})
-
-                    # 🏪 [다중 매대] '확성기' 아이템은 여러 매대 중 어느 곳에나 등록되어 있을 수 있어서,
-                    # 모든 매대를 돌면서 이름에 '확성기'가 들어간 아이템 + 유저가 실제로 보유한 매대를 찾습니다.
-                    user_id = str(interaction.user.id)
-                    target_board = None
-                    target_ch_id = None
-                    target_item_id = None
-                    found_any_launcher = False
-
-                    for ch_id_str, board in data.get("boards", {}).items():
-                        for item_id, item_info in board.get("items", {}).items():
-                            if "확성기" in item_info.get("name", ""):
-                                found_any_launcher = True
-                                owned_qty = board.get("inventories", {}).get(user_id, {}).get(str(item_id), 0)
-                                if owned_qty > 0:
-                                    target_board = board
-                                    target_ch_id = ch_id_str      # 되돌려줄 때 어느 매대인지 알아야 해요
-                                    target_item_id = str(item_id)
-                                    break
-                        if target_board:
-                            break
-
-                    if not found_any_launcher:
-                        error_message = "❌ 어떤 매대에도 '확성기' 아이템이 등록되어 있지 않아요."
-                    elif not target_board:
-                        error_message = "❌ '확성기' 아이템을 보유하고 있지 않아요."
-                    else:
-                        # 갯수 1개 차감 후 저장
-                        user_inventory = target_board["inventories"][user_id]
-                        user_inventory[target_item_id] -= 1
-                        if user_inventory[target_item_id] <= 0:
-                            user_inventory.pop(target_item_id, None)
-
-                        atomic_json_save_or_raise(SHOP_FILE, data, indent=4)
-
-            # 잠금을 빠져나온 뒤에 안내해요. (잠금 안에서 await 하면 봇이 얼어붙을 수 있어요)
-            if error_message:
-                return await interaction.followup.send(error_message, ephemeral=True)
-
-            # 4. 고확 전송할 채널 가져오기 (클래스 내부 구조에 맞춰 클라이언트 참조)
-            # 💡 여기서부터는 확성기가 **이미 차감된 상태**예요. 차감을 먼저 하는 건 일부러 그런 건데,
-            # 반대로 하면 두 명이 동시에(또는 한 명이 연타로) 쓸 때 둘 다 보유 검사를 통과해서
-            # 확성기 하나로 방송이 두 번 나가버립니다. 대신 전송이 실패하면 아래에서 되돌려줘요.
-            bot_client = getattr(self, "bot", None) or interaction.client
-            channel = bot_client.get_channel(TARGET_CHANNEL_ID)
-            if channel is None:
-                try:
-                    channel = await bot_client.fetch_channel(TARGET_CHANNEL_ID)
-                except Exception:
-                    await self._refund_launcher(user_id, target_ch_id, target_item_id)
-                    return await interaction.followup.send(
-                        "❌ 고확 채널을 찾을 수 없거나 봇이 해당 채널의 권한을 가지고 있지 않아요.\n"
-                        "확성기는 다시 넣어드렸어요.", ephemeral=True
-                    )
-
-            # 5. 전송 및 유저 알림 마무리
-            broadcast_message = f"# 📢 {내용}\n\n<@&{ROLE_ID}>"
-            try:
-                await channel.send(broadcast_message)
-            except Exception as e:
-                # 🐛 [버그 수정] 예전엔 여기서 실패하면 확성기만 사라지고 방송은 안 나갔어요.
-                print(f"❗ [고확] 전송 실패: {type(e).__name__}: {e}")
-                await self._refund_launcher(user_id, target_ch_id, target_item_id)
-                return await interaction.followup.send(
-                    f"❌ 고확 메세지를 보내지 못했어요. ({type(e).__name__})\n확성기는 다시 넣어드렸어요.",
-                    ephemeral=True
-                )
-
-            await interaction.followup.send("✅ 확성기를 사용하여 고확 메시지를 전송했어요!", ephemeral=True)
-
-        except Exception as e:
-            print(f"\n[고확 명령어 치명적 에러]: {e}")
-            traceback.print_exc()
-            await interaction.followup.send("❌ 실행 중 알 수 없는 오류가 발생했어요. 콘솔 창을 확인해 주세요.", ephemeral=True)
-
-    async def _refund_launcher(self, user_id: str, ch_id_str: str, item_id: str):
-        """방송 전송에 실패했을 때, 차감했던 확성기 1개를 도로 넣어줍니다.
-
-        수량이 0이 되면 인벤토리 칸 자체가 지워지기 때문에, 없으면 새로 만들어서 넣어요.
-        """
-        try:
-            # 🔒 파일을 새로 읽어서 되돌려요. 차감할 때 쓰던 사본을 재사용하면
-            # 그 사이에 일어난 다른 구매/사용까지 같이 되돌려버립니다.
-            async with self.bot.economy_lock:
-                data = safe_json_load(SHOP_FILE, {})
-                board = data.get("boards", {}).get(ch_id_str)
-                if board is None:
-                    raise RuntimeError(f"매대(채널 {ch_id_str})를 찾을 수 없어요")
-
-                user_inventory = board.setdefault("inventories", {}).setdefault(user_id, {})
-                user_inventory[item_id] = user_inventory.get(item_id, 0) + 1
-                atomic_json_save_or_raise(SHOP_FILE, data, indent=4)
-
-            print(f"↩️ [고확] 전송 실패라서 확성기 1개를 되돌려줬어요. (유저 {user_id})")
-        except Exception as e:
-            # 되돌리기까지 실패하면 유저는 아이템만 잃은 상태라 반드시 사람이 개입해야 해요.
-            print(f"❗ [고확] 확성기 되돌리기 실패: {type(e).__name__}: {e}")
-            await send_alert(
-                "🔴 고확 확성기를 되돌리지 못했어요",
-                f"유저 `{user_id}`님의 확성기가 차감됐는데 방송은 나가지 않았고, 되돌리기도 실패했어요.\n"
-                f"관리자가 `/상점` 기능으로 직접 확성기 1개를 넣어주셔야 해요.\n"
-                f"(매대 채널: `{ch_id_str}` · 아이템: `{item_id}`)\n\n**{type(e).__name__}**: {e}",
-            )
