@@ -381,14 +381,34 @@ _INVISIBLE_CHARS_RE = re.compile(r"[\u200b-\u200f\u2066-\u2069\ufeff]")
 _LEVEL_HEADER_RE = re.compile(r"^(대장|\(?(\d)\s*레벨\)?|(\d)\s*LEVEL)$", re.IGNORECASE)
 _NAME_HEADER_RE = re.compile(r"^\[([^\[\]]+)\]$")
 
-def parse_legacy_id_document(text: str) -> dict:
+def _section_lookup_key(text) -> str:
+    """구획 제목 비교용 키. 공백과 대소문자 차이를 무시해요."""
+    return re.sub(r"\s+", "", str(text)).casefold()
+
+
+def parse_legacy_id_document(text: str, section_labels=()) -> dict:
     """예전에 쓰던 아이디 목록 게시글 원문을 파싱합니다.
     반환값: {"이름": {"플랫폼": "값", ...}, ...}
 
+    section_labels — 구획 제목으로 볼 이름들. 보통 guild.json에 적어둔 등급 이름
+                     (RANKS의 label)을 그대로 넘겨요. 등급을 안 쓰면 비워두면 됩니다.
+
     🗑️ [정리] 예전엔 등급별로 나눠서 {레벨: {이름: {...}}} 2단 구조를 돌려줬어요.
     등급제를 걷어내면서(parked/core_levels.py.txt) 평평한 1단 구조가 됐습니다.
-    등급 헤더 줄은 여전히 알아보고 **건너뜁니다.** 옛 문서를 그대로 올려도
-    등급 이름이 사람으로 잘못 등록되지 않아요."""
+    등록은 사람 단위라 구획 정보가 쓰이는 곳이 없고, 명단의 등급은 문서가 아니라
+    **디스코드 역할**을 보고 정해지거든요. 그래서 1단 구조를 유지합니다.
+
+    구획 제목 줄은 알아보고 **건너뜁니다.** 옛 문서를 그대로 올려도 등급 이름이
+    사람으로 잘못 등록되지 않아요.
+
+    ⚠️ 아래 _LEVEL_HEADER_RE는 원본 서버의 등급 이름('대장'·'4레벨'·'3 LEVEL')이
+       박혀 있는 정규식이에요. 이미 그 형식으로 쌓인 문서가 있어서 남겨둡니다.
+       다른 이름을 쓰는 서버는 section_labels로 알려주세요. 안 알려주면 그 제목이
+       `[이름]` 꼴이 아니라서 그냥 무시되긴 하지만, 제목을 대괄호로 감싼 문서라면
+       사람으로 잘못 잡힙니다."""
+    known_sections = {
+        _section_lookup_key(label) for label in section_labels if str(label).strip()
+    }
     result: dict = {}
     current_name = None
 
@@ -403,8 +423,11 @@ def parse_legacy_id_document(text: str) -> dict:
         if not line:
             continue
 
-        # 등급 헤더 줄은 이름이 아니므로 그냥 버려요. (아래 이름 인식으로 새지 않게)
-        if _LEVEL_HEADER_RE.match(line):
+        # 구획 제목 줄은 이름이 아니므로 그냥 버려요. (아래 이름 인식으로 새지 않게)
+        # 제목이 `[4레벨]`처럼 대괄호에 싸여 있을 수도 있어서 벗겨보고 한 번 더 봅니다.
+        bracket = _NAME_HEADER_RE.match(line)
+        candidate = bracket.group(1).strip() if bracket else line
+        if _LEVEL_HEADER_RE.match(candidate) or _section_lookup_key(candidate) in known_sections:
             current_name = None
             continue
 

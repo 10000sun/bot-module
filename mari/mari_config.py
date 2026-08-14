@@ -310,6 +310,75 @@ BIRTHDAY_MENTION_ROLE_ID = _role("birthday_mention")  # 생일 알림 때 함께
 MARI_CALL_ROLE_ID = _role("bot_mention")             # 이 역할을 멘션하면 봇을 부른 것으로 취급
 
 
+# 🪜 [신규] 등급 사다리. 아이디 명단(cogs/core.py)을 이 순서대로 묶어서 게시해요.
+#
+# 원본 서버에는 '대장 / 4~0레벨'이라는 등급 제도가 있었고, 그 이름과 역할 ID가 코드에
+# 통째로 박혀 있었어요. 등급 제도는 서버마다 완전히 달라서(있는 곳도, 없는 곳도 있어요)
+# 설정으로 뺐습니다. **안 적으면 등급 구분 없이 한 덩어리로 게시해요.**
+# (원래 코드는 parked/core_levels.py.txt 에 보관돼 있고, 이 설계도 거기 적어둔 것입니다)
+#
+# 명단에 쓰는 ANSI 코드는 사람이 외우기 어려워서 색깔 이름으로 받습니다.
+_RANK_COLORS = {
+    "빨강": "2;41", "보라": "2;35", "파랑": "2;34",
+    "청록": "2;36", "노랑": "2;33", "초록": "2;32", "회색": "2;30",
+}
+# 색을 안 적었을 때 위에서부터 차례로 물려주는 기본 팔레트예요.
+_RANK_COLOR_CYCLE = ("2;41", "2;35", "2;34", "2;36", "2;33", "2;32")
+
+
+def _load_ranks() -> list:
+    """[{"key","label","role","color"}] 목록으로. 순서가 곧 명단에 찍히는 순서예요."""
+    raw_list = _GUILD.get("ranks")
+    if raw_list is None:
+        return []
+    if not isinstance(raw_list, list):
+        GUILD_CONFIG_WARNINGS.append("'ranks'는 목록([...])이어야 해요. 무시하고 등급 구분 없이 갑니다.")
+        return []
+
+    ranks = []
+    seen_keys = set()
+    for index, raw in enumerate(raw_list):
+        where = f"ranks[{index}]"
+        if not isinstance(raw, dict):
+            GUILD_CONFIG_WARNINGS.append(f"'{where}'는 객체({{...}})여야 해요. 건너뜁니다.")
+            continue
+
+        role_id = _as_id(raw.get("role"), f"{where}.role")
+        if not role_id:
+            # 역할이 없으면 누가 이 등급인지 판별할 방법이 없어요.
+            GUILD_CONFIG_WARNINGS.append(f"'{where}'에 role(역할 ID)이 없어요. 건너뜁니다.")
+            continue
+
+        # 키는 데이터에 남지 않고 코드 안에서만 쓰는 이름이라, 없으면 순번으로 만들어줘요.
+        key = str(raw.get("key") or f"rank{index}").strip()
+        if key in seen_keys:
+            GUILD_CONFIG_WARNINGS.append(f"'{where}'의 key '{key}'가 앞에서 이미 쓰였어요. 건너뜁니다.")
+            continue
+        seen_keys.add(key)
+
+        color = raw.get("color")
+        if color in _RANK_COLORS:
+            ansi = _RANK_COLORS[color]
+        else:
+            if color:
+                GUILD_CONFIG_WARNINGS.append(
+                    f"'{where}.color'로 '{color}'는 못 알아들어요. "
+                    f"쓸 수 있는 색: {', '.join(_RANK_COLORS)} — 기본색으로 둡니다."
+                )
+            ansi = _RANK_COLOR_CYCLE[len(ranks) % len(_RANK_COLOR_CYCLE)]
+
+        ranks.append({
+            "key": key,
+            "label": str(raw.get("label") or key),
+            "role": role_id,
+            "color": ansi,
+        })
+    return ranks
+
+
+RANKS = _load_ranks()
+
+
 # 🧩 [신규] 이 배포에 담을 기능 목록. 실제 정의는 modules.py에 있어요.
 # 안 적으면(None) 전부 켭니다. 설정을 손대지 않은 기존 배포가 그대로 돌아가야 하니까요.
 def _load_enabled_modules():

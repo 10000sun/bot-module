@@ -11,7 +11,7 @@ from discord.ext import commands
 
 # 📁 개별 파일 상수 9개를 기동 로그에 찍으려고 하나씩 가져왔었는데,
 # 이제 json_data_files()가 데이터 파일 전체를 자동으로 모아주므로 필요 없어졌어요.
-from mari_config import DATA_DIR, ID_PENDING_FILE, KST, json_data_files
+from mari_config import DATA_DIR, ID_PENDING_FILE, KST, RANKS, json_data_files
 from mari_storage import atomic_json_save_or_raise, safe_json_load
 from mari_settings import _get_role_ids, feature_gate, is_feature_enabled, load_settings, member_has_admin_or_role, save_settings, send_log_embed
 from mari_state import state
@@ -293,8 +293,9 @@ class MariCore(commands.Cog):
     # ========== 📋 [신규] 아이디 명단 자동 유지 ==========
     #
     # 🗑️ [정리] 예전엔 이 명단이 **0~4레벨 등급 사다리**를 중심으로 짜여 있었어요.
-    # 등급제는 원본 서버 고유 제도라 통째로 걷어냈습니다. (parked/core_levels.py.txt)
-    # 지금은 "대장 / 그 외 멤버" 두 칸이라 어느 서버에서나 바로 씁니다.
+    # 등급제는 원본 서버 고유 제도라 코드에서 걷어냈습니다. (parked/core_levels.py.txt)
+    # 🪜 [신규] 대신 guild.json의 `ranks`로 서버마다 등급을 정의할 수 있어요.
+    # 안 적으면 "대장 / 멤버" 두 칸이라 어느 서버에서나 바로 씁니다.
     #
     # ⚠️ settings.json 의 키 이름(channels.level_roster, level_roster_message_ids)은
     #    일부러 옛 이름 그대로 뒀어요. 이미 돌고 있는 봇의 설정 파일에 들어 있는 값이라
@@ -314,10 +315,38 @@ class MariCore(commands.Cog):
 
     # 📛 명단 블록의 제목과 색. ANSI 색은 디스코드 ```ansi 코드블록에서만 먹혀요.
     # (앞자리 2는 흐리게, 41은 배경 빨강이라 대장 칸만 반전돼 보입니다)
-    ROSTER_SECTIONS = (
-        ("chief", "대장", "2;41"),
-        ("member", "멤버", "2;34"),
-    )
+    CHIEF_SECTION = ("chief", "대장", "2;41")
+    LEFTOVER_COLOR = "2;34"
+
+    def _roster_sections(self) -> list:
+        """이번 명단에 쓸 칸 목록. `[(key, title, color)]` 이고 순서가 곧 게시 순서예요.
+
+        대장 → (등급이 있으면 등급 순서대로) → 나머지 전원, 이렇게 갑니다.
+
+        ⚠️ 마지막 칸은 등급 설정과 **무관하게 항상** 있어야 해요. 예전에 레벨 역할표가
+           창고로 간 뒤 아무 칸에도 안 걸린 사람이 명단에서 통째로 빠진 적이 있습니다.
+           등급을 적어둔 서버에서도 그 역할이 없는 사람은 얼마든지 생기니까요.
+           (등급 역할을 실수로 지웠을 때 명단이 텅 비는 것도 이 칸이 막아줍니다)
+
+        등급 키는 `rank:` 를 붙여서 씁니다. 안 붙이면 서버가 등급 key를 "chief"나
+        "member"로 지어놨을 때 대장·나머지 칸과 충돌해요.
+        """
+        sections = [self.CHIEF_SECTION]
+        sections += [(f"rank:{r['key']}", r["label"], r["color"]) for r in RANKS]
+        # 등급을 안 쓰는 서버에서 이 칸은 그냥 '멤버' 전체예요. 쓰는 서버에서만 '미분류'.
+        sections.append(("member", "미분류" if RANKS else "멤버", self.LEFTOVER_COLOR))
+        return sections
+
+    def _member_section_key(self, member: discord.Member, settings: dict) -> str:
+        """이 멤버가 들어갈 칸. (여러 등급 역할을 가졌으면 **먼저 적힌 등급**이 이겨요)"""
+        if self._is_chief(member, settings):
+            return "chief"
+        if RANKS:
+            member_role_ids = {r.id for r in member.roles}
+            for rank in RANKS:
+                if rank["role"] in member_role_ids:
+                    return f"rank:{rank['key']}"
+        return "member"
 
     async def _refresh_id_roster(self, guild: discord.Guild, force_repost: bool = False):
         """등록/수정/삭제가 일어날 때마다 호출되어, 아이디 명단 채널을 최신 상태로 다시 게시합니다.
@@ -335,14 +364,14 @@ class MariCore(commands.Cog):
                 gid = str(guild.id)
                 guild_ids_data = state.user_ids.get(gid, {})
 
-                # 🗑️ [정리] 예전엔 여기서 레벨 역할을 보고 0~4레벨 칸에 나눠 담았어요.
-                # 그런데 레벨 역할표가 창고로 간 뒤로는 아무 칸에도 안 걸리는 사람이 명단에서
-                # **통째로 빠져** 있었습니다. 이제 대장이 아니면 전부 '멤버' 칸에 들어가요.
-                buckets: dict = {"chief": [], "member": []}
+                # 🪜 칸은 guild.json의 ranks에 따라 달라지지만, **어느 구성에서든 봇이 아닌
+                # 멤버는 전원 어딘가에는 담깁니다.** (_roster_sections 의 마지막 칸 설명 참고)
+                sections = self._roster_sections()
+                buckets: dict = {key: [] for key, _title, _color in sections}
                 for member in guild.members:
                     if member.bot:
                         continue
-                    buckets["chief" if self._is_chief(member, settings) else "member"].append(member)
+                    buckets[self._member_section_key(member, settings)].append(member)
                 for key in buckets:
                     buckets[key].sort(key=lambda m: m.display_name.lower())
 
@@ -365,7 +394,7 @@ class MariCore(commands.Cog):
 
                 chunks = []
                 header = "게임 아이디 목록"
-                for key, title, color in self.ROSTER_SECTIONS:
+                for key, title, color in sections:
                     members = buckets[key]
                     if not members:
                         continue
@@ -624,7 +653,9 @@ class MariCore(commands.Cog):
         except Exception as e:
             return await interaction.followup.send(f"❌ 파일을 읽을 수 없어요: {e}", ephemeral=True)
 
-        parsed = parse_legacy_id_document(text)
+        # 🪜 문서에서 구획 제목으로 인정할 이름은 guild.json에 적어둔 등급 이름이에요.
+        # (등급을 안 쓰는 서버는 빈 목록이라 옛 형식의 제목만 걸러냅니다)
+        parsed = parse_legacy_id_document(text, [r["label"] for r in RANKS])
         if not parsed:
             return await interaction.followup.send("❌ 파일에서 아무 항목도 인식하지 못했어요. 형식을 확인해주세요.", ephemeral=True)
 
