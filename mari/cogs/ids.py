@@ -1,4 +1,4 @@
-"""MariCore — 게임 아이디 등록/수정/삭제/자동등록 및 아이디 명단 자동 게시."""
+"""MariIds — 게임 아이디 등록/수정/삭제/자동등록 및 아이디 명단 자동 게시."""
 
 import asyncio
 import os
@@ -186,7 +186,7 @@ class UnmatchedResolveView(MariView):
         embed = discord.Embed(title="📦 아이디 목록 일괄 가져오기 (연결 완료)", description=desc[:4000], color=discord.Color.orange())
         await interaction.response.edit_message(embed=embed, view=confirm_view)
 
-class MariCore(commands.Cog):
+class MariIds(commands.Cog):
     """아이디 검색, 로깅 등 봇의 핵심 유틸리티 기능"""
 
     id_group = app_commands.Group(name="아이디", description="게임 아이디 등록/조회/관리 명령어 모음")

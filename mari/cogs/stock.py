@@ -395,7 +395,7 @@ class MariStock(commands.Cog):
         return has_admin_or_role(interaction, "stock_admin")
 
     # 🗑️ [정리] 예전엔 여기 has_permission()이 있었는데, 주식 코그인데도 ids_admin(아이디 관리자)을
-    # 보고 있었어요. core.py에서 복붙된 흔적이고 호출하는 곳이 하나도 없는 죽은 코드였습니다.
+    # 보고 있었어요. cogs/ids.py에서 복붙된 흔적이고 호출하는 곳이 하나도 없는 죽은 코드였습니다.
     # 누가 무심코 갖다 쓰면 주식 명령어가 아이디 관리자에게 열리는 사고가 나므로 지웠어요.
 
     def _load_stocks(self) -> dict:

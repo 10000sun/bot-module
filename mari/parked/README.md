@@ -58,7 +58,7 @@
 | `setting_exile.py.txt` | 유배 · 복귀 | `cogs/setting.py`(`/역할부여`의 유배지 처리, 추방관·지옥간수·유배자 설정), `cogs/diagnostics.py`, `mari_config.py` |
 | `setting_onboarding.py.txt` | 타운가이드 · 입주 프리셋 | `cogs/setting.py`(가이드 선택지·프리셋 적용), `mari_config.py`(`ONBOARDING_PRESETS`), `cogs/help.py`, `guild.example.json` |
 | `gpt_persona.py.txt` | AI 페르소나 · 프로필 조회 도구 | `cogs/gpt.py`(아빠/엄마/disdain 분기, `check_my_profile`), `mari_config.py`, `guild.example.json` |
-| `core_levels.py.txt` | 0~4레벨 등급 사다리 | `cogs/core.py`(레벨별 명단 게시·레벨 판별), `mari_utils.py`(레벨별 문서 파서), `cogs/setting.py`(`/설정 레벨`) |
+| `core_levels.py.txt` | 0~4레벨 등급 사다리 | `cogs/ids.py`(레벨별 명단 게시·레벨 판별), `mari_utils.py`(레벨별 문서 파서), `cogs/setting.py`(`/설정 레벨`) |
 
 ### 데이터 파일도 같이 걷어냈어요
 

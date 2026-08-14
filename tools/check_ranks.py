@@ -69,10 +69,10 @@ class _Member:
 
 
 def _core_with(guild_data):
-    """주어진 설정으로 MariCore를 (생성자를 거치지 않고) 하나 만들어 돌려줍니다."""
+    """주어진 설정으로 MariIds를 (생성자를 거치지 않고) 하나 만들어 돌려줍니다."""
     load_config(guild_data)
-    from cogs.core import MariCore
-    return MariCore.__new__(MariCore)
+    from cogs.ids import MariIds
+    return MariIds.__new__(MariIds)
 
 
 CHIEF = 999

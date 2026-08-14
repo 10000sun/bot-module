@@ -29,7 +29,7 @@ class MariProfile(commands.Cog):
         self.PROFILE_FILE = PROFILE_FILE
 
         # 🖱️ [신규] 멤버 우클릭 → 앱 → 프로필 보기
-        # (컨텍스트 메뉴 등록/해제 규칙은 core.py·snooze.py와 같아요)
+        # (컨텍스트 메뉴 등록/해제 규칙은 ids.py·snooze.py와 같아요)
         self.profile_menu = app_commands.ContextMenu(name="프로필 보기", callback=self.show_profile_menu)
         self.bot.tree.add_command(self.profile_menu)
 

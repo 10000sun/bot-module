@@ -51,13 +51,13 @@ MODULE_SPECS = (
         note="관리자 역할/로그 채널 지정, 기능 킬 스위치, 역할부여. 이게 없으면 다른 모듈의 권한 설정을 못 해요.",
     ),
     ModuleSpec(
-        "id", "게임 아이디 등록부", "cogs.core", "MariCore",
+        "id", "게임 아이디 등록부", "cogs.ids", "MariIds",
         channels=("id_log", "id_submit", "level_roster"),
         roles=("ids_admin",),
         features=("id",),
         data_files=("IDS_FILE", "ID_PENDING_FILE"),
-        note="파일 이름이 cogs/core.py라 '핵심'처럼 보이지만 실제로는 게임 아이디 등록/조회 기능이에요. "
-             "(파일명 정리는 별도 작업으로 남겨뒀습니다)",
+        note="예전 파일 이름은 cogs/core.py였어요. '핵심'처럼 보이는데 실제 내용은 게임 아이디 "
+             "등록/조회라 헷갈려서 cogs/ids.py로 바꿨습니다. (클래스도 MariCore → MariIds)",
     ),
     ModuleSpec(
         "economy", "지갑·송금·출석", "cogs.economy", "MariEconomy",
