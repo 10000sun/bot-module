@@ -6,7 +6,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 
-from mari_config import ATTENDANCE_FILE, ECONOMY_FILE, KST, LEDGER_FILE, SHOP_FILE, STOCKS_FILE
+from mari_config import ATTENDANCE_FILE, ECONOMY_FILE, KST, LEDGER_FILE, SHOP_FILE, STOCKS_FILE, module_active
 from mari_alerts import report_loop_error
 from mari_storage import atomic_json_save, atomic_json_save_or_raise, safe_json_load
 from mari_settings import feature_gate, has_admin_or_role, load_settings, send_log_embed
@@ -490,8 +490,11 @@ class MariEconomy(commands.Cog):
             kind_count[e.get("kind", "기타")] = kind_count.get(e.get("kind", "기타"), 0) + 1
         active_users = len({e["user"] for e in recent})
 
-        # 📈 주식
-        stock_data = safe_json_load(STOCKS_FILE, {})
+        # 📈 주식 — 담긴 배포에서만 셉니다.
+        # (주식을 안 담으면 STOCKS_FILE은 아예 만들어지지 않아요. 그대로 읽어도 0이 나오긴
+        #  하지만, 그 0을 임베드에 실으면 주문하지 않은 기능이 "상장 0종목"으로 광고됩니다)
+        stock_on = module_active("stock")
+        stock_data = safe_json_load(STOCKS_FILE, {}) if stock_on else {}
         stocks_dict = stock_data.get("stocks", {})
         user_shares = stock_data.get("user_shares", {})
         investors = sum(1 for uid, s in user_shares.items() if uid in human_ids and s)
@@ -530,17 +533,20 @@ class MariEconomy(commands.Cog):
         else:
             embed.add_field(name="🧾 최근 7일 거래",
                             value="아직 기록이 없어요. (원장 기능이 켜진 뒤부터 쌓여요)", inline=False)
-        embed.add_field(
-            name="📈 주식",
-            value=(f"상장 **{len(stocks_dict)}종목** · 투자자 **{investors}명**\n"
-                   f"주식 평가총액 **{stock_value:,}** {currency()}"),
-            inline=False,
-        )
+        if stock_on:
+            embed.add_field(
+                name="📈 주식",
+                value=(f"상장 **{len(stocks_dict)}종목** · 투자자 **{investors}명**\n"
+                       f"주식 평가총액 **{stock_value:,}** {currency()}"),
+                inline=False,
+            )
 
         # 💬 채팅량 (내용·작성자는 저장하지 않고 개수만 셉니다)
-        embed.add_field(name="💬 채팅량", value=self._build_chat_stats_text(), inline=False)
+        # AI 대화를 안 담으면 세는 주체가 없어서 영영 "집계된 채팅이 없어요"만 나와요.
+        if module_active("gpt"):
+            embed.add_field(name="💬 채팅량", value=self._build_chat_stats_text(), inline=False)
 
-        embed.set_footer(text=f"{currency()} 유통량·주식은 현재 서버에 남아있는 멤버 기준이에요")
+        embed.set_footer(text=f"{currency()}{' 유통량·주식은' if stock_on else ' 유통량은'} 현재 서버에 남아있는 멤버 기준이에요")
         await interaction.followup.send(embed=embed)
 
     def _build_chat_stats_text(self) -> str:
@@ -669,16 +675,20 @@ class MariEconomy(commands.Cog):
         )
         
         # 3. 인벤토리 목록 필드 (이모지와 가독성 도트 배치)
-        if owned_items:
-            inv_value = "\n".join(owned_items)
-        else:
-            inv_value = "*└ 아직 상점에서 구매한 물품이 백팩에 없어요.*"
+        # 🧩 상점을 안 담은 배포에서는 칸 자체를 빼요. 살 곳이 없으니 영영 빈 칸인데,
+        #    "아직 상점에서 구매한 물품이 없어요"라고 적혀 있으면 유저가 없는 상점을
+        #    찾아다닙니다.
+        if module_active("shop"):
+            if owned_items:
+                inv_value = "\n".join(owned_items)
+            else:
+                inv_value = "*└ 아직 상점에서 구매한 물품이 백팩에 없어요.*"
 
-        embed.add_field(
-            name="🎒 소지품 가방 (인벤토리)",
-            value=inv_value,
-            inline=False
-        )
+            embed.add_field(
+                name="🎒 소지품 가방 (인벤토리)",
+                value=inv_value,
+                inline=False
+            )
 
         # 4. 하단 요청자 푸터 정보 각인
         embed.set_footer(
@@ -763,10 +773,20 @@ class MariEconomy(commands.Cog):
 
         total = sum(bal for _, bal, _ in rows)
         total_stock = sum(stock for _, _, stock in rows)
-        lines = [
-            f"{i:>2}. {name}  |  지갑 {bal:,}  |  주식 {stock:,}  |  합계 {bal + stock:,}"
-            for i, (name, bal, stock) in enumerate(rows, start=1)
-        ]
+        # 🧩 주식을 안 담은 배포에서는 주식 칸을 통째로 뺍니다. 0으로라도 보여주면
+        #    주문하지 않은 기능이 광고되고, 아래 '불러올 수 없어요' 안내까지 붙어서
+        #    멀쩡한 봇이 고장 난 것처럼 보여요.
+        stock_on = module_active("stock")
+        if stock_on:
+            lines = [
+                f"{i:>2}. {name}  |  지갑 {bal:,}  |  주식 {stock:,}  |  합계 {bal + stock:,}"
+                for i, (name, bal, stock) in enumerate(rows, start=1)
+            ]
+        else:
+            lines = [
+                f"{i:>2}. {name}  |  지갑 {bal:,}"
+                for i, (name, bal, _) in enumerate(rows, start=1)
+            ]
 
         # 임베드 설명 길이 제한(4096자) 방어를 위해 표를 여러 청크로 분할 전송
         chunks = chunk_lines(lines)
@@ -784,9 +804,13 @@ class MariEconomy(commands.Cog):
             if idx == len(chunks) - 1:
                 embed.add_field(name="총 인원", value=f"{len(rows)}명", inline=True)
                 embed.add_field(name="💰 지갑 합계", value=f"{total:,} {currency()}", inline=True)
-                embed.add_field(name="📈 주식 평가액 합계", value=f"{total_stock:,} {currency()}", inline=True)
+                if stock_on:
+                    embed.add_field(name="📈 주식 평가액 합계", value=f"{total_stock:,} {currency()}", inline=True)
                 embed.add_field(name=total_label, value=f"**{total + total_stock:,} {currency()}**", inline=False)
-                if not stock_cog:
+                # 🚨 이 안내는 "주식을 담았는데 코그가 안 올라온" 진짜 사고일 때만 띄웁니다.
+                #    담지 않은 배포에서도 띄우던 시절엔, 주식을 주문한 적 없는 서버의
+                #    관리자가 봇이 고장 났다고 문의했어요.
+                if stock_on and not stock_cog:
                     embed.add_field(name="⚠️ 참고", value="주식 시스템을 불러올 수 없어서 주식 평가액이 0으로 표시됐어요.", inline=False)
             embed.set_footer(text=f"조회자: {interaction.user.display_name}")
             await interaction.followup.send(embed=embed, ephemeral=True)

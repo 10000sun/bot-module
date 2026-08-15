@@ -75,7 +75,11 @@ async def main():
         print(f"   {BASE_DIR} 안에 .env 파일을 만들고 아래 한 줄을 넣어주세요:")
         print("   DISCORD_TOKEN=여기에_봇_토큰")
         print("   (.env.example 파일을 복사해서 이름만 .env로 바꾸면 편해요)")
-        return
+        # ⚙️ 위 GUILD_CONFIG_FATAL과 같은 이유로 0이 아닌 코드로 끝냅니다.
+        #    그냥 return하면 systemd·도커가 "할 일을 마치고 정상 종료했다"로 읽어서
+        #    재시작도, 실패 표시도 안 해요. 토큰을 안 넣은 채 서비스로 올린 첫 배포에서
+        #    "켰는데 아무 일도 안 일어난다"가 되는 게 이 경로입니다.
+        sys.exit(1)
 
     # 🗃️ 아이디 DB를 메모리로 읽어옵니다.
     # 예전엔 mari_state를 import하는 순간 자동으로 읽혔어요. 그런데 ids.json이 손상되면
@@ -89,7 +93,9 @@ async def main():
             f"🔴 {bot_name()}봇 기동 실패",
             f"`ids.json`을 읽지 못해서 봇을 시작할 수 없어요.\n\n**{type(e).__name__}**: {e}",
         )
-        return
+        # ⚙️ 여기도 마찬가지예요. 알림 웹훅은 나가지만 프로세스가 0으로 끝나면
+        #    자동 재시작이 안 걸려서, 파일을 고쳐도 사람이 직접 켜줘야 합니다.
+        sys.exit(1)
 
     try:
         await bot.start(DISCORD_TOKEN)

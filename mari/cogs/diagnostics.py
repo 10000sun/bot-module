@@ -246,18 +246,22 @@ class MariTest(commands.Cog):
         report = []
 
         # ① 아이디 중복 검사 (실제로 정리는 안 하고 개수만)
-        gid = str(interaction.guild.id)
-        guild_ids = state.user_ids.get(gid, {})
-        dup_count = 0
-        for uid, platforms in guild_ids.items():
-            seen = set()
-            for key, val in platforms.items():
-                norm_val = val.strip() if isinstance(val, str) else val
-                if norm_val in seen:
-                    dup_count += 1
-                else:
-                    seen.add(norm_val)
-        report.append(f"{'✅' if dup_count == 0 else '⚠️'} 아이디 중복: {dup_count}건 (`/아이디 중복정리`로 정리 가능)")
+        # 🧩 아이디를 안 담은 배포에서는 건너뜁니다. 예전엔 무조건 돌아서 "아이디 중복:
+        #    0건"을 보고했는데, 안내하는 `/아이디 중복정리`가 그 서버엔 없는 명령이었어요.
+        #    (아래 ②가 상점 코그를 get_cog로 확인하는 것과 같은 이유입니다)
+        if module_active("id"):
+            gid = str(interaction.guild.id)
+            guild_ids = state.user_ids.get(gid, {})
+            dup_count = 0
+            for uid, platforms in guild_ids.items():
+                seen = set()
+                for key, val in platforms.items():
+                    norm_val = val.strip() if isinstance(val, str) else val
+                    if norm_val in seen:
+                        dup_count += 1
+                    else:
+                        seen.add(norm_val)
+            report.append(f"{'✅' if dup_count == 0 else '⚠️'} 아이디 중복: {dup_count}건 (`/아이디 중복정리`로 정리 가능)")
 
         # ② 상점 아이템 되팔기퍼센트 누락 검사
         shop_cog = self.bot.get_cog("MariShop")

@@ -537,6 +537,16 @@ class MariSetting(commands.Cog):
             "test_admin": "🧪 테스트 관리자",
         }
 
+        # 🧩 담지 않은 기능의 칸은 아예 빼요. 안 그러면 상점만 주문한 서버의 관리자가
+        #    "📈 주식 전광판: ❌ 미설정"을 열 줄씩 보게 됩니다. 주문하지 않은 기능을
+        #    광고하는 데다, 세팅이 덜 끝난 것처럼 보여서 문의가 들어와요.
+        #    (설정 **명령** 자체는 이미 _prune_module_commands가 걷어냅니다. 여기는
+        #     그 결과를 보여주는 창이라 같은 기준으로 걸러야 짝이 맞아요)
+        channel_labels = {k: v for k, v in channel_labels.items()
+                          if is_active("channels", k, ENABLED_MODULE_KEYS)}
+        role_labels = {k: v for k, v in role_labels.items()
+                       if is_active("roles", k, ENABLED_MODULE_KEYS)}
+
         embed = discord.Embed(
             title=f"⚙️ {bot_name()}봇 채널/역할 지정 내역",
             color=0x5CE6B4,
@@ -552,7 +562,9 @@ class MariSetting(commands.Cog):
             else:
                 value = "❌ 미설정"
             ch_lines.append(f"{label}: {value}")
-        embed.add_field(name="📁 채널 설정", value="\n".join(ch_lines), inline=False)
+        # ⚠️ 임베드 필드는 value가 비면 디스코드가 거부해요(400). 지금 구성으로는 코어가
+        #    항상 한 칸씩 데려오지만, 나중에 코어가 줄면 조용히 터지므로 막아둡니다.
+        embed.add_field(name="📁 채널 설정", value="\n".join(ch_lines) or "지정할 채널이 없어요.", inline=False)
 
         role_lines = []
         for key, label in role_labels.items():
@@ -576,7 +588,7 @@ class MariSetting(commands.Cog):
                 else:
                     value = "❌ 미설정"
             role_lines.append(f"{label}: {value}")
-        embed.add_field(name="🛡️ 관리자 역할 설정", value="\n".join(role_lines), inline=False)
+        embed.add_field(name="🛡️ 관리자 역할 설정", value="\n".join(role_lines) or "지정할 역할이 없어요.", inline=False)
 
         embed.set_footer(text="지정/변경은 /설정 채널, /설정 관리자 명령어로 가능합니다.")
         await interaction.response.send_message(embed=embed, ephemeral=True)
@@ -598,7 +610,10 @@ class MariSetting(commands.Cog):
             )
         await interaction.response.send_modal(InitialSetupModal())
 
-    @app_commands.command(name="감사로그", description="[관리자] 경제/상점/아이디/역할/주식/생일 로그 채널을 한 번에 모아 최신순으로 보여줍니다.")
+    # 📌 설명문에 기능을 나열하지 않아요. 명령 설명은 데코레이터라 import 시점에 굳어서
+    #    모듈 구성을 볼 수가 없고("담긴 기능만" 같은 걸 못 씀), 나열해두면 상점만 주문한
+    #    서버의 명령 목록에도 "주식/생일 로그"가 그대로 뜹니다. (NEXT.md의 '나열을 넣지 말 것')
+    @app_commands.command(name="감사로그", description="[관리자] 담긴 기능의 로그 채널을 한 번에 모아 최신순으로 보여줍니다.")
     @app_commands.describe(개수="가져올 최대 항목 수 (기본 20, 최대 50)")
     @app_commands.guild_only()
     async def audit_log(self, interaction: discord.Interaction, 개수: int = 20):
@@ -613,6 +628,11 @@ class MariSetting(commands.Cog):
             "economy_log": "💰 경제", "shop_log": "🛒 상점", "id_log": "🆔 아이디",
             "role_log": "👥 역할", "stock_log": "📈 주식", "birthday_log": "🎉 생일",
         }
+        # 🧩 담지 않은 기능의 로그 채널은 보지 않아요. 지금은 채널이 지정돼 있지 않아
+        # 어차피 건너뛰지만, 옛 settings.json을 그대로 들고 온 서버에는 창고로 보낸
+        # 기능의 채널 ID가 남아 있어서 그 로그가 딸려 나옵니다.
+        log_keys = {k: v for k, v in log_keys.items()
+                    if is_active("channels", k, ENABLED_MODULE_KEYS)}
         settings = load_settings()
         channels = settings.get("channels", {})
 

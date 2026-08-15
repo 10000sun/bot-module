@@ -23,6 +23,12 @@
 ⚠️ 반대 방향(실제로 있는데 도움말에 없는 명령)도 검사하지 않아요. 연대기처럼 **일부러**
    안 싣는 명령이 있어서, 그건 사람이 판단할 일입니다.
 
+🏷️ **낱말 검사도 같이 합니다.** 명령 이름이 아니라 *설명 문구*에 안 담은 기능이 섞이는
+   사고가 따로 있어요. 카테고리 제목이 "지갑 및 상점"으로 남거나, `/감사로그` 설명이
+   "경제·상점·아이디·역할·주식·생일"이라고 나열하는 식입니다. 명령은 전부 제대로
+   걸러졌는데 글자만 남는 거라 위의 명령 대조로는 절대 안 걸려요. (NEXT.md에 "검사
+   도구는 명령만 대조해서 이 종류를 못 잡는다"고 적어뒀던 구멍입니다)
+
 📌 백틱은 "지금 칠 수 있는 명령"이라는 뜻으로 씁니다. 없어진 명령을 설명에 언급할 때는
    백틱을 씌우지 마세요 — 여기서 안내 중인 명령으로 잡히기도 하지만, 그보다 유저가
    실제로 쳐볼 수 있는 명령으로 오해합니다. (`/랭킹`을 그렇게 적어둬서 실제로 걸렸어요)
@@ -51,6 +57,32 @@ COMBOS = [
     (["wiki", "snooze"], "wiki + snooze"),
     (["diagnostics"], "코어 모듈만"),
 ]
+
+
+# 🏷️ "이 낱말이 보이면 그 모듈이 담겼어야 한다"는 표.
+#
+# 명령 **이름**이 아니라 설명 문구를 봅니다. 담지 않은 기능의 이름이 안내문에 남는 사고를
+# 잡으려는 거예요. 실제로 이렇게 셋 다 걸렸습니다 —
+#   • 카테고리 제목 "지갑 및 **상점**" (상점을 안 담은 서버)
+#   • `/감사로그` 설명의 "경제·**상점·아이디·역할·주식·생일**" 나열
+#   • `/통계` 설명의 "**주식** 현황 요약"
+#
+# ⚠️ 낱말을 고를 때 주의할 점:
+#   • 기능 이름으로만 쓰이는 낱말이어야 해요. "이벤트"는 `/초기설정`이 받는 이름 네 가지
+#     중 하나라서 미니게임을 안 담아도 정당하게 나옵니다. 그래서 "하이로우"를 씁니다.
+#   • 이름(재화·봇·이벤트·서버)은 여기 넣지 마세요. 그건 모듈 소유가 아니라 런타임 설정이에요.
+LEAK_WORDS = {
+    "id": ("아이디",),
+    "economy": ("지갑", "송금", "출석"),
+    "stock": ("주식", "종목", "포폴"),
+    "shop": ("상점", "소지품", "인벤토리", "되팔기"),
+    "birthday": ("생일",),
+    "wiki": ("위키",),
+    "games": ("하이로우", "미니게임", "선착순"),
+    "gpt": ("Gemini", "페르소나"),
+    "snooze": ("스누즈", "나중에 답장"),
+    "chronicle": ("연대기",),
+}
 
 
 def _use_config(mods):
@@ -114,6 +146,51 @@ def _mentioned_command_paths(help_cog) -> set:
     return mentioned
 
 
+def _visible_texts(bot, help_cog):
+    """유저·관리자가 실제로 **읽게 되는 글자**를 (어디, 무슨 글자) 꼴로 모읍니다.
+
+    두 군데를 봐요 —
+      ① 도움말 카테고리의 **제목과 본문** (제목이 특히 잘 빠집니다. 줄은 모듈 태그로
+         걸러지는데 제목은 고정 문자열로 남거든요)
+      ② 실제로 등록되는 슬래시 명령의 **설명문**. 이건 디스코드 명령 목록에 그대로
+         떠서, 도움말을 한 번도 안 여는 사람에게도 보입니다.
+    """
+    from discord import app_commands
+
+    texts = []
+    for who, cats in (("유저 도움말", help_cog._user_categories()),
+                      ("관리자 도움말", help_cog._admin_categories())):
+        for title, (_emoji, content) in cats.items():
+            texts.append((f"{who} 카테고리 제목", title))
+            texts.append((f"{who} [{title}]", content))
+
+    def walk(cmd, prefix=""):
+        name = f"{prefix}{cmd.name}"
+        if getattr(cmd, "description", None):
+            texts.append((f"/{name} 설명", cmd.description))
+        if isinstance(cmd, app_commands.Group):
+            for sub in cmd.commands:
+                walk(sub, name + " ")
+
+    for cmd in bot.tree.get_commands():
+        walk(cmd)
+    return texts
+
+
+def _feature_leaks(bot, help_cog) -> list:
+    """안 담은 기능의 이름이 보이는 글자에 섞여 있는지 찾습니다."""
+    active = set(bot.loaded_modules)
+    leaks = []
+    for where, text in _visible_texts(bot, help_cog):
+        for key, words in LEAK_WORDS.items():
+            if key in active:
+                continue
+            for word in words:
+                if word in text:
+                    leaks.append((where, key, word, text))
+    return leaks
+
+
 async def check_one(mods, label) -> int:
     """조합 하나를 검사하고 없는 명령 개수를 돌려줍니다."""
     _use_config(mods)
@@ -144,6 +221,7 @@ async def check_one(mods, label) -> int:
 
     admin = help_cog._admin_categories()
     user = help_cog._user_categories()
+    leaks = _feature_leaks(bot, help_cog)
 
     print(f"\n{'=' * 60}\n{label}\n{'=' * 60}")
     print(f"  올라간 모듈      : {len(bot.loaded_modules)}개")
@@ -158,8 +236,19 @@ async def check_one(mods, label) -> int:
     else:
         print("  ✅ 도움말의 모든 명령이 실제로 등록됩니다.")
 
+    if leaks:
+        print(f"\n  🚨 안 담은 기능의 이름이 보이는 글자에 남아 있어요 {len(leaks)}건:")
+        for where, key, word, text in leaks:
+            snippet = text if len(text) <= 90 else text[:90] + "…"
+            print(f"     [{key}] '{word}' — {where}")
+            print(f"        {snippet}")
+        print("\n  문구에서 그 기능을 빼거나, 모듈 구성을 보고 고르게 하세요.")
+        print("  (cogs/help.py의 카테고리 제목이 module_active()로 갈라지는 걸 참고)")
+    else:
+        print("  ✅ 안 담은 기능을 언급하는 문구가 없습니다.")
+
     await bot.close()
-    return len(missing)
+    return len(missing) + len(leaks)
 
 
 async def main(argv):
@@ -170,9 +259,9 @@ async def main(argv):
 
     print(f"\n{'=' * 60}")
     if total:
-        print(f"🚨 조합 {len(combos)}개 중 없는 명령 안내 총 {total}건")
+        print(f"🚨 조합 {len(combos)}개에서 총 {total}건 — 위 조합별 내역을 보세요")
     else:
-        print(f"✅ 조합 {len(combos)}개 전부 통과 — 어느 구성에서도 유령 명령 없음")
+        print(f"✅ 조합 {len(combos)}개 전부 통과 — 유령 명령도, 안 담은 기능 언급도 없음")
     print("=" * 60)
     return 1 if total else 0
 

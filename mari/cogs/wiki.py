@@ -1,4 +1,4 @@
-"""MariWiki — 멤버 위키(소개/생일/MBTI 등) 등록·조회."""
+"""MariWiki — 멤버 위키(소개/취미/MBTI 등) 등록·조회."""
 
 import discord
 from discord import app_commands
@@ -28,7 +28,10 @@ def _fit_field(value: str) -> str:
 class MariWiki(commands.Cog):
     """서버 위키 시스템"""
 
-    wiki_group = app_commands.Group(name="위키", description="멤버 위키(소개/생일/MBTI 등) 관련 명령어 모음")
+    # 📌 예시 항목에 '생일'을 쓰지 않아요. 위키 항목은 자유 입력이라 생일을 적어도 되지만,
+    #    생일 모듈을 안 담은 서버의 명령 목록에 '생일'이라는 글자가 뜨면 그 기능이 있는
+    #    줄 알고 찾습니다. (tools/check_help.py의 낱말 검사에 실제로 걸렸어요)
+    wiki_group = app_commands.Group(name="위키", description="멤버 위키(소개/취미/MBTI 등) 관련 명령어 모음")
 
     @wiki_group.command(name="등록", description="[관리자] 새로운 위키 항목을 등록해요")
     @app_commands.describe(member="등록할 멤버", 소개="한 줄 소개", 생일="예: 2000.01.01", 서식지="사는 곳", mbti="MBTI (예: INFP)", 논란="논란 및 사건 사고 (줄바꿈 가능)", tmi="TMI (줄바꿈 가능)")
