@@ -2,6 +2,10 @@
 __pycache__/
 *.py[cod]
 
+# 가상환경 (README·NEXT.md의 안내대로 만들면 여기 생겨요)
+.venv/
+venv/
+
 # 데이터 파일 저장 중 생기는 임시/손상 백업 파일
 # (atomic_json_save의 .tmp, safe_json_load가 남기는 .corrupt_* )
 *.tmp
