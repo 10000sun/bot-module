@@ -3,6 +3,7 @@
 보는 것 —
   · 등급 사다리(`ranks`) 파싱과 아이디 명단 칸 나누기 (가짜 멤버로)
   · 예전 키 이름을 그대로 둔 설정 파일도 동작하는지
+  · 설정이 깨졌을 때 기동을 막는지, 그리고 BOM 붙은 UTF-8은 **안 막는지**
 
 두 번째가 특히 중요해요. `guild.json`은 `.gitignore` 대상이라 **깃이 안 건드립니다.**
 실제로 봇이 돌고 있는 PC에서 `git pull`만 하면 코드는 새것, 설정은 옛것이 돼요.
@@ -283,6 +284,31 @@ def test_fatal():
     ok = load_config({"modules": ["shop"], "roles": {}})
     check("표시 없음", ok.GUILD_CONFIG_FATAL, None)
     check("주문한 모듈만", ok.ENABLED_MODULES, ["shop"])
+
+    print("\n[15] 🇰🇷 BOM 붙은 UTF-8로 저장해도 읽혀야 함")
+    # 메모장과 PowerShell 5.1의 `Set-Content -Encoding UTF8`이 파일 맨 앞에 BOM을 붙여요.
+    # "utf-8"로 읽으면 JSONDecodeError로 기동이 막히는데, 안내문은 "문법이 깨졌다"고 하고
+    # jsonlint에 넣으면 통과합니다. 클라이언트가 원인을 절대 못 찾는 자리라 여기서 지켜요.
+    path = os.path.join(tempfile.mkdtemp(), "guild.json")
+    with open(path, "w", encoding="utf-8-sig") as f:
+        f.write('{"modules": ["shop"], "roles": {}}')
+    os.environ["MARI_GUILD_CONFIG"] = path
+    os.environ["MARI_DATA_DIR"] = tempfile.mkdtemp()
+    for name in [m for m in sys.modules if m.startswith(("mari", "cogs")) or m == "modules"]:
+        del sys.modules[name]
+    import mari_config as bom
+    check("기동을 안 막음", bom.GUILD_CONFIG_FATAL, None)
+    check("주문한 모듈만", bom.ENABLED_MODULES, ["shop"])
+
+    print("\n[16] 🇰🇷 BOM 붙은 .env도 읽혀야 함")
+    # 여기 걸리면 첫 줄 키가 '\ufeffDISCORD_TOKEN'이 돼서 "토큰 없음"으로 안 켜집니다.
+    env_path = os.path.join(tempfile.mkdtemp(), ".env")
+    with open(env_path, "w", encoding="utf-8-sig") as f:
+        f.write("MARI_BOM_TEST=ok\n")
+    os.environ.pop("MARI_BOM_TEST", None)
+    bom.load_env_file(env_path)
+    check("첫 줄 키가 안 깨짐", os.environ.get("MARI_BOM_TEST"), "ok")
+    os.environ.pop("MARI_BOM_TEST", None)
 
 
 if __name__ == "__main__":

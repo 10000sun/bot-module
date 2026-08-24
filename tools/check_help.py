@@ -55,6 +55,10 @@ COMBOS = [
     (["stock"], "stock 만 (economy 자동 포함)"),
     (["gpt"], "gpt 만"),
     (["wiki", "snooze"], "wiki + snooze"),
+    (["selfrole"], "selfrole 만"),
+    (["welcome"], "welcome 만"),
+    (["levels"], "levels 만 (지갑 없이)"),
+    (["party"], "party 만 (아이디 없이)"),
     (["diagnostics"], "코어 모듈만"),
 ]
 
@@ -82,6 +86,10 @@ LEAK_WORDS = {
     "gpt": ("Gemini", "페르소나"),
     "snooze": ("스누즈", "나중에 답장"),
     "chronicle": ("연대기",),
+    "selfrole": ("셀프 역할", "셀프역할"),
+    "welcome": ("입장 자동", "자동 역할", "환영 인사", "규칙 동의"),
+    "levels": ("레벨", "경험치"),
+    "party": ("파티", "모집글", "레이드"),
 }
 
 

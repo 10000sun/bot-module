@@ -70,7 +70,8 @@ def _prepare_config(argv):
             #    이 도구를 돌리라고 안내하니(README 7번), 이유를 그대로 알려줘야 해요.
             #    봇도 이 경우 기동을 막습니다. (mari_config.GUILD_CONFIG_FATAL)
             try:
-                with open(real, "r", encoding="utf-8") as f:
+                # utf-8-sig — 봇과 같은 방식으로 읽어야 해요. (mari_config.load_guild_config)
+                with open(real, "r", encoding="utf-8-sig") as f:
                     data = json.load(f)
             except Exception as e:
                 print(f"\n🚨 {real} 을 읽을 수 없어요.\n   {type(e).__name__}: {e}\n")
