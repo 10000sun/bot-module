@@ -235,7 +235,7 @@ class MariBotClient(commands.Bot):
             print(f"🚨 실패한 모듈 {len(self.failed_modules)}개: "
                   f"{', '.join(key for key, _ in self.failed_modules)}")
 
-        # 🏷️ 갓 납품한 서버는 이름이 아직 일반 명사 기본값("재화"·"봇"…)이에요.
+        # 🏷️ 갓 납품한 서버는 이름이 아직 기본값("재화"·"김춘식"…)이에요.
         # 봇은 그대로 잘 돌지만 문구가 밋밋하니, 기동할 때마다 한 번씩 알려줍니다.
         # (막지는 않아요. 이름을 안 바꾸고 쓰겠다는 선택도 있을 수 있으니까요)
         if not is_configured():
