@@ -93,12 +93,18 @@ MODULE_SPECS = (
     ),
     ModuleSpec(
         "shop", "상점·인벤토리·선물", "cogs.shop", "MariShop", requires=("economy",),
-        channels=("shop_log",),
+        channels=("shop_log", "shop_board"),
         roles=("shop_admin",),
         features=("shop",),
         data_files=("SHOP_FILE", "SHOP_TRANSACTIONS_FILE"),
     ),
     ModuleSpec("help", "도움말", "cogs.help", "MariHelp", core=True),
+    ModuleSpec(
+        "wizard", "설치 마법사", "cogs.wizard", "MariWizard", core=True,
+        note="담긴 기능이 요구하는 채널·역할을 만들어 곧바로 지정해요. 무엇이 필요한지는 이 파일의 "
+             "소유 표가 이미 알고 있고, 이름표는 설정 모듈 것을 런타임에 빌려 씁니다. "
+             "어떤 구성으로 납품하든 세팅은 해야 하므로 항상 포함합니다.",
+    ),
     ModuleSpec(
         "birthday", "생일 등록·축하", "cogs.birthday", "MariBirthday",
         channels=("birthday_announce", "birthday_log"),
@@ -124,12 +130,120 @@ MODULE_SPECS = (
         features=("snooze",),
         data_files=("SNOOZE_FILE",),
     ),
+    ModuleSpec(
+        "party", "파티 모집", "cogs.party", "MariParty",
+        roles=("party_admin",),
+        features=("party",),
+        data_files=("PARTY_FILE",),
+        note="아이디 등록부(id)를 함께 담으면 참가자 목록에 게임 아이디가 붙어요. 코그를 부르지 않고 "
+             "module_active('id')로만 판단합니다. 모집글은 명령을 친 채널에 올라가서 전용 채널이 없어요.",
+    ),
+    ModuleSpec(
+        "levels", "활동 레벨", "cogs.levels", "MariLevels",
+        channels=("level_announce",),
+        roles=("level_admin",),
+        features=("level",),
+        data_files=("LEVELS_FILE",),
+        note="지갑(economy)을 일부러 requires에 안 걸었어요. 걸면 '레벨만 주세요' 주문에 지갑이 "
+             "통째로 딸려갑니다. 지갑이 함께 담겼을 때만 레벨업 재화 보상이 켜져요.",
+    ),
+    ModuleSpec(
+        "welcome", "입장 자동화", "cogs.welcome", "MariWelcome",
+        channels=("welcome", "member_log"),
+        roles=("welcome_admin",),
+        features=("welcome",),
+        data_files=("WELCOME_FILE",),
+        note="SERVER MEMBERS INTENT가 있어야 입장 자체가 봇에게 들어와요. (없으면 봇이 기동조차 못 하니 "
+             "실제로는 늘 켜져 있습니다) 역할 안전 검사는 셀프 역할과 함께 mari_utils에 있어요.",
+    ),
+    ModuleSpec(
+        "selfrole", "셀프 역할", "cogs.selfrole", "MariSelfRole",
+        roles=("selfrole_admin",),
+        features=("selfrole",),
+        data_files=("SELFROLE_FILE",),
+        note="역할 부여 로그(role_log)는 설정 모듈 소유라 여기 안 적어요. 셀프 역할도 그 채널에 남깁니다.",
+    ),
 )
 
 MODULES = {spec.key: spec for spec in MODULE_SPECS}
 
 CORE_KEYS = tuple(spec.key for spec in MODULE_SPECS if spec.core)
 OPTIONAL_KEYS = tuple(spec.key for spec in MODULE_SPECS if not spec.core)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 💰 판매 라인 (에센셜 → 스탠다드 → 프리미엄)
+#
+# 견적용 기본 조합이에요. 납품마다 modules를 손으로 적으면 조합이 조금씩 어긋나서,
+# 나중에 "이 서버는 어느 라인으로 판 건가"를 아무도 모르게 됩니다. 여기 한 곳에
+# 박아두고 guild.example.json과 tools/check_tiers.py가 이 값을 그대로 씁니다.
+#
+# 📐 위 라인은 아래 라인을 통째로 포함합니다. 그래서 adds에는 **더해지는 것만** 적어요.
+#    "스탠다드엔 있는데 프리미엄엔 없는 기능"이 실수로 생기지 않게 하려고요.
+#
+# ⚠️ 라인은 코드가 강제하는 제한이 아닙니다. 여기 없는 조합으로도 얼마든지 납품할 수
+#    있어요. 무엇을 켤지는 언제나 guild.json의 modules가 최종 결정합니다.
+#
+# 🧩 라인 안에서 의존 관계가 이미 충족돼야 해요. 예를 들어 shop만 넣고 economy를 빼면
+#    resolve_modules가 economy를 자동으로 끌어와서, 주문서에 없던 /지갑이 딸려갑니다.
+#    (tools/check_tiers.py가 이걸 검사합니다)
+@dataclass(frozen=True)
+class TierSpec:
+    """판매 라인 하나. key는 견적서·프리셋에 쓰는 이름이에요."""
+
+    key: str
+    label: str          # 사람에게 보여줄 이름
+    adds: tuple         # 바로 아래 라인에 **더해지는** 선택 모듈
+    pitch: str = ""     # 한 줄 컨셉 (견적서용)
+    note: str = ""      # 왜 이 라인에 넣었는지
+
+
+TIER_SPECS = (
+    TierSpec(
+        "essential", "에센셜", ("id", "birthday", "wiki", "snooze", "selfrole", "welcome"),
+        pitch="서버 관리 기본",
+        note="돈을 만지지 않는 라인이에요. 사고가 나도 재화가 걸리지 않습니다. 앵커는 아이디 등록부 — "
+             "공개 봇으로 대체가 안 되는 유일한 기능이라 이게 빠지면 엔트리가 성립하지 않아요. "
+             "셀프 역할·입장 자동화는 게임 서버든 아니든 전부 쓰는 기능이라 여기 넣었습니다.",
+    ),
+    TierSpec(
+        "standard", "스탠다드", ("economy", "shop", "games", "levels"),
+        pitch="＋ 활동과 보상",
+        note="economy와 shop은 반드시 같이 갑니다. 지갑만 주면 재화가 쌓이는데 쓸 데가 없는 서버가 돼요. "
+             "games와 levels는 '활동하면 보상'이라는 같은 이야기라 한 라인으로 묶었어요. "
+             "levels는 지갑 없이도 돌지만(역할 보상만), 함께 있을 때 값이 설명됩니다.",
+    ),
+    TierSpec(
+        "premium", "프리미엄", ("stock", "chronicle", "gpt", "party"),
+        pitch="＋ 운영 콘텐츠·AI",
+        note="기능 수가 아니라 납품 뒤 손이 가는 정도로 갈랐어요. 주식은 매일 종가게시를 사람이 눌러야 하고 "
+             "종목 설계가 따라붙습니다. AI 대화는 GEMINI_API_KEY 사용량이 계속 나가고요. "
+             "연대기는 도움말에 일부러 안 싣는 기능이라(cogs/help.py), 판매 항목으로 쓰려면 "
+             "도움말 카테고리를 하나 열어야 합니다. party는 아이디 등록부와 물려서 참가자 목록에 "
+             "게임 아이디가 붙는 게 차별점이라, 에센셜 구매자에게 업셀 동력이 돼요.",
+    ),
+)
+
+TIERS = {spec.key: spec for spec in TIER_SPECS}
+
+
+def tier_modules(key: str) -> list:
+    """그 라인에 담기는 선택 모듈 전부. (아래 라인 것까지 누적해서)
+
+    guild.json의 modules에 그대로 적을 수 있는 값입니다. 코어 4개
+    (setting·help·diagnostics·backup)는 어느 라인이든 항상 켜지므로 여기 안 넣어요.
+
+    반환 순서는 MODULE_SPECS 선언 순서예요. 라인 정의를 손봐도 프리셋 파일의
+    줄 순서가 흔들리지 않게 하려고요.
+    """
+    if key not in TIERS:
+        raise ValueError(f"모르는 판매 라인이에요: {key!r} (가능: {', '.join(TIERS)})")
+    picked = set()
+    for spec in TIER_SPECS:
+        picked |= set(spec.adds)
+        if spec.key == key:
+            break
+    return [k for k in OPTIONAL_KEYS if k in picked]
 
 
 OWNABLE = ("channels", "roles", "features", "data_files")

@@ -1267,14 +1267,28 @@ class MariShop(commands.Cog):
         if self._get_board(data, interaction.channel_id):
             return await interaction.response.send_message("❌ 이 채널엔 이미 매대가 있어요. 다른 채널에서 새 매대를 만들거나, `/상점 설정`으로 지금 매대를 수정해 주세요.", ephemeral=True)
 
-        board = self._get_default_board()
-        board["shop_name"] = 이름
-        board["shop_desc"] = 설명
-        board["shop_channel_id"] = interaction.channel_id
-        data["boards"][str(interaction.channel_id)] = board
-        self._save_shop(data)
+        await self.ensure_board(interaction.channel_id, 이름, 설명)
         await interaction.response.send_message("✅ 이 채널에 새 매대를 만들었어요.", ephemeral=True)
-        await self.update_shop_board(interaction.channel_id)
+
+    async def ensure_board(self, channel_id: int, name: str, description: str) -> bool:
+        """그 채널에 매대를 세웁니다. 이미 있으면 아무것도 안 하고 False.
+
+        🧩 `/상점 생성`의 알맹이예요. 설치 마법사(cogs/wizard.py)가 채널을 만든 직후
+           여기로 매대까지 세워둡니다. **코그를 import하지 않고 get_cog으로 찾아 불러요** —
+           상점을 안 담고 납품하면 이 코그 자체가 없으니, 부르는 쪽이 없는지 확인합니다.
+        """
+        data = self._load_shop()
+        if self._get_board(data, channel_id):
+            return False
+
+        board = self._get_default_board()
+        board["shop_name"] = name
+        board["shop_desc"] = description
+        board["shop_channel_id"] = channel_id
+        data["boards"][str(channel_id)] = board
+        self._save_shop(data)
+        await self.update_shop_board(channel_id)
+        return True
 
     @shop_group.command(name="삭제", description="[관리자] 현재 채널에 있는 상점 매대만 삭제합니다. (다른 채널의 매대는 영향 없음)")
     @app_commands.guild_only()

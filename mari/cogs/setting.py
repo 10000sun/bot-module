@@ -168,14 +168,18 @@ class MariSetting(commands.Cog):
     # (어느 모듈이 어떤 키를 데려오는지는 modules.py에 적혀 있어요)
     _CHANNEL_COMMANDS = {
         "출석": "attendance", "경제로그": "economy_log", "상점로그": "shop_log",
+        "상점": "shop_board",
         "주식전광판": "stock_board", "주식로그": "stock_log", "종가게시판": "closing_log",
         "이벤트": "evashi_announce", "아이디로그": "id_log", "아이디목록": "level_roster",
         "아이디등록": "id_submit", "역할로그": "role_log",
         "생일알림": "birthday_announce", "생일로그": "birthday_log",
+        "환영": "welcome", "입퇴장로그": "member_log", "레벨알림": "level_announce",
     }
     _ROLE_COMMANDS = {
         "아이디": "ids_admin", "상점": "shop_admin", "주식": "stock_admin",
         "이벤트": "evashi_admin", "연대기": "chronicle_admin", "테스트": "test_admin",
+        "셀프역할": "selfrole_admin", "입장": "welcome_admin", "레벨": "level_admin",
+        "파티": "party_admin",
     }
 
     def _prune_module_commands(self):
@@ -364,6 +368,30 @@ class MariSetting(commands.Cog):
     async def set_chronicle_admin(self, interaction: discord.Interaction, 역할: discord.Role, 동작: Optional[app_commands.Choice[str]] = None):
         await self._update_admin_role_list(interaction, "chronicle_admin", "연대기 관리자", 역할, 동작)
 
+    @관리자.command(name="파티", description="[관리자] 남의 파티 모집을 마감·정리할 수 있는 역할을 추가/제거합니다. (여러 역할 동시 지정 가능)")
+    @app_commands.describe(역할="추가/제거할 역할", 동작="추가 또는 제거 (기본값: 추가)")
+    @app_commands.choices(동작=ADMIN_ROLE_ACTION_CHOICES)
+    async def set_party_admin(self, interaction: discord.Interaction, 역할: discord.Role, 동작: Optional[app_commands.Choice[str]] = None):
+        await self._update_admin_role_list(interaction, "party_admin", "파티 관리자", 역할, 동작)
+
+    @관리자.command(name="레벨", description="[관리자] 활동 레벨(경험치·역할 보상)을 설정할 역할을 추가/제거합니다. (여러 역할 동시 지정 가능)")
+    @app_commands.describe(역할="추가/제거할 역할", 동작="추가 또는 제거 (기본값: 추가)")
+    @app_commands.choices(동작=ADMIN_ROLE_ACTION_CHOICES)
+    async def set_level_admin(self, interaction: discord.Interaction, 역할: discord.Role, 동작: Optional[app_commands.Choice[str]] = None):
+        await self._update_admin_role_list(interaction, "level_admin", "레벨 관리자", 역할, 동작)
+
+    @관리자.command(name="입장", description="[관리자] 입장 자동화(자동 역할·인사말)를 설정할 역할을 추가/제거합니다. (여러 역할 동시 지정 가능)")
+    @app_commands.describe(역할="추가/제거할 역할", 동작="추가 또는 제거 (기본값: 추가)")
+    @app_commands.choices(동작=ADMIN_ROLE_ACTION_CHOICES)
+    async def set_welcome_admin(self, interaction: discord.Interaction, 역할: discord.Role, 동작: Optional[app_commands.Choice[str]] = None):
+        await self._update_admin_role_list(interaction, "welcome_admin", "입장 관리자", 역할, 동작)
+
+    @관리자.command(name="셀프역할", description="[관리자] 셀프 역할 패널을 만들고 관리할 역할을 추가/제거합니다. (여러 역할 동시 지정 가능)")
+    @app_commands.describe(역할="추가/제거할 역할", 동작="추가 또는 제거 (기본값: 추가)")
+    @app_commands.choices(동작=ADMIN_ROLE_ACTION_CHOICES)
+    async def set_selfrole_admin(self, interaction: discord.Interaction, 역할: discord.Role, 동작: Optional[app_commands.Choice[str]] = None):
+        await self._update_admin_role_list(interaction, "selfrole_admin", "셀프 역할 관리자", 역할, 동작)
+
     @관리자.command(name="테스트", description="[관리자] /테스트 그룹(진단 도구) 사용 권한을 가질 역할을 추가/제거합니다. (여러 역할 동시 지정 가능)")
     @app_commands.describe(역할="추가/제거할 역할", 동작="추가 또는 제거 (기본값: 추가)")
     @app_commands.choices(동작=ADMIN_ROLE_ACTION_CHOICES)
@@ -387,6 +415,17 @@ class MariSetting(commands.Cog):
         settings["channels"]["economy_log"] = 채널.id
         save_settings(settings)
         await interaction.response.send_message(f"📌 경제 로그 채널이 {채널.mention}로 설정됐어요.", ephemeral=True)
+
+    @채널.command(name="상점", description="[관리자] 기본 상점 매대를 세울 채널이에요. (매대는 `/상점 생성`으로 아무 채널에나 더 만들 수 있어요)")
+    async def set_shop_board_ch(self, interaction: discord.Interaction, 채널: discord.TextChannel):
+        if not self.has_channel_permission(interaction): return await interaction.response.send_message("❌ 관리자 또는 '채널관리자' 역할이 필요해요!", ephemeral=True)
+        settings = load_settings()
+        if "channels" not in settings: settings["channels"] = {}
+        settings["channels"]["shop_board"] = 채널.id
+        save_settings(settings)
+        await interaction.response.send_message(
+            f"📌 기본 상점 채널이 {채널.mention}로 설정됐어요.\n"
+            "(매대가 아직 없으면 그 채널에서 `/상점 생성`을 한 번 실행해 주세요)", ephemeral=True)
 
     @채널.command(name="상점로그", description="[관리자] 상점 구매 영수증이 남는 로그 채널이에요.")
     async def set_shop_log_ch(self, interaction: discord.Interaction, 채널: discord.TextChannel):
@@ -481,6 +520,33 @@ class MariSetting(commands.Cog):
         save_settings(settings)
         await interaction.response.send_message(f"📌 역할 관리 로그 채널이 {채널.mention}로 설정됐어요.", ephemeral=True)
         
+    @채널.command(name="레벨알림", description="[관리자] 레벨업 축하를 모아 올릴 채널이에요. (`/레벨 설정`에서 '지정 채널'을 골라야 여기로 와요)")
+    async def set_level_announce_ch(self, interaction: discord.Interaction, 채널: discord.TextChannel):
+        if not self.has_channel_permission(interaction): return await interaction.response.send_message("❌ 관리자 또는 '채널관리자' 역할이 필요해요!", ephemeral=True)
+        settings = load_settings()
+        if "channels" not in settings: settings["channels"] = {}
+        settings["channels"]["level_announce"] = 채널.id
+        save_settings(settings)
+        await interaction.response.send_message(f"📌 레벨업 알림 채널이 {채널.mention}로 설정됐어요.", ephemeral=True)
+
+    @채널.command(name="환영", description="[관리자] 새로 들어온 멤버에게 인사를 올릴 채널이에요.")
+    async def set_welcome_ch(self, interaction: discord.Interaction, 채널: discord.TextChannel):
+        if not self.has_channel_permission(interaction): return await interaction.response.send_message("❌ 관리자 또는 '채널관리자' 역할이 필요해요!", ephemeral=True)
+        settings = load_settings()
+        if "channels" not in settings: settings["channels"] = {}
+        settings["channels"]["welcome"] = 채널.id
+        save_settings(settings)
+        await interaction.response.send_message(f"📌 환영 인사 채널이 {채널.mention}로 설정됐어요.", ephemeral=True)
+
+    @채널.command(name="입퇴장로그", description="[관리자] 멤버가 들어오고 나간 기록이 남는 로그 채널이에요.")
+    async def set_member_log_ch(self, interaction: discord.Interaction, 채널: discord.TextChannel):
+        if not self.has_channel_permission(interaction): return await interaction.response.send_message("❌ 관리자 또는 '채널관리자' 역할이 필요해요!", ephemeral=True)
+        settings = load_settings()
+        if "channels" not in settings: settings["channels"] = {}
+        settings["channels"]["member_log"] = 채널.id
+        save_settings(settings)
+        await interaction.response.send_message(f"📌 입퇴장 로그 채널이 {채널.mention}로 설정됐어요.", ephemeral=True)
+
     @채널.command(name="생일알림", description="[관리자] 생일 축하 메시지가 올라갈 채널을 지정합니다.")
     async def set_birthday_announce(self, interaction: discord.Interaction, 채널: discord.TextChannel):
         if not self.has_channel_permission(interaction): 

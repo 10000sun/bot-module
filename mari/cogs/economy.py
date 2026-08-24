@@ -214,6 +214,27 @@ class MariEconomy(commands.Cog):
         💾 저장 실패 시 DataSaveError를 던져서, 잔액이 안 바뀐 채로 성공 메세지가 나가는 걸 막아요."""
         atomic_json_save_or_raise(ECONOMY_FILE, data, indent=4)
 
+    async def grant_reward(self, user_id, amount: int, kind: str, detail: str = "") -> int:
+        """다른 모듈이 재화를 지급할 때 쓰는 단 하나의 창구. 지급 뒤 잔액을 돌려줍니다.
+
+        🧩 지갑 파일을 직접 열지 마세요. 이 함수를 쓰는 이유가 셋 있어요 —
+           · economy_lock을 쥐고 갱신해야 동시 지급에서 잔액이 덮어써지지 않습니다
+           · 원장(record_ledger)에 남아야 `/지갑내역`과 `/지급취소`가 그 돈을 압니다
+           · 저장이 실패하면 DataSaveError가 올라와서, 준 것처럼 안내하고 실제로는
+             안 들어간 상태를 막습니다 (부르는 쪽에서 반드시 잡으세요)
+
+        ⚠️ 락 안에서는 디스코드로 아무것도 보내지 않습니다. economy_lock은 송금·상점·주식이
+           전부 지나가는 공용 관문이라, 쥔 채로 메세지를 보내면 서버 전체가 줄을 서요.
+        """
+        user_key = str(user_id)
+        async with self.bot.economy_lock:
+            data = self._load_raw_economy()
+            data[user_key] = data.get(user_key, 0) + int(amount)
+            self._save_raw_economy(data)
+            balance_after = data[user_key]
+        record_ledger(user_key, int(amount), balance_after, kind, detail)
+        return balance_after
+
     def _get_or_create_balance(self, user_id: int) -> int:
         """유저의 잔고를 가져옵니다. 파일에 없는 유저라면 자동으로 지갑을 생성(0원)합니다."""
         data = self._load_raw_economy()

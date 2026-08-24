@@ -1,11 +1,13 @@
 """플랫폼 이름 정규화, 아이디 문자열 파싱, 멤버 검색 등 공용 도우미 함수."""
 
 import asyncio
+import datetime as dt
 import re
-from typing import Optional
+from typing import Any, Optional
 import discord
 
 from mari_alerts import send_alert
+from mari_config import KST
 from mari_settings import send_log_embed
 from mari_state import record_ledger
 from mari_storage import DataSaveError
@@ -474,3 +476,92 @@ def schedule_delete(msg, delay: float):
     task = asyncio.create_task(_later())
     _BACKGROUND_TASKS.add(task)
     task.add_done_callback(_BACKGROUND_TASKS.discard)
+
+
+# ========== 🔐 아무나 가져갈 수 있는 역할인가 ==========
+# 셀프 역할(cogs/selfrole.py)과 입장 자동 역할(cogs/welcome.py)이 **같은 위험**을 갖고
+# 있어서 여기 한 곳에 뒀어요. 둘 다 "본인 확인 없이 붙는 역할"이라, 관리자 권한이 딸린
+# 역할을 하나 담는 순간 아무나 서버를 가져갈 수 있게 됩니다.
+#
+# ⚠️ 코그끼리 직접 import하면 안 돼요. 한쪽만 담아 납품하면 import 단계에서 죽습니다.
+#    (이 봇의 코그 14개는 전부 서로를 모릅니다 — NEXT.md 참고)
+
+# 🚫 이 권한이 하나라도 붙은 역할은 셀프로 가져가게 두지 않습니다.
+DANGEROUS_ROLE_PERMISSIONS = (
+    ("administrator", "관리자"),
+    ("manage_guild", "서버 관리"),
+    ("manage_roles", "역할 관리"),
+    ("manage_channels", "채널 관리"),
+    ("manage_webhooks", "웹후크 관리"),
+    ("manage_messages", "메시지 관리"),
+    ("ban_members", "멤버 밴"),
+    ("kick_members", "멤버 추방"),
+    ("moderate_members", "멤버 타임아웃"),
+    ("mention_everyone", "@everyone 멘션"),
+)
+
+
+def dangerous_permission(role: discord.Role) -> Optional[str]:
+    """이 역할에 붙은 위험한 권한 이름. 없으면 None."""
+    for attr, label in DANGEROUS_ROLE_PERMISSIONS:
+        if getattr(role.permissions, attr, False):
+            return label
+    return None
+
+
+def role_reject_reason(role: discord.Role, me: discord.Member) -> Optional[str]:
+    """이 역할을 '아무나 가져가는 역할'로 쓰면 안 되는 이유. 써도 되면 None."""
+    if role.is_default():
+        return "`@everyone`은 담을 수 없어요."
+    if role.managed:
+        return f"{role.mention} 은(는) 다른 봇이나 연동이 관리하는 역할이라 손댈 수 없어요."
+    danger = dangerous_permission(role)
+    if danger:
+        return (f"⛔ {role.mention} 에는 **{danger}** 권한이 있어요.\n"
+                "본인 확인 없이 붙는 역할이라, 권한이 딸린 역할은 담지 않습니다.")
+    # 🪜 디스코드는 봇 자기 역할보다 **아래에 있는** 역할만 부여할 수 있어요.
+    #    여기서 안 막으면 버튼은 멀쩡히 눌리는데 아무 일도 안 일어납니다.
+    if role >= me.top_role:
+        return (f"🪜 {role.mention} 이(가) 봇 역할보다 위에 있어요.\n"
+                "서버 설정 → 역할에서 **봇 역할을 그 위로 올려주세요.** 그전엔 부여가 실패해요.")
+    return None
+
+
+# ========== ⏰ 사람이 적은 시각 읽기 ==========
+# 스누즈(나중에 답장)와 파티 모집이 **같은 형식**을 받아야 해서 여기 뒀어요.
+# 한쪽에만 고치면 서버마다 되는 형식이 달라집니다.
+def parse_datetime_text(cleaned: str, now) -> Optional[Any]:
+    """사람이 적은 시각을 datetime으로. `2026-08-10 14:00` · `8-10 14:00` · `14:00` 을 시각으로 바꿉니다. 못 알아보면 None.
+
+    🐛 [버그 수정] 연도를 생략한 `2-29 14:00`이 **항상** 거부됐어요.
+    strptime은 입력에 없는 값을 기본값으로 채우는데, 연도의 기본값이 **1900년**입니다.
+    1900년은 윤년이 아니라서(4로 나눠떨어져도 100으로 나눠떨어지면 윤년이 아니에요)
+    2월 29일이 존재하지 않고, 그래서 `parsed.replace(year=올해)`로 고쳐볼 기회조차 없이
+    파싱 단계에서 죽었습니다.
+    이제 연도를 생략하면 **올해를 앞에 붙여서** 파싱해요. 1900년을 거치지 않습니다.
+    """
+    # 1) 연도까지 적어준 경우
+    try:
+        return dt.datetime.strptime(cleaned, "%Y-%m-%d %H:%M").replace(tzinfo=KST)
+    except ValueError:
+        pass
+
+    # 2) 연도를 생략한 경우 — 올해로 붙여보고, 이미 지났으면 내년으로.
+    #    (평년에 `2-29`를 넣으면 올해 파싱이 실패하니 내년까지 시도해요)
+    for year in (now.year, now.year + 1):
+        try:
+            parsed = dt.datetime.strptime(f"{year}-{cleaned}", "%Y-%m-%d %H:%M")
+        except ValueError:
+            continue
+        candidate = parsed.replace(tzinfo=KST)
+        if candidate > now:
+            return candidate
+
+    # 3) 시각만 준 경우 — 오늘 그 시각, 이미 지났으면 내일 그 시각.
+    try:
+        only_time = dt.datetime.strptime(cleaned, "%H:%M")
+    except ValueError:
+        return None
+    wake_at = now.replace(hour=only_time.hour, minute=only_time.minute,
+                          second=0, microsecond=0)
+    return wake_at if wake_at > now else wake_at + dt.timedelta(days=1)

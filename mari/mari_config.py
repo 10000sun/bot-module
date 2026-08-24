@@ -60,7 +60,9 @@ def load_env_file(path: str = ENV_FILE) -> None:
     if not os.path.exists(path):
         return
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        # 🇰🇷 utf-8-sig — BOM이 붙으면 첫 줄 키가 '\ufeffDISCORD_TOKEN'이 돼서
+        #    토큰을 못 찾고 "토큰 없음"으로 안 켜집니다. (guild.json 쪽 주석 참고)
+        with open(path, "r", encoding="utf-8-sig") as f:
             for raw in f:
                 line = raw.strip()
                 if not line or line.startswith("#") or "=" not in line:
@@ -120,6 +122,10 @@ ECONOMY_FILE = os.path.join(DATA_DIR, "mari_economy.json")
 SHOP_FILE = os.path.join(DATA_DIR, "mari_shop.json")
 SHOP_TRANSACTIONS_FILE = os.path.join(DATA_DIR, "mari_shop_transactions.json")  # 💰 [신규] /정산용 구매·되팔기 거래 내역
 CHRONICLE_FILE = os.path.join(DATA_DIR, "mari_chronicle.json")  # 📜 [신규] 서버 연대기 (서버에서 일어난 일을 날짜순으로 축적)
+SELFROLE_FILE = os.path.join(DATA_DIR, "mari_selfrole.json")
+WELCOME_FILE = os.path.join(DATA_DIR, "mari_welcome.json")
+LEVELS_FILE = os.path.join(DATA_DIR, "mari_levels.json")
+PARTY_FILE = os.path.join(DATA_DIR, "mari_party.json")  # 🎯 [신규] 파티·레이드 모집 (참가자·대기열·시작 시각)  # 📊 [신규] 채팅 활동 경험치·레벨 역할 보상  # 🚪 [신규] 입장 자동 역할·환영 인사·규칙 패널 설정  # 🎚️ [신규] 셀프 역할 패널 (메시지 ID → 담긴 역할 목록)
 SNOOZE_FILE = os.path.join(DATA_DIR, "mari_snooze.json")  # ⏰ [신규] '나중에 답장' 예약 목록 (우클릭으로 미뤄둔 메시지)
 LIMIT_FILE = os.path.join(DATA_DIR, "mari_limit.json")
 SETTINGS_FILE = os.path.join(DATA_DIR, "mari_settings.json") # 💡 신규 설정 파일
@@ -265,7 +271,13 @@ def load_guild_config(path: str = GUILD_CONFIG_PATH) -> dict:
         )
         return {}
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        # 🇰🇷 utf-8-sig 인 이유 — 메모장이나 PowerShell 5.1의
+        #    `Set-Content -Encoding UTF8`로 저장하면 파일 맨 앞에 BOM(\ufeff)이 붙어요.
+        #    그걸 "utf-8"로 읽으면 json이 'Unexpected UTF-8 BOM'으로 거절하고, 우리는
+        #    설정이 깨진 걸로 보고 기동을 막습니다. 그런데 안내는 "문법이 깨졌다"고 하고
+        #    jsonlint에 넣어보면 통과해서, 클라이언트가 원인을 영영 못 찾아요.
+        #    utf-8-sig는 BOM이 있으면 벗기고 없으면 그냥 읽습니다. 잃는 게 없어요.
+        with open(path, "r", encoding="utf-8-sig") as f:
             data = json.load(f)
     except Exception as e:
         GUILD_CONFIG_FATAL = (

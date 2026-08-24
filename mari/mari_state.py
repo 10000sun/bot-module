@@ -3,7 +3,8 @@
 import uuid
 import datetime as dt
 
-from mari_config import IDS_FILE, KST, LEDGER_FILE, WIKI_FILE
+from mari_config import (IDS_FILE, KST, LEDGER_FILE, LEVELS_FILE, PARTY_FILE,
+                         SELFROLE_FILE, WELCOME_FILE, WIKI_FILE)
 from mari_storage import atomic_json_save, atomic_json_save_or_raise, safe_json_load
 
 # ========== 💾 데이터 로드/세이브 유틸리티 ==========
@@ -12,6 +13,30 @@ def load_ids():
 
 def save_ids(data):
     atomic_json_save_or_raise(IDS_FILE, data, indent=2)
+
+def load_party():
+    return safe_json_load(PARTY_FILE, {"parties": {}})
+
+def save_party(data):
+    atomic_json_save_or_raise(PARTY_FILE, data, indent=2)
+
+def load_levels():
+    return safe_json_load(LEVELS_FILE, {"users": {}, "rewards": {}, "config": {}})
+
+def save_levels(data):
+    atomic_json_save_or_raise(LEVELS_FILE, data, indent=2)
+
+def load_welcome():
+    return safe_json_load(WELCOME_FILE, {"auto_roles": [], "message": ""})
+
+def save_welcome(data):
+    atomic_json_save_or_raise(WELCOME_FILE, data, indent=2)
+
+def load_selfroles():
+    return safe_json_load(SELFROLE_FILE, {"panels": {}})
+
+def save_selfroles(data):
+    atomic_json_save_or_raise(SELFROLE_FILE, data, indent=2)
 
 def load_wiki():
     return safe_json_load(WIKI_FILE, {})

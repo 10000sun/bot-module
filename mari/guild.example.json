@@ -36,6 +36,29 @@
     "여기 없는 기능(캠프·명단·프로필 등)은 원본 서버 고유 제도라 parked/ 폴더로",
     "빼뒀어요. 비슷한 주문이 들어오면 거기서 꺼내 손봐서 붙이면 됩니다."
   ],
+  "_티어프리셋설명": [
+    "판매 라인별 기본 조합이에요. 아래 _티어프리셋에서 한 줄을 그대로 복사해",
+    "modules 자리에 넣으면 됩니다.",
+    "",
+    "  essential  에센셜    서버 관리 기본     아이디 등록부 · 생일 · 위키 · 나중에 답장 · 셀프 역할 · 입장 자동화",
+    "  standard   스탠다드  ＋ 활동과 보상      ＋ 지갑·송금·출석 · 상점 · 미니게임 · 활동 레벨",
+    "  premium    프리미엄  ＋ 운영 콘텐츠·AI   ＋ 모의 주식 · 연대기 · AI 대화 · 파티 모집",
+    "",
+    "위 라인은 아래 라인을 통째로 포함해요. 라인 안에서 의존 관계도 이미 맞춰뒀습니다",
+    "(상점을 넣으면 지갑이 같이 들어 있음). 그래서 주문에 없던 기능이 딸려가지 않아요.",
+    "",
+    "여기 없는 조합으로 납품해도 됩니다. 라인은 견적용 기본값이지 코드가 막는 제한이",
+    "아니에요. AI 대화(gpt)는 GEMINI_API_KEY 사용량이 계속 드니까 라인에서 빼고",
+    "월 애드온으로 파는 것도 방법입니다.",
+    "",
+    "이 표는 mari/modules.py의 TIER_SPECS와 같아야 해요.",
+    "(python tools/check_tiers.py 가 대조하고, 라인별로 검사까지 돌립니다)"
+  ],
+  "_티어프리셋": {
+    "essential": ["id", "wiki", "birthday", "snooze", "welcome", "selfrole"],
+    "standard": ["id", "economy", "wiki", "games", "shop", "birthday", "snooze", "levels", "welcome", "selfrole"],
+    "premium": ["id", "economy", "stock", "wiki", "games", "gpt", "shop", "birthday", "chronicle", "snooze", "party", "levels", "welcome", "selfrole"]
+  },
   "modules": [
     "id",
     "economy",

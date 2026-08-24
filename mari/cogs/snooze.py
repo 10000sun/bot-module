@@ -30,6 +30,7 @@ from mari_config import KST, SNOOZE_FILE
 from mari_alerts import report_loop_error
 from mari_settings import feature_gate, is_feature_enabled
 from mari_storage import atomic_json_save_or_raise, safe_json_load
+from mari_utils import parse_datetime_text
 from mari_utils import MariView
 
 # 🕘 "내일 아침" 같은 말이 실제로 몇 시인지. 하루 중 그 시각이 이미 지났으면 다음 날로 넘어가요.
@@ -226,38 +227,11 @@ class MariSnooze(commands.Cog):
     def _parse_absolute(cleaned: str, now: dt.datetime) -> Optional[dt.datetime]:
         """`2026-08-10 14:00` · `8-10 14:00` · `14:00` 을 시각으로 바꿉니다. 못 알아보면 None.
 
-        🐛 [버그 수정] 연도를 생략한 `2-29 14:00`이 **항상** 거부됐어요.
-        strptime은 입력에 없는 값을 기본값으로 채우는데, 연도의 기본값이 **1900년**입니다.
-        1900년은 윤년이 아니라서(4로 나눠떨어져도 100으로 나눠떨어지면 윤년이 아니에요)
-        2월 29일이 존재하지 않고, 그래서 `parsed.replace(year=올해)`로 고쳐볼 기회조차 없이
-        파싱 단계에서 죽었습니다.
-        이제 연도를 생략하면 **올해를 앞에 붙여서** 파싱해요. 1900년을 거치지 않습니다.
+        🧩 [이동] 실제 구현은 mari_utils.parse_datetime_text 에 있어요. 파티 모집이 같은
+        형식을 받아야 하는데, 코그끼리는 서로를 import하지 않으니 공용 계층으로 옮겼습니다.
+        (연도를 생략한 `2-29`가 1900년 때문에 거부되던 버그 설명도 그쪽에 그대로 있어요)
         """
-        # 1) 연도까지 적어준 경우
-        try:
-            return dt.datetime.strptime(cleaned, "%Y-%m-%d %H:%M").replace(tzinfo=KST)
-        except ValueError:
-            pass
-
-        # 2) 연도를 생략한 경우 — 올해로 붙여보고, 이미 지났으면 내년으로.
-        #    (평년에 `2-29`를 넣으면 올해 파싱이 실패하니 내년까지 시도해요)
-        for year in (now.year, now.year + 1):
-            try:
-                parsed = dt.datetime.strptime(f"{year}-{cleaned}", "%Y-%m-%d %H:%M")
-            except ValueError:
-                continue
-            candidate = parsed.replace(tzinfo=KST)
-            if candidate > now:
-                return candidate
-
-        # 3) 시각만 준 경우 — 오늘 그 시각, 이미 지났으면 내일 그 시각.
-        try:
-            only_time = dt.datetime.strptime(cleaned, "%H:%M")
-        except ValueError:
-            return None
-        wake_at = now.replace(hour=only_time.hour, minute=only_time.minute,
-                              second=0, microsecond=0)
-        return wake_at if wake_at > now else wake_at + dt.timedelta(days=1)
+        return parse_datetime_text(cleaned, now)
 
     def parse_when(self, text: str, now: dt.datetime) -> tuple:
         """직접 입력을 시각으로 바꿉니다. (시각, 오류메세지) 중 한쪽만 채워서 돌려줘요.
