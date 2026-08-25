@@ -3,7 +3,7 @@
 import uuid
 import datetime as dt
 
-from chunsik_config import (IDS_FILE, KST, LEDGER_FILE, LEVELS_FILE, PARTY_FILE,
+from chunsik_config import (IDS_FILE, KST, LEDGER_FILE, LEVELS_FILE, PARTY_FILE, SCRIM_FILE,
                          SELFROLE_FILE, WELCOME_FILE, WIKI_FILE)
 from chunsik_storage import atomic_json_save, atomic_json_save_or_raise, safe_json_load
 
@@ -19,6 +19,12 @@ def load_party():
 
 def save_party(data):
     atomic_json_save_or_raise(PARTY_FILE, data, indent=2)
+
+def load_scrim():
+    return safe_json_load(SCRIM_FILE, {"matches": {}, "records": {}})
+
+def save_scrim(data):
+    atomic_json_save_or_raise(SCRIM_FILE, data, indent=2)
 
 def load_levels():
     return safe_json_load(LEVELS_FILE, {"users": {}, "rewards": {}, "config": {}})

@@ -125,6 +125,7 @@ CHRONICLE_FILE = os.path.join(DATA_DIR, "chunsik_chronicle.json")  # 📜 [신�
 SELFROLE_FILE = os.path.join(DATA_DIR, "chunsik_selfrole.json")
 WELCOME_FILE = os.path.join(DATA_DIR, "chunsik_welcome.json")
 LEVELS_FILE = os.path.join(DATA_DIR, "chunsik_levels.json")
+SCRIM_FILE = os.path.join(DATA_DIR, "chunsik_scrim.json")  # ⚔️ [신규] 내전 (모집·팀·전적)
 PARTY_FILE = os.path.join(DATA_DIR, "chunsik_party.json")  # 🎯 [신규] 파티·레이드 모집 (참가자·대기열·시작 시각)  # 📊 [신규] 채팅 활동 경험치·레벨 역할 보상  # 🚪 [신규] 입장 자동 역할·환영 인사·규칙 패널 설정  # 🎚️ [신규] 셀프 역할 패널 (메시지 ID → 담긴 역할 목록)
 SNOOZE_FILE = os.path.join(DATA_DIR, "chunsik_snooze.json")  # ⏰ [신규] '나중에 답장' 예약 목록 (우클릭으로 미뤄둔 메시지)
 LIMIT_FILE = os.path.join(DATA_DIR, "chunsik_limit.json")
