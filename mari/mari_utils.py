@@ -90,6 +90,19 @@ EMBED_CHUNK_LIMIT = 1900
 EMBED_TITLE_LIMIT = 256
 EMBED_DESC_LIMIT = 4096
 EMBED_FIELD_LIMIT = 1024
+MESSAGE_LIMIT = 2000      # 임베드가 아닌 그냥 본문
+
+
+def mention_list(user_ids, limit: int = 40) -> str:
+    """여러 명을 한 줄로 부릅니다. 너무 많으면 앞에서 끊고 "외 N명"을 달아요.
+
+    💬 멘션 하나가 22자쯤이라 90명만 넘어도 본문 한도(2000자)를 넘습니다. 그러면
+       **호출이 통째로 안 나가요** — 파티 시작 알림처럼 "안 오면 그만인" 메세지가
+       조용히 사라지는 게 제일 나쁩니다.
+    """
+    ids = list(user_ids)
+    shown = " ".join(f"<@{u}>" for u in ids[:limit])
+    return shown if len(ids) <= limit else f"{shown} 외 {len(ids) - limit}명"
 
 
 def clip(text: str, limit: int) -> str:
@@ -571,6 +584,70 @@ def role_reject_reason(role: discord.Role, me: discord.Member) -> Optional[str]:
         return (f"🪜 {role.mention} 이(가) 봇 역할보다 위에 있어요.\n"
                 "서버 설정 → 역할에서 **봇 역할을 그 위로 올려주세요.** 그전엔 부여가 실패해요.")
     return None
+
+
+# ========== 🙂 버튼에 붙일 이모지가 진짜 이모지인가 ==========
+# discord.py는 이걸 **전혀 검사하지 않습니다.** 확인해봤어요 —
+#   discord.ui.Button(emoji="아무글자아님")  →  <PartialEmoji name='아무글자아님'> (예외 없음)
+# 그래서 관리자가 이모지 칸에 글자를 치면 저장까지 멀쩡히 되고, 그 버튼이 붙은 메세지를
+# 보내거나 고치는 순간에야 디스코드가 400으로 거부합니다. 패널은 버튼이 안 붙은 채로
+# 남고 다시 그릴 수도 없어요 — 받는 쪽에서 미리 막아야 하는 자리입니다.
+
+# 유니코드 이모지가 사는 구역들. (사람이 칠 수 있는 범위만 추렸어요)
+_EMOJI_RANGES = (
+    (0x1F000, 0x1FAFF),  # 마작·카드·그림문자·감정·교통·확장A 전부
+    (0x2600, 0x27BF),    # 기타 기호 + 딩벳 (☀ ✅ ✂ …)
+    (0x2B00, 0x2BFF),    # ⬛ ⭐ …
+    (0x2190, 0x21FF),    # 화살표
+    (0x2900, 0x297F),    # 보조 화살표
+    (0x3030, 0x303D), (0x3297, 0x3299),
+)
+# 이모지에 딸려 오는 부속 문자들 — 이것만으로는 이모지가 되지 않아요.
+_EMOJI_MODIFIERS = frozenset(
+    [0xFE0E, 0xFE0F, 0x200D, 0x20E3, 0x00A9, 0x00AE, 0x2122]
+    + list(range(0x1F3FB, 0x1F400))   # 피부색
+    + list(range(0xE0020, 0xE0080))   # 태그 (🏴󠁧󠁢󠁳󠁣󠁴󠁿 같은 깃발)
+)
+CUSTOM_EMOJI_RE = re.compile(r"^<a?:[A-Za-z0-9_]{2,32}:\d{15,25}>$")
+
+
+def is_unicode_emoji(text: str) -> bool:
+    """이 글자가 유니코드 이모지인가. (부속 문자만 있는 건 이모지가 아니에요)"""
+    if not text or len(text) > 16:
+        return False
+    # 1️⃣ #️⃣ 같은 키캡은 '숫자 + 부속 문자'라 아래 검사만으로는 이모지로 안 보여요.
+    #    키캡 표시(U+20E3)가 붙어 있으면 그 자체로 이모지입니다.
+    core = 0x20E3 in {ord(ch) for ch in text}
+    for ch in text:
+        code = ord(ch)
+        if code in _EMOJI_MODIFIERS or ch in "#*" or ch.isdigit():
+            continue
+        if any(lo <= code <= hi for lo, hi in _EMOJI_RANGES):
+            core = True
+            continue
+        return False
+    return core
+
+
+def button_emoji_error(text: str) -> Optional[str]:
+    """버튼 이모지로 못 쓰는 이유. 써도 되면(비어 있어도) None."""
+    text = (text or "").strip()
+    if not text or is_unicode_emoji(text) or CUSTOM_EMOJI_RE.match(text):
+        return None
+    return ("❌ 이모지 칸에는 **이모지 하나만** 넣어주세요. (예: `🔔`)\n"
+            "서버 전용 이모지를 쓰려면 채팅창에 그 이모지를 친 뒤 앞에 `\\`를 붙여 보내면 "
+            "나오는 `<:이름:숫자>` 를 그대로 붙여넣으면 돼요.\n"
+            "여기에 그냥 글자를 넣으면 디스코드가 그 버튼이 달린 메세지를 통째로 거부합니다.")
+
+
+def safe_button_emoji(value):
+    """저장돼 있던 값이 이모지로 못 쓸 것이면 조용히 버립니다.
+
+    🩹 검사를 붙이기 **전에** 저장된 패널을 되살리는 자리예요. 그런 값이 하나라도
+       남아 있으면 패널을 영영 다시 그릴 수 없어서, 관리자가 손댈 방법이 없어집니다.
+       이모지만 빠지고 버튼은 멀쩡히 나오는 편이 훨씬 낫습니다.
+    """
+    return value if value and button_emoji_error(value) is None else None
 
 
 # ========== ⏰ 사람이 적은 시각 읽기 ==========

@@ -11,6 +11,7 @@
    지나간 모집은 다시 켜질 때 조용히 정리돼요. (지난 모집을 뒤늦게 알리지 않습니다)
 """
 
+import asyncio
 import datetime as dt
 
 import discord
@@ -20,8 +21,9 @@ from discord.ext import commands, tasks
 from mari_config import KST, module_active
 from mari_settings import feature_gate, has_admin_or_role, is_feature_enabled
 from mari_state import load_party, save_party, state
-from mari_utils import (EMBED_DESC_LIMIT, EMBED_TITLE_LIMIT, MariView,
-                        add_lines_field, clip, parse_datetime_text)
+from mari_utils import (EMBED_DESC_LIMIT, EMBED_TITLE_LIMIT, MESSAGE_LIMIT,
+                        MariView, add_lines_field, clip, mention_list,
+                        parse_datetime_text)
 
 # ⏰ 시작 몇 분 전에 부를지. 0이면 시작할 때만 불러요.
 REMIND_BEFORE_MINUTES = 10
@@ -66,6 +68,10 @@ class MariParty(commands.Cog):
 
     def __init__(self, bot):
         self.bot = bot
+        # 🔒 파티 기록은 버튼으로 고쳐지는 파일이에요. 모집글이 올라오면 여러 명이 거의
+        #    동시에 누르는 게 정상 사용이라, "읽고 → 고치고 → 저장"이 겹치면 참가가
+        #    조용히 한 건씩 사라집니다. (지갑이 economy_lock을 쓰는 것과 같은 이유예요)
+        self._lock = asyncio.Lock()
 
     async def cog_load(self):
         parties = self._all()
@@ -132,61 +138,82 @@ class MariParty(commands.Cog):
 
     # ---------- 버튼 ----------
 
-    async def handle(self, interaction: discord.Interaction, party_id: str, action: str):
-        if not is_feature_enabled("party"):
-            return await interaction.response.send_message("🚧 파티 모집이 잠시 정지돼 있어요.", ephemeral=True)
+    @staticmethod
+    def _apply(party: dict, uid: int, action: str, is_admin: bool) -> tuple:
+        """버튼 하나를 실제로 반영합니다. → (안내 문구, 저장할 것인가, 승급된 사람)
 
-        parties = self._all()
-        party = parties.get(party_id)
-        if party is None or party.get("closed"):
-            return await interaction.response.send_message("❌ 이미 끝난 모집이에요.", ephemeral=True)
-
-        uid = interaction.user.id
+        🚨 **여기에는 await가 하나도 없어야 해요.** 락을 쥔 채로 디스코드에 말을 걸면
+           그 왕복(수백 ms) 사이에 다른 사람의 클릭이 끼어들어, 파일에서 방금 읽은
+           내용이 낡은 것이 됩니다. 예전엔 대기 승급 DM이 바로 이 자리에 있었어요 —
+           모집글이 올라오자마자 여럿이 동시에 누르는 게 정상 사용이라 실제로 밟는 길입니다.
+        """
         members, waiting = party.setdefault("members", []), party.setdefault("waiting", [])
 
         if action == "close":
-            if uid != party["host"] and not has_admin_or_role(interaction, "party_admin"):
-                return await interaction.response.send_message(
-                    "⛔ 모집을 연 사람이나 파티 관리자만 마감할 수 있어요.", ephemeral=True)
+            if uid != party["host"] and not is_admin:
+                return "⛔ 모집을 연 사람이나 파티 관리자만 마감할 수 있어요.", False, None
             party["closed"] = True
-            self._save(parties)
-            await interaction.response.defer()
-            await self._repaint(party_id, party)
-            return
+            return None, True, None
 
         if action == "leave":
             if uid not in members and uid not in waiting:
-                return await interaction.response.send_message("❌ 참가하지 않으셨어요.", ephemeral=True)
-            was_member = uid in members
-            if was_member:
+                return "❌ 참가하지 않으셨어요.", False, None
+            promoted = None
+            if uid in members:
                 members.remove(uid)
                 # 🎟️ 자리가 나면 대기 1번을 자동으로 올려요. (안 그러면 대기가 영영 안 들어와요)
                 if waiting:
                     promoted = waiting.pop(0)
                     members.append(promoted)
-                    try:
-                        user = await self.bot.fetch_user(promoted)
-                        await user.send(f"🎉 자리가 났어요! **{party['title']}** 참가로 올라갔습니다.")
-                    except Exception:
-                        pass  # DM을 막아둔 사람도 있어요. 목록에는 이미 올라가 있으니 괜찮습니다.
             else:
                 waiting.remove(uid)
-            self._save(parties)
-            await interaction.response.send_message("🚪 빠졌어요.", ephemeral=True)
-            return await self._repaint(party_id, party)
+            return "🚪 빠졌어요.", True, promoted
 
         # join
         if uid in members or uid in waiting:
-            return await interaction.response.send_message("이미 참가하셨어요! 🙂", ephemeral=True)
+            return "이미 참가하셨어요! 🙂", False, None
         if len(members) < party["size"]:
             members.append(uid)
-            msg = "✅ 참가했어요!"
+            return "✅ 참가했어요!", True, None
+        waiting.append(uid)
+        return (f"⏳ 정원이 차서 **대기 {len(waiting)}번**으로 넣었어요. 자리가 나면 DM으로 알려드릴게요.",
+                True, None)
+
+    async def handle(self, interaction: discord.Interaction, party_id: str, action: str):
+        if not is_feature_enabled("party"):
+            return await interaction.response.send_message("🚧 파티 모집이 잠시 정지돼 있어요.", ephemeral=True)
+
+        uid = interaction.user.id
+        is_admin = has_admin_or_role(interaction, "party_admin")
+        changed_party = None
+
+        # 🔒 "읽고 → 고치고 → 저장"은 한 덩어리여야 합니다. 이 안에서는 디스코드에
+        #    아무것도 보내지 않아요 — 안내도 DM도 다시 그리기도 전부 락 밖에서 합니다.
+        async with self._lock:
+            parties = self._all()
+            party = parties.get(party_id)
+            if party is None or party.get("closed"):
+                reply, changed, promoted = "❌ 이미 끝난 모집이에요.", False, None
+            else:
+                reply, changed, promoted = self._apply(party, uid, action, is_admin)
+                if changed:
+                    self._save(parties)
+                    changed_party = party
+
+        if reply is None:
+            await interaction.response.defer()
         else:
-            waiting.append(uid)
-            msg = f"⏳ 정원이 차서 **대기 {len(waiting)}번**으로 넣었어요. 자리가 나면 DM으로 알려드릴게요."
-        self._save(parties)
-        await interaction.response.send_message(msg, ephemeral=True)
-        await self._repaint(party_id, party)
+            await interaction.response.send_message(reply, ephemeral=True)
+
+        if promoted is not None:
+            try:
+                user = await self.bot.fetch_user(promoted)
+                await user.send(f"🎉 자리가 났어요! **{changed_party['title']}** 참가로 올라갔습니다.")
+            except Exception:
+                pass  # DM을 막아둔 사람도 있어요. 목록에는 이미 올라가 있으니 괜찮습니다.
+
+        if changed_party is not None:
+            await self._repaint(party_id, changed_party)
 
     # ---------- 시작 시각 챙기기 ----------
 
@@ -195,45 +222,47 @@ class MariParty(commands.Cog):
         if not is_feature_enabled("party"):
             return
         now = dt.datetime.now(KST)
-        parties = self._all()
-        changed = False
+        # 📣 부를 것을 먼저 **락 안에서** 정하고, 실제로 말을 거는 건 락 밖에서 합니다.
+        #    (예전엔 알림을 보내는 동안 파일이 열려 있어서, 그 사이 참가 클릭이 지워졌어요)
+        todo = []
+        async with self._lock:
+            parties = self._all()
+            changed = False
+            for pid, party in list(parties.items()):
+                if party.get("closed"):
+                    continue
+                start = dt.datetime.fromisoformat(party["start"])
 
-        for pid, party in list(parties.items()):
-            if party.get("closed"):
-                continue
-            start = dt.datetime.fromisoformat(party["start"])
-            channel = self.bot.get_channel(int(party["channel_id"]))
-
-            if not party.get("reminded") and REMIND_BEFORE_MINUTES:
-                if 0 < (start - now).total_seconds() <= REMIND_BEFORE_MINUTES * 60:
+                if (not party.get("reminded") and REMIND_BEFORE_MINUTES
+                        and 0 < (start - now).total_seconds() <= REMIND_BEFORE_MINUTES * 60):
                     party["reminded"] = True
                     changed = True
-                    if channel and party.get("members"):
-                        try:
-                            await channel.send(
-                                f"⏰ **{party['title']}** 시작 {REMIND_BEFORE_MINUTES}분 전이에요! "
-                                + " ".join(f"<@{u}>" for u in party["members"]))
-                        except Exception as e:
-                            print(f"❗ 파티 알림 실패: {type(e).__name__}: {e}")
+                    todo.append((pid, dict(party),
+                                 f"⏰ **{party['title']}** 시작 {REMIND_BEFORE_MINUTES}분 전이에요!", False))
 
-            if now >= start:
-                party["closed"] = True
-                changed = True
-                # 🕰️ 봇이 꺼져 있던 사이에 지나간 모집은 조용히 닫기만 해요.
-                #    한참 지난 모집을 이제 와서 부르면 아무 도움이 안 됩니다.
-                if channel and party.get("members") and (now - start).total_seconds() < 300:
-                    try:
-                        await channel.send(f"🎯 **{party['title']}** 시작할 시간이에요! "
-                                           + " ".join(f"<@{u}>" for u in party["members"]))
-                    except Exception as e:
-                        print(f"❗ 파티 시작 알림 실패: {type(e).__name__}: {e}")
+                if now >= start:
+                    party["closed"] = True
+                    changed = True
+                    # 🕰️ 봇이 꺼져 있던 사이에 지나간 모집은 조용히 닫기만 해요.
+                    #    한참 지난 모집을 이제 와서 부르면 아무 도움이 안 됩니다.
+                    late = (now - start).total_seconds() >= 300
+                    todo.append((pid, dict(party),
+                                 None if late else f"🎯 **{party['title']}** 시작할 시간이에요!", True))
+            if changed:
+                self._save(parties)
+
+        for pid, party, text, repaint in todo:
+            channel = self.bot.get_channel(int(party["channel_id"]))
+            if channel and text and party.get("members"):
+                try:
+                    await channel.send(clip(text + " " + mention_list(party["members"]), MESSAGE_LIMIT))
+                except Exception as e:
+                    print(f"❗ 파티 알림 실패: {type(e).__name__}: {e}")
+            if repaint:
                 try:
                     await self._repaint(pid, party)
                 except Exception:
                     pass
-
-        if changed:
-            self._save(parties)
 
     @tick.before_loop
     async def _before_tick(self):
@@ -271,8 +300,12 @@ class MariParty(commands.Cog):
             "waiting": [], "closed": False, "reminded": False,
         }
         message = await interaction.channel.send(embed=self._embed(party, interaction.guild.id))
-        parties[str(message.id)] = party
-        self._save(parties)
+        # 🔒 새 모집을 끼워 넣는 것도 "읽고 → 고치고 → 저장"이에요. 위에서 읽어둔
+        #    parties는 메세지를 보내는 사이에 낡았을 수 있으니 락 안에서 다시 읽습니다.
+        async with self._lock:
+            parties = self._all()
+            parties[str(message.id)] = party
+            self._save(parties)
 
         view = PartyView(self, str(message.id))
         await message.edit(view=view)
@@ -307,10 +340,11 @@ class MariParty(commands.Cog):
         if not has_admin_or_role(interaction, "party_admin"):
             return await interaction.response.send_message("⛔ 파티를 관리할 권한이 없어요!", ephemeral=True)
 
-        parties = self._all()
-        closed = [pid for pid, p in parties.items() if p.get("closed")]
-        for pid in closed:
-            parties.pop(pid, None)
-        self._save(parties)
+        async with self._lock:
+            parties = self._all()
+            closed = [pid for pid, p in parties.items() if p.get("closed")]
+            for pid in closed:
+                parties.pop(pid, None)
+            self._save(parties)
         await interaction.response.send_message(
             f"🧹 끝난 모집 {len(closed)}건을 지웠어요. (올라간 메시지는 그대로 남아 있어요)", ephemeral=True)

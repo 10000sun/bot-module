@@ -10,6 +10,8 @@
    담은 뒤에 그 역할에 권한이 추가될 수도 있어서, 누를 때 다시 보는 게 꼭 필요해요.
 """
 
+import asyncio
+
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -18,8 +20,9 @@ from mari_settings import (feature_gate, has_admin_or_role, is_feature_enabled,
                            send_log_embed)
 from mari_state import load_selfroles, save_selfroles
 from mari_utils import (EMBED_DESC_LIMIT, EMBED_FIELD_LIMIT,
-                        EMBED_TITLE_LIMIT, MariView, clip,
-                        dangerous_permission, role_reject_reason)
+                        EMBED_TITLE_LIMIT, MariView, button_emoji_error, clip,
+                        dangerous_permission, role_reject_reason,
+                        safe_button_emoji)
 
 # 📏 디스코드 제한 — 한 메시지에 버튼은 5줄 × 5개까지.
 MAX_ROLES_PER_PANEL = 25
@@ -32,7 +35,9 @@ class SelfRoleButton(discord.ui.Button):
         super().__init__(
             style=discord.ButtonStyle.secondary,
             label=label[:80],
-            emoji=emoji or None,
+            # 🩹 검사를 붙이기 전에 저장된 엉뚱한 값은 여기서 조용히 버립니다. 하나라도
+            #    남아 있으면 패널을 다시 그릴 수가 없어서 관리자가 손댈 방법이 없어져요.
+            emoji=safe_button_emoji(emoji),
             custom_id=f"selfrole:{panel_id}:{role_id}",
         )
         self.role_id = role_id
@@ -62,6 +67,9 @@ class MariSelfRole(commands.Cog):
 
     def __init__(self, bot):
         self.bot = bot
+        # 🔒 패널 파일도 "읽고 → 고치고 → 저장"이에요. 관리자 둘이 같은 패널에 역할을
+        #    동시에 담으면 한쪽이 조용히 사라집니다. (파티 버튼과 같은 이유)
+        self._lock = asyncio.Lock()
 
     async def cog_load(self):
         self._register_persistent_views()
@@ -186,9 +194,10 @@ class MariSelfRole(commands.Cog):
         panel = {"channel_id": interaction.channel.id, "title": 제목, "description": 설명, "roles": []}
         message = await interaction.channel.send(embed=self._panel_embed(panel))
 
-        panels = self._panels()
-        panels[str(message.id)] = panel
-        self._save_panels(panels)
+        async with self._lock:
+            panels = self._panels()
+            panels[str(message.id)] = panel
+            self._save_panels(panels)
 
         await interaction.followup.send(
             f"✅ 패널을 올렸어요. 이제 `/셀프역할 역할추가`로 역할을 담아주세요.\n{message.jump_url}",
@@ -212,6 +221,11 @@ class MariSelfRole(commands.Cog):
         reason = role_reject_reason(역할, interaction.guild.me)
         if reason:
             return await interaction.response.send_message(reason, ephemeral=True)
+        # 🙂 이모지 칸은 자유 입력이라 글자가 들어옵니다. discord.py는 검사하지 않고,
+        #    디스코드는 그 버튼이 달린 메세지를 통째로 거부해요. 여기서 막습니다.
+        emoji_error = button_emoji_error(이모지)
+        if emoji_error:
+            return await interaction.response.send_message(emoji_error, ephemeral=True)
         if any(int(e["id"]) == 역할.id for e in panel["roles"]):
             return await interaction.response.send_message(f"❌ {역할.mention} 은(는) 이미 담겨 있어요.", ephemeral=True)
         if len(panel["roles"]) >= MAX_ROLES_PER_PANEL:
@@ -220,8 +234,15 @@ class MariSelfRole(commands.Cog):
                 "패널을 하나 더 만들어서 나눠 담아주세요.", ephemeral=True)
 
         await interaction.response.defer(ephemeral=True)
-        panel["roles"].append({"id": 역할.id, "label": 이름 or 역할.name, "emoji": 이모지 or None})
-        self._save_panels(panels)
+        # 🔒 위에서 읽어둔 panels는 검사를 거치는 사이에 낡았을 수 있어요. 락 안에서
+        #    다시 읽어 고칩니다. (관리자 둘이 같은 패널을 동시에 손대면 한쪽이 사라져요)
+        async with self._lock:
+            panels = self._panels()
+            panel = panels.get(패널)
+            if panel is None:
+                return await interaction.followup.send("❌ 그새 패널이 사라졌어요.", ephemeral=True)
+            panel["roles"].append({"id": 역할.id, "label": 이름 or 역할.name, "emoji": 이모지.strip() or None})
+            self._save_panels(panels)
         await self._repaint(패널, panel)
         await interaction.followup.send(f"✅ {역할.mention} 을(를) 패널에 담았어요.", ephemeral=True)
 
@@ -238,13 +259,17 @@ class MariSelfRole(commands.Cog):
         panel = panels.get(패널)
         if panel is None:
             return await interaction.response.send_message("❌ 그런 패널이 없어요.", ephemeral=True)
-        before = len(panel["roles"])
-        panel["roles"] = [e for e in panel["roles"] if int(e["id"]) != 역할.id]
-        if len(panel["roles"]) == before:
+        if not any(int(e["id"]) == 역할.id for e in panel["roles"]):
             return await interaction.response.send_message(f"❌ {역할.mention} 은(는) 그 패널에 없어요.", ephemeral=True)
 
         await interaction.response.defer(ephemeral=True)
-        self._save_panels(panels)
+        async with self._lock:
+            panels = self._panels()
+            panel = panels.get(패널)
+            if panel is None:
+                return await interaction.followup.send("❌ 그새 패널이 사라졌어요.", ephemeral=True)
+            panel["roles"] = [e for e in panel["roles"] if int(e["id"]) != 역할.id]
+            self._save_panels(panels)
         await self._repaint(패널, panel)
         # 💡 이미 가져간 사람의 역할은 일부러 회수하지 않아요. 패널에서 빼는 건 "더 이상
         #    나눠주지 않는다"는 뜻이지, "지금 가진 사람에게서 뺏는다"가 아닙니다.
@@ -260,13 +285,16 @@ class MariSelfRole(commands.Cog):
         if not self._admin_only(interaction):
             return await interaction.response.send_message("⛔ 셀프 역할을 관리할 권한이 없어요!", ephemeral=True)
 
-        panels = self._panels()
-        panel = panels.pop(패널, None)
-        if panel is None:
+        if 패널 not in self._panels():
             return await interaction.response.send_message("❌ 그런 패널이 없어요.", ephemeral=True)
 
         await interaction.response.defer(ephemeral=True)
-        self._save_panels(panels)
+        async with self._lock:
+            panels = self._panels()
+            panel = panels.pop(패널, None)
+            if panel is None:
+                return await interaction.followup.send("❌ 그새 패널이 사라졌어요.", ephemeral=True)
+            self._save_panels(panels)
         # 메시지는 이미 없을 수도 있어요(관리자가 손으로 지운 경우). 그래도 기록은 지워야 합니다.
         try:
             channel = self.bot.get_channel(int(panel["channel_id"]))

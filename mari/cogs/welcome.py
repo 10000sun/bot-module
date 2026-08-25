@@ -286,6 +286,9 @@ class MariWelcome(commands.Cog):
         embed.set_footer(text="아래 버튼을 누르면 서버를 이용할 수 있어요.")
         message = await interaction.channel.send(embed=embed, view=RuleAgreeView(self, label))
 
+        # 🔒 패널을 올리는 동안(왕복 수백 ms) 다른 설정 명령이 파일을 고쳤을 수 있어요.
+        #    위에서 읽어둔 data로 저장하면 그 변경이 통째로 되돌아갑니다. 다시 읽어요.
+        data = load_welcome()
         data["rule_message_id"] = message.id
         data["rule_button_label"] = label
         save_welcome(data)
