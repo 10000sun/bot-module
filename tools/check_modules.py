@@ -6,7 +6,7 @@
 
 준비 (처음 한 번):
     python -m venv .venv
-    .venv\\Scripts\\python -m pip install -r mari/requirements.txt
+    .venv\\Scripts\\python -m pip install -r chunsik/requirements.txt
 
 사용:
     .venv\\Scripts\\python tools/check_modules.py                 # guild.json 그대로
@@ -33,19 +33,19 @@ import sys
 import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-MARI = os.path.join(os.path.dirname(HERE), "mari")
-sys.path.insert(0, MARI)
+CHUNSIK = os.path.join(os.path.dirname(HERE), "chunsik")
+sys.path.insert(0, CHUNSIK)
 
 DESCRIPTION_LIMIT = 100  # 디스코드 슬래시 명령 설명 길이 제한
 
 
 def _max_name_length():
-    """mari_names.MAX_NAME_LENGTH 를 import 없이 읽어옵니다.
+    """chunsik_names.MAX_NAME_LENGTH 를 import 없이 읽어옵니다.
 
-    (import하면 mari_config가 먼저 딸려 오면서 데이터 폴더가 정해져 버려요.
+    (import하면 chunsik_config가 먼저 딸려 오면서 데이터 폴더가 정해져 버려요.
      이 값은 그보다 먼저 알아야 임시 설정 파일을 만들 수 있습니다)
     """
-    source = open(os.path.join(MARI, "mari_names.py"), encoding="utf-8").read()
+    source = open(os.path.join(CHUNSIK, "chunsik_names.py"), encoding="utf-8").read()
     match = re.search(r"^MAX_NAME_LENGTH\s*=\s*(\d+)", source, re.M)
     return int(match.group(1)) if match else 12
 
@@ -60,17 +60,17 @@ def _prepare_config(argv):
     if not argv:
         label = "guild.json 그대로"
     elif argv == ["--none"]:
-        os.environ["MARI_GUILD_CONFIG"] = os.path.join(tempfile.gettempdir(), "no-such-guild.json")
+        os.environ["CHUNSIK_GUILD_CONFIG"] = os.path.join(tempfile.gettempdir(), "no-such-guild.json")
         label = "설정 파일 없음 (새로 납품한 서버처럼)"
     else:
-        real = os.path.join(MARI, "guild.json")
+        real = os.path.join(CHUNSIK, "guild.json")
         data = {}
         if os.path.exists(real):
             # 🚨 여기서 그냥 터지면 클라이언트는 raw 트레이스백만 봅니다. 납품 절차에서
             #    이 도구를 돌리라고 안내하니(README 7번), 이유를 그대로 알려줘야 해요.
-            #    봇도 이 경우 기동을 막습니다. (mari_config.GUILD_CONFIG_FATAL)
+            #    봇도 이 경우 기동을 막습니다. (chunsik_config.GUILD_CONFIG_FATAL)
             try:
-                # utf-8-sig — 봇과 같은 방식으로 읽어야 해요. (mari_config.load_guild_config)
+                # utf-8-sig — 봇과 같은 방식으로 읽어야 해요. (chunsik_config.load_guild_config)
                 with open(real, "r", encoding="utf-8-sig") as f:
                     data = json.load(f)
             except Exception as e:
@@ -85,7 +85,7 @@ def _prepare_config(argv):
         path = os.path.join(tempfile.gettempdir(), "check_modules_guild.json")
         with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
-        os.environ["MARI_GUILD_CONFIG"] = path
+        os.environ["CHUNSIK_GUILD_CONFIG"] = path
         label = f"주문 모듈: {', '.join(argv)}"
 
     if max_names:
@@ -95,13 +95,13 @@ def _prepare_config(argv):
         data_dir = os.path.join(tempfile.gettempdir(), "check_modules_maxnames")
         os.makedirs(data_dir, exist_ok=True)
         filler = {"currency": "재", "bot": "봇", "event": "행", "server": "터"}
-        with open(os.path.join(data_dir, "mari_settings.json"), "w", encoding="utf-8") as f:
+        with open(os.path.join(data_dir, "chunsik_settings.json"), "w", encoding="utf-8") as f:
             json.dump(
                 {"roles": {}, "channels": {},
                  "names": {k: c * n for k, c in filler.items()}},
                 f, ensure_ascii=False, indent=2,
             )
-        os.environ["MARI_DATA_DIR"] = data_dir
+        os.environ["CHUNSIK_DATA_DIR"] = data_dir
         label += f"  +  이름을 상한({n}자)까지 늘린 상태"
 
     return label, max_names
@@ -134,9 +134,9 @@ def _check_ownership(bot) -> list:
 
     돌려주는 건 사람이 읽을 문제 목록이에요. 비어 있으면 통과.
     """
-    import mari_config as cfg
+    import chunsik_config as cfg
     from modules import MODULES, owners
-    from mari_settings import _ALL_FEATURE_KEYS
+    from chunsik_settings import _ALL_FEATURE_KEYS
 
     problems = []
     known_modules = set(MODULES)
@@ -156,10 +156,10 @@ def _check_ownership(bot) -> list:
             f"정말 공용이면 check_modules.py의 SHARED_DATA_FILES에 넣으세요")
     phantom = sorted(set(owned_files) - all_files)
     if phantom:
-        problems.append(f"modules.py가 가리키는데 mari_config에 없는 상수 {phantom}")
+        problems.append(f"modules.py가 가리키는데 chunsik_config에 없는 상수 {phantom}")
 
     # ② 설정 명령이 다루는 채널·역할 키 — setting.py의 표가 실제로 설정 가능한 목록이에요.
-    setting_cog = bot.get_cog("MariSetting")
+    setting_cog = bot.get_cog("ChunsikSetting")
     if setting_cog is not None:
         for kind, table in (("channels", setting_cog._CHANNEL_COMMANDS),
                             ("roles", setting_cog._ROLE_COMMANDS)):
@@ -177,11 +177,11 @@ def _check_ownership(bot) -> list:
             f"그 기능을 빼도 /기능제어 선택지에 남습니다")
 
     # ④ 다른 파일이 적어둔 모듈 키에 오타가 없는지
-    diag_cog = bot.get_cog("MariTest")
+    diag_cog = bot.get_cog("ChunsikTest")
     if diag_cog is not None:
         check_module_keys("cogs/diagnostics.py의 _MODULE_COMMANDS", diag_cog._MODULE_COMMANDS.values())
 
-    help_cog = bot.get_cog("MariHelp")
+    help_cog = bot.get_cog("ChunsikHelp")
     if help_cog is not None:
         tags = set()
 
@@ -207,10 +207,10 @@ def _check_ownership(bot) -> list:
 
 
 async def main(label, max_names):
-    import mari_config as cfg
-    from mari_client import MariBotClient
+    import chunsik_config as cfg
+    from chunsik_client import ChunsikBotClient
 
-    bot = MariBotClient(command_prefix="/", intents=cfg.intents)
+    bot = ChunsikBotClient(command_prefix="/", intents=cfg.intents)
     await bot.load_modules()
 
     commands = bot.tree.get_commands()

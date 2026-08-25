@@ -3,7 +3,7 @@
 기능을 **골라 담아** 서버마다 다르게 납품하는 디스코드 봇입니다.
 지갑·상점·주식·아이디 등록부·생일·AI 대화 같은 기능을 주문에 맞춰 켜고 끕니다.
 
-- 무엇을 담을지는 `mari/guild.json`의 `modules`가 정합니다
+- 무엇을 담을지는 `chunsik/guild.json`의 `modules`가 정합니다
 - 재화·봇·이벤트·서버 **이름**은 클라이언트가 `/초기설정`으로 직접 넣습니다
 - 안 담은 기능은 명령·설정·데이터 파일까지 통째로 안 따라옵니다
 
@@ -33,7 +33,7 @@
 
 왜 필요한가 — 멤버 인텐트는 아이디 명단·생일·지갑청소가 서버 인원을 훑어야 해서,
 메시지 콘텐츠 인텐트는 아이디 자동등록·AI 대화·이벤트 키워드가 **본문을 읽어야** 해서예요.
-(둘 다 `mari/mari_config.py` 맨 위에서 선언합니다)
+(둘 다 `chunsik/chunsik_config.py` 맨 위에서 선언합니다)
 
 ### 3. 서버에 초대하기
 
@@ -66,12 +66,12 @@ https://discord.com/api/oauth2/authorize?client_id=<봇ID>&permissions=311653690
 
 ```bash
 python -m venv .venv
-.venv\Scripts\python -m pip install -r mari/requirements.txt
+.venv\Scripts\python -m pip install -r chunsik/requirements.txt
 ```
 
 ### 5. `.env` — 토큰과 비밀값
 
-`mari/.env.example` 을 복사해 `mari/.env` 로 만들고 채웁니다.
+`chunsik/.env.example` 을 복사해 `chunsik/.env` 로 만들고 채웁니다.
 
 | 키 | 필수 | 비우면 |
 |---|---|---|
@@ -84,7 +84,7 @@ python -m venv .venv
 
 ### 6. `guild.json` — 무엇을 담을지
 
-`mari/guild.example.json` 을 복사해 `mari/guild.json` 으로 만듭니다.
+`chunsik/guild.example.json` 을 복사해 `chunsik/guild.json` 으로 만듭니다.
 
 ```jsonc
 {
@@ -116,7 +116,7 @@ python -m venv .venv
 
 위 라인은 아래 라인을 **통째로** 포함하고, 라인 안에서 의존 관계도 미리 맞춰뒀어요
 (상점을 담으면 지갑이 이미 들어 있습니다). 그래서 주문서에 없던 기능이 자동으로
-딸려가는 일이 없어요. 라인 정의는 `mari/modules.py`의 `TIER_SPECS` 한 곳에 있고,
+딸려가는 일이 없어요. 라인 정의는 `chunsik/modules.py`의 `TIER_SPECS` 한 곳에 있고,
 `tools/check_tiers.py`가 예시 파일과 대조합니다.
 
 > 💡 AI 대화(`gpt`)는 `GEMINI_API_KEY` 사용량이 계속 나가는 기능이에요. 라인에 넣는
@@ -156,7 +156,7 @@ python -m venv .venv
 ### 8. 실행
 
 ```bash
-cd mari
+cd chunsik
 ..\.venv\Scripts\python main.py
 ```
 
@@ -191,7 +191,7 @@ cd mari
 `🛒 상점` · `💰 경제` · `🎉 알림`. 상점 채널을 새로 만들면 **매대까지 세워둡니다**
 (물건만 `/상점 항목추가`로 넣으면 돼요). 한 카테고리에 열몇 개를 몰아넣으면 서버 목록이 벽이 되니까요.
 카테고리 이름 앞에 뭘 붙이고 싶으면 `접두사`를 주세요 (`봇` → `봇 📋 로그`).
-묶음을 바꾸려면 `mari/cogs/wizard.py`의 `CATEGORY_BY_CHANNEL` 한 곳만 고치면 됩니다.
+묶음을 바꾸려면 `chunsik/cogs/wizard.py`의 `CATEGORY_BY_CHANNEL` 한 곳만 고치면 됩니다.
 
 > 🎭 만들어지는 관리자 역할은 **권한이 하나도 없는 표식**이에요. 이 봇의 권한은
 > 디스코드 권한이 아니라 "settings.json에 그 역할 ID가 있느냐"로 도니까요.
@@ -217,7 +217,7 @@ cd mari
 
 ### 12. 🚨 백업을 서버 밖으로
 
-봇이 매일 새벽 3시에 `mari/data/backups/` 로 데이터를 통째로 복사합니다.
+봇이 매일 새벽 3시에 `chunsik/data/backups/` 로 데이터를 통째로 복사합니다.
 **그 폴더를 클라우드 드라이브(구글 드라이브·원드라이브 등)에 동기화해 두세요.**
 
 같은 디스크에만 있으면 디스크가 죽는 순간 지갑·아이디·상점 데이터가 같이 사라집니다.
@@ -248,7 +248,7 @@ cd mari
 | 증상 | 원인 |
 |---|---|
 | 기동하자마자 죽음 (`PrivilegedIntentsRequired`) | Intent 2개를 안 켰어요 (위 2번) |
-| `❌ 봇 토큰이 없어요!` | `mari/.env` 가 없거나 `DISCORD_TOKEN` 이 비었어요 |
+| `❌ 봇 토큰이 없어요!` | `chunsik/.env` 가 없거나 `DISCORD_TOKEN` 이 비었어요 |
 | `🚨 서버 설정을 읽을 수 없어…` | `guild.json` JSON 문법이 깨졌어요. 고치기 전엔 **일부러 안 켜집니다** |
 | 슬래시 명령이 하나도 안 보임 | 반영에 최대 1시간. 급하면 `/테스트 명령어동기화` |
 | 명령이 **통째로** 사라짐 | 동기화 규격 위반. `check_modules.py` 로 원인 확인 |
@@ -263,10 +263,10 @@ cd mari
 ## 🗂️ 폴더 구조
 
 ```
-mari/
+chunsik/
   main.py              진입점
-  mari_config.py       경로·비밀값·guild.json 읽기
-  mari_names.py        재화·봇·이벤트·서버 이름 (클라이언트가 /초기설정으로 입력)
+  chunsik_config.py       경로·비밀값·guild.json 읽기
+  chunsik_names.py        재화·봇·이벤트·서버 이름 (클라이언트가 /초기설정으로 입력)
   modules.py           어떤 기능이 무엇을 데려오는지 (소유 표)
   cogs/                기능별 코그 14개
   parked/              특정 서버 전용이라 빼둔 기능 창고
@@ -278,5 +278,5 @@ tools/
   check_money.py       돈 계층의 약속 (저장 실패·파일 손상 시 돈이 안 사라지는지)
 ```
 
-`mari/guild.json`, `mari/.env`, `mari/data/` 는 `.gitignore` 대상이에요.
+`chunsik/guild.json`, `chunsik/.env`, `chunsik/data/` 는 `.gitignore` 대상이에요.
 **클라이언트 데이터라 절대 커밋하지 마세요.**

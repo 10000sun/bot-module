@@ -10,19 +10,19 @@
 
 ## 지금 어디까지 왔나
 
-`maribot` 코드를 가져와 **모듈로 골라 담을 수 있는 형태**로 바꾸는 중입니다.
+원본 봇 코드를 가져와 **모듈로 골라 담을 수 있는 형태**로 바꾸는 중입니다.
 
 - ✅ 코드만 복사 (유저 데이터·깃 히스토리는 안 가져옴)
-- ✅ 서버 고유 ID를 코드에서 걷어내 `mari/guild.json` 으로 분리
-- ✅ 모듈 레지스트리(`mari/modules.py`) + 동적 로딩. 담을 기능은 `guild.json`의 `modules`가 결정
+- ✅ 서버 고유 ID를 코드에서 걷어내 `chunsik/guild.json` 으로 분리
+- ✅ 모듈 레지스트리(`chunsik/modules.py`) + 동적 로딩. 담을 기능은 `guild.json`의 `modules`가 결정
 - ✅ 코그 간 직접 import 제거 (14개 코그가 전부 독립)
-- ✅ 서버 고유 기능을 `mari/parked/` 창고로
+- ✅ 서버 고유 기능을 `chunsik/parked/` 창고로
   (캠프·명단·프로필·견학권 / 고확 · 유배 · 타운가이드 · AI 페르소나 · 레벨 등급제)
 - ✅ **이름 변수화 + 첫 기동 입력받기** — `/초기설정` 슬래시 명령, 값은 `settings.json`
 - ✅ **모듈 소유 관계** — 어떤 모듈이 어떤 채널·역할·기능키·데이터파일을 데려오는지
   `modules.py` 한 곳에. 담지 않은 기능의 설정 명령과 빈 JSON이 따라오던 걸 막았어요
 - ✅ **등급 사다리를 설정으로** — `guild.json`의 `ranks`. 안 적으면 "대장 / 멤버" 두 칸
-- ✅ `cogs/core.py` → `cogs/ids.py` (클래스도 `MariCore` → `MariIds`). '핵심'처럼
+- ✅ `cogs/core.py` → `cogs/ids.py` (클래스도 `ChunsikCore` → `ChunsikIds`). '핵심'처럼
   보이는 이름인데 실제 내용은 게임 아이디 등록부라 헷갈렸어요
 - ✅ **도움말이 모듈 구성을 봅니다.** 예전엔 고정 문자열이라 shop+birthday만 담아
   납품하면 `/도움말`이 **없는 명령 37개**를 안내했어요. 이제 줄마다 모듈 태그를 달고
@@ -60,14 +60,14 @@
   이름이 기본값이라, `/초기설정`을 안 한 납품 서버 문구에 남의 서버 이름이 나갔어요.
   **원본 서버를 이 코드로 갈아끼우면 `/초기설정`을 한 번 실행해야 합니다** (위 '4.' 참고)
 - ✅ **`/설치 자동생성`이 카테고리를 나눠 담습니다 (2026-08-25)** — 📋 로그 · 🆔 아이디 ·
-  📈 주식 · 🛒 상점 · 💰 경제 · 🎉 알림. 상점 채널을 만들면 `MariShop.ensure_board()`로
+  📈 주식 · 🛒 상점 · 💰 경제 · 🎉 알림. 상점 채널을 만들면 `ChunsikShop.ensure_board()`로
   **매대까지 세워둬요**(`get_cog`으로 찾아 부르니 상점을 안 담아도 안전). 묶음은 `cogs/wizard.py`의 `CATEGORY_BY_CHANNEL` 한 곳에
   있고, 새 채널을 만들면 거기 한 줄만 더하면 돼요. 표에 없는 키는 '🧩 기타'로 갑니다
 - ✅ **새 기능 다섯 (2026-08-24)** — 하나에 코그 파일 하나씩, 전부 따로 뗄 수 있어요.
   `selfrole`(셀프 역할) · `welcome`(입장 자동화) · `levels`(활동 레벨) ·
   `wizard`(설치 마법사, 코어) · `party`(파티 모집). 아래 '새로 만든 기능' 절 참고
 - ✅ **판매 라인 (2026-08-24)** — 에센셜 / 스탠다드 / 프리미엄 세 벌을
-  `mari/modules.py`의 `TIER_SPECS` 한 곳에 박았어요. `guild.example.json`의
+  `chunsik/modules.py`의 `TIER_SPECS` 한 곳에 박았어요. `guild.example.json`의
   `_티어프리셋`이 클라이언트가 복사할 값이고, `tools/check_tiers.py`가 둘을 대조한 뒤
   라인마다 `check_modules`·`check_help`를 그 조합으로 돌립니다
 
@@ -93,7 +93,7 @@
 
 ### 알아둘 것
 
-- **역할 안전 검사는 `mari_utils.role_reject_reason` 한 곳에 있어요.** 셀프 역할·입장
+- **역할 안전 검사는 `chunsik_utils.role_reject_reason` 한 곳에 있어요.** 셀프 역할·입장
   자동 역할·레벨 보상은 전부 **본인 확인 없이 붙는 역할**이라, 관리자·역할 관리·밴 같은
   권한이 딸린 역할은 담기지 않습니다. 셋이 같은 함수를 씁니다.
   셀프 역할은 **누를 때 한 번 더** 봐요 — 담은 뒤에 권한이 추가될 수 있으니까요.
@@ -104,13 +104,13 @@
 - **레벨 경험치만 메모리에 모았다가 30초마다 저장합니다.** 메시지마다 파일을 쓰면 사람
   많은 서버에서 디스크가 쉴 새 없이 돌아요. 봇이 급사하면 최대 30초어치가 날아가는데,
   재화가 아니라 경험치라서 감수했습니다. **지갑에는 절대 이 방식을 쓰지 마세요.**
-- **시각 파서(`14:00`·`8-25 20:00`)를 `mari_utils.parse_datetime_text`로 옮겼어요.**
+- **시각 파서(`14:00`·`8-25 20:00`)를 `chunsik_utils.parse_datetime_text`로 옮겼어요.**
   스누즈와 파티가 같은 형식을 받아야 해서요. `cogs/snooze.py`의 `_parse_absolute`는
   이제 그걸 부르는 한 줄입니다.
 - **`/설치 자동생성`은 채널 관리 권한이 필요해요.** 초대 URL의 권한 숫자를
   `311653690448`로 바꿨습니다(기존 값 + 채널 관리 16). **이미 초대해둔 서버는 그 숫자로
   다시 초대 링크를 열어야** 권한이 붙어요. 없으면 무엇이 없어서 실패했는지 알려줍니다.
-- **`wizard`는 `MariSetting`의 이름표를 런타임에 빌려 씁니다.** `_CHANNEL_COMMANDS` /
+- **`wizard`는 `ChunsikSetting`의 이름표를 런타임에 빌려 씁니다.** `_CHANNEL_COMMANDS` /
   `_ROLE_COMMANDS`를 `get_cog`으로 읽어요. `check_modules.py`도 같은 표를 같은 방식으로
   읽으니, 그 두 딕셔너리는 **이름을 바꾸지 마세요.**
 
@@ -147,7 +147,7 @@
 
 코어(끌 수 없음): `setting` `help` `diagnostics` `backup` `wizard`
 
-**고치는 곳은 `mari/modules.py`의 `TIER_SPECS` 하나뿐입니다.** `adds`에는 *더해지는
+**고치는 곳은 `chunsik/modules.py`의 `TIER_SPECS` 하나뿐입니다.** `adds`에는 *더해지는
 것만* 적어요 — 누적으로 계산하니까, "스탠다드엔 있는데 프리미엄엔 없는 기능"이
 실수로 생기지 않습니다. 고친 뒤엔 `python tools/check_tiers.py`를 돌리세요.
 `guild.example.json`의 `_티어프리셋`도 같이 고쳐야 하는데, 안 고치면 이 도구가 잡아요.
@@ -182,7 +182,7 @@
   모듈이 생겨서 `check_tiers.py`가 막습니다 — 그때 그 검사(`unsold`)를 손봐야 해요.
 - **`chronicle`은 도움말에 안 뜹니다.** 일부러 뺀 거예요(`cogs/help.py`의 의도적 제외
   주석). 프리미엄 판매 항목으로 광고하려면 도움말 카테고리를 하나 열어야 합니다.
-- **프리미엄에 커스텀을 몇 개까지 얹을지.** `mari/parked/`에 원본 서버 고유 기능이
+- **프리미엄에 커스텀을 몇 개까지 얹을지.** `chunsik/parked/`에 원본 서버 고유 기능이
   들어 있어요(캠프·명단·프로필·견학권·세금·유배·레벨 등급제·AI 페르소나). 꺼내
   손보는 품이 기능마다 달라서 개수로 파는 건 위험합니다.
 - **비게임 서버용 라인.** `id`가 게임 아이디 등록부라 일반 커뮤니티엔 에센셜이 빈
@@ -232,7 +232,7 @@ exe도 `.pyc`도 난독화도 전부 "귀찮게 만들기"까지예요. (PyInsta
 exe가 해결하는 건 "파이썬 설치 단계 없애기" 하나뿐이고, 24시간 실행 문제는 그대로예요.
 백신 오탐·용량(100~200MB)·업데이트 재배포가 따라옵니다. 그래도 만든다면 —
 
-- 🚨 **`mari_config.py`의 `BASE_DIR`을 반드시 고쳐야 합니다.**
+- 🚨 **`chunsik_config.py`의 `BASE_DIR`을 반드시 고쳐야 합니다.**
   `BASE_DIR = os.path.dirname(os.path.abspath(__file__))` 인데, PyInstaller **onefile**로
   묶으면 `__file__`이 실행할 때마다 새로 만들어지는 임시 폴더를 가리켜요. 그러면 `data/`가
   거기 생겨서 **껐다 켤 때마다 지갑·아이디·상점 데이터가 통째로 사라집니다.** 조용히
@@ -323,7 +323,7 @@ A/C 모델은 그 데이터를 **내가 보관**하는 셈이라, 견적서에 "
 양쪽이 **같은 목표를 각자 한 번씩** 진행했어요. 정면 머지하면 18개 파일이 충돌해서,
 하나씩 대조해 쓸 것만 옮겨오고 `git merge -s ours`로 정리했습니다. (커밋 `b9b1eed`)
 
-다행히 결과물이 상당 부분 수렴해 있었어요 — 양쪽 `mari_config.py`의 데이터 파일
+다행히 결과물이 상당 부분 수렴해 있었어요 — 양쪽 `chunsik_config.py`의 데이터 파일
 상수가 25개로 완전히 같았고, 충돌 대부분은 같은 결론을 다르게 쓴 문장이었습니다.
 
 저쪽에서 건져온 것: `tools/check_help.py`, `ranks` 등급 설정화, 창고 문서에 빠져
@@ -360,7 +360,7 @@ A/C 모델은 그 데이터를 **내가 보관**하는 셈이라, 견적서에 "
 
 옛 이름(`broadcast_mention`)이 있으면 **그 값을 그대로 씁니다.** 생일 알림 멘션이
 조용히 빠지는 일은 없어요. 대신 기동 로그가 "이름을 바꿔주세요"라고 한 줄 남깁니다.
-바꾸는 건 언제 해도 돼요. (`mari_config.py`의 `_ROLE_ALIASES`)
+바꾸는 건 언제 해도 돼요. (`chunsik_config.py`의 `_ROLE_ALIASES`)
 
 ### 1-1. 안 읽는 항목도 기동 로그가 알려줍니다
 
@@ -386,7 +386,7 @@ A/C 모델은 그 데이터를 **내가 보관**하는 셈이라, 견적서에 "
 색은 빨강/보라/파랑/청록/노랑/초록/회색 중에 고르고, 생략하면 순서대로 물려줍니다.
 맨 위 '대장' 칸은 여기가 아니라 `/설정 명단 대장`으로 지정해요. 어느 등급에도 안
 걸린 사람은 맨 끝 '미분류' 칸에 모이니 아무도 명단에서 빠지지 않습니다.
-자세한 설명은 `mari/guild.example.json`의 `_ranks설명`에 있어요.
+자세한 설명은 `chunsik/guild.example.json`의 `_ranks설명`에 있어요.
 
 같이 사라진 키(그냥 지우면 됩니다): `town_guide`, `onboarding` 섹션 전체, `personas` 섹션 전체.
 
@@ -432,10 +432,10 @@ A/C 모델은 그 데이터를 **내가 보관**하는 셈이라, 견적서에 "
 
 ## 이름은 어떻게 동작하나
 
-`mari/mari_names.py` 한 파일이 전부입니다. 코드는 이름을 모르고 여기서 받아 써요.
+`chunsik/chunsik_names.py` 한 파일이 전부입니다. 코드는 이름을 모르고 여기서 받아 써요.
 
 ```python
-from mari_names import currency, bot_name, event_name, server_name, josa
+from chunsik_names import currency, bot_name, event_name, server_name, josa
 
 f"{amount:,} {currency()}"                        # "1,000 골드"
 f"{currency()}{josa(currency(), '을를')} 보냈어요"  # "골드를" / "코인을"
@@ -495,6 +495,46 @@ f"{currency()}{josa(currency(), '을를')} 보냈어요"  # "골드를" / "코�
 
 ---
 
+## 🏷️ 이름을 chunsik으로 통일했습니다 (2026-08-25)
+
+봇 이름이 「김춘식」이라 코드 쪽 이름도 거기 맞췄어요. **`mari`라는 낱말은 이제
+코드·파일 이름·데이터 파일 어디에도 없습니다.**
+
+| 무엇 | 전 | 후 |
+|---|---|---|
+| 폴더 | `mari/` | `chunsik/` |
+| 공용 모듈 | `mari_config.py` 외 7개 | `chunsik_config.py` 외 7개 |
+| 클래스 | `MariEconomy` 외 23개 | `ChunsikEconomy` 외 23개 |
+| 환경변수 | `MARI_DATA_DIR` · `MARI_GUILD_CONFIG` | `CHUNSIK_*` |
+| 데이터 파일 | `data/mari_*.json` | `data/chunsik_*.json` |
+
+### 밟을 뻔한 함정 셋
+
+- **🚨 데이터 파일 이름이 같이 바뀝니다.** 지갑·주식·상점이 전부 `mari_*.json`이었어요.
+  코드만 바꾸면 새 이름의 파일을 못 찾아서 **빈 파일이 새로 생기고, 지갑이 0원으로
+  보입니다.** 데이터가 지워지는 게 아니라 **안 보이게 되는** 종류라 더 나빠요 —
+  옛 파일은 그대로 옆에 남아 있는데 아무도 안 읽습니다.
+  `chunsik_config.py`의 `migrate_renamed_data_files()`가 기동할 때 옮겨줘요.
+  새 이름의 파일이 이미 있으면 절대 덮어쓰지 않습니다.
+- **🚨 `.gitignore`의 경로도 같이 고쳐야 합니다.** `mari/data/`·`mari/guild.json`이
+  그대로였다면, 폴더 이름이 바뀐 순간 **유저 데이터와 서버 ID가 커밋 대상이 됩니다.**
+  (원본 봇 레포에서 실제로 났던 사고와 같은 종류예요)
+- **한글 '마리'는 건드리지 않았어요.** ASCII `mari`만 바꿨습니다. `gpt.py`의
+  "고양이 두 **마리**"는 단위 명사라 바꾸면 안 되는 자리인데, 이 방식이면 애초에
+  안 걸립니다.
+
+### 알아둘 것
+
+- **이미 올라가 있는 상점 매대의 드롭다운이 안 눌립니다.** 버튼 식별자가
+  `mari_shop:...` → `chunsik_shop:...`으로 바뀌었는데, 그 식별자는 **이미 올린
+  메세지 안에** 박혀 있어요. 그 채널에서 `/상점 생성`을 한 번 다시 실행하면 됩니다.
+  (셀프 역할·파티 버튼은 식별자에 이름이 없어서 그대로 눌려요)
+- **`.env`에 `MARI_*`를 적어뒀다면 `CHUNSIK_*`로 바꿔주세요.** 둘 다 선택 항목이라
+  안 적었으면 할 일이 없습니다.
+- 개명은 순수 치환이라 로직은 하나도 안 건드렸어요. 검사 5종 전부 통과합니다.
+
+---
+
 ## 다음에 할 것
 
 **급한 건 없습니다.** 아래는 전부 "언젠가" 항목이에요.
@@ -516,7 +556,7 @@ f"{currency()}{josa(currency(), '을를')} 보냈어요"  # "골드를" / "코�
 `module_active`를 부르는 곳을 보면 패턴이 보입니다:
 
 ```bash
-grep -rn "module_active" mari/cogs/
+grep -rn "module_active" chunsik/cogs/
 ```
 
 ### 3. 팔기 전에 반드시 (2026-08-25)
@@ -541,7 +581,7 @@ grep -rn "module_active" mari/cogs/
 - **주석의 옛 이름은 정리했습니다.** 일반 명사처럼 쓰던 것만 바꿨어요
   (에바→재화, 에바시→이벤트, 에바스타운→서버, 마리→봇). 내력 설명은 그대로 뒀습니다.
   일부러 남긴 두 곳 — `gpt.py`의 "고양이 두 **마리**"(단위 명사)와
-  `mari_client.py`의 기본값 설명("에바"·"마리"…). 둘 다 바꾸면 안 돼요.
+  `chunsik_client.py`의 기본값 설명("에바"·"마리"…). 둘 다 바꾸면 안 돼요.
 
 ---
 
@@ -551,7 +591,7 @@ grep -rn "module_active" mari/cogs/
 
 ```bash
 python -m venv .venv
-.venv\Scripts\python -m pip install -r mari/requirements.txt
+.venv\Scripts\python -m pip install -r chunsik/requirements.txt
 
 .venv\Scripts\python tools/check_modules.py                 # 지금 설정 그대로
 .venv\Scripts\python tools/check_modules.py shop birthday   # 이 조합만 주문받았다면
@@ -605,7 +645,7 @@ python -m venv .venv
 토큰이 없는 PC에서도 **로그인 직전까지는** 진짜로 켜볼 수 있어요.
 
 ```bash
-cd mari && python main.py     # 설정 경고 → "봇 토큰이 없어요!" 까지 갑니다
+cd chunsik && python main.py     # 설정 경고 → "봇 토큰이 없어요!" 까지 갑니다
 ```
 
 여기까지 오면 설정 읽기·데이터 파일 생성·경고 출력이 실제로 도는 걸 본 거예요.
@@ -613,12 +653,12 @@ cd mari && python main.py     # 설정 경고 → "봇 토큰이 없어요!" 까
 `tools/check_modules.py`가 같은 경로를 밟습니다.
 
 납품 구성별로 유저가 실제로 볼 화면이 궁금하면, 임시 `guild.json`을 만들고
-`MARI_GUILD_CONFIG`·`MARI_DATA_DIR` 환경변수로 가리킨 뒤 `_user_categories()`를
-찍어보세요. **진짜 `mari/data/`는 절대 건드리지 마세요.**
+`CHUNSIK_GUILD_CONFIG`·`CHUNSIK_DATA_DIR` 환경변수로 가리킨 뒤 `_user_categories()`를
+찍어보세요. **진짜 `chunsik/data/`는 절대 건드리지 마세요.**
 
 ### 창고에 넣는 방식
 
-`mari/parked/README.md` 참고. 요약하면:
+`chunsik/parked/README.md` 참고. 요약하면:
 
 - 파일 통째로 옮길 수 있으면 `.py` 그대로 (그 자체로 온전한 모듈)
 - 여러 파일에서 오려낸 조각 모음이면 `.py.txt`
@@ -714,7 +754,7 @@ cd mari && python main.py     # 설정 경고 → "봇 토큰이 없어요!" 까
 - **선택지가 0개인 드롭다운(`discord.ui.Select`)도 명령을 죽입니다.** 코어 모듈만
   담으면 유저용 도움말 카테고리가 통째로 비어요. `help_command`가 그때는 드롭다운
   없이 안내만 보내도록 막아뒀습니다. 카테고리를 동적으로 만들 땐 항상 이걸 보세요.
-- **`mari_names`는 `mari_settings`를 씁니다.** 그래서 `mari_settings` 쪽에서 이름이
+- **`chunsik_names`는 `chunsik_settings`를 씁니다.** 그래서 `chunsik_settings` 쪽에서 이름이
   필요하면 파일 맨 위가 아니라 **함수 안에서** import해야 해요. 서로를 부르는
   순환 import가 되면 봇이 기동조차 못 합니다. (`build_log_embed` 참고)
 - **일괄 수정 스크립트로 코드를 오려낼 때**, 잘라낸 내용을 창고 파일에 **먼저**
@@ -733,9 +773,9 @@ cd mari && python main.py     # 설정 경고 → "봇 토큰이 없어요!" 까
 
 ### 로컬에만 있는 것
 
-`mari/guild.json`(실제 역할 ID가 든 로컬 설정)과 `mari/data/`, 그리고 `.claude/`는
+`chunsik/guild.json`(실제 역할 ID가 든 로컬 설정)과 `chunsik/data/`, 그리고 `.claude/`는
 `.gitignore` 대상이라 **집 PC에는 없습니다.** 원본 서버 ID가 필요하면
-`mari/guild.example.json`을 복사해서 채우거나, 회사 PC의 파일을 옮기세요.
-값 자체는 `maribot` 레포의 깃 히스토리에도 남아 있습니다.
+`chunsik/guild.example.json`을 복사해서 채우거나, 회사 PC의 파일을 옮기세요.
+값 자체는 **원본 봇 레포**의 깃 히스토리에도 남아 있습니다.
 
 없어도 `tools/check_modules.py`는 잘 돌아갑니다. (역할 ID가 비었다고 경고만 해요)

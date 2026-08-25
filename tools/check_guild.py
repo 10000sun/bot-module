@@ -27,8 +27,8 @@ import sys
 import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-MARI = os.path.join(os.path.dirname(HERE), "mari")
-sys.path.insert(0, MARI)
+CHUNSIK = os.path.join(os.path.dirname(HERE), "chunsik")
+sys.path.insert(0, CHUNSIK)
 
 _fails = []
 
@@ -44,7 +44,7 @@ def check(label, got, want):
 
 
 def load_config(guild_data):
-    """임시 guild.json을 만들어 mari_config를 처음부터 다시 불러옵니다.
+    """임시 guild.json을 만들어 chunsik_config를 처음부터 다시 불러옵니다.
 
     ⚠️ 진짜 guild.json / data 폴더는 건드리지 않아요. 실제 설정이 날아가면 안 되니까요.
     """
@@ -52,13 +52,13 @@ def load_config(guild_data):
     if guild_data is not None:
         with open(path, "w", encoding="utf-8") as f:
             json.dump(guild_data, f, ensure_ascii=False)
-    os.environ["MARI_GUILD_CONFIG"] = path
-    os.environ["MARI_DATA_DIR"] = tempfile.mkdtemp()
+    os.environ["CHUNSIK_GUILD_CONFIG"] = path
+    os.environ["CHUNSIK_DATA_DIR"] = tempfile.mkdtemp()
     # 설정은 import 시점에 한 번 읽고 굳기 때문에, 구성마다 모듈을 다시 들여야 해요.
-    for name in [m for m in sys.modules if m.startswith(("mari", "cogs")) or m == "modules"]:
+    for name in [m for m in sys.modules if m.startswith(("chunsik", "cogs")) or m == "modules"]:
         del sys.modules[name]
-    import mari_config
-    return mari_config
+    import chunsik_config
+    return chunsik_config
 
 
 class _Role:
@@ -76,10 +76,10 @@ class _Member:
 
 
 def _core_with(guild_data):
-    """주어진 설정으로 MariIds를 (생성자를 거치지 않고) 하나 만들어 돌려줍니다."""
+    """주어진 설정으로 ChunsikIds를 (생성자를 거치지 않고) 하나 만들어 돌려줍니다."""
     load_config(guild_data)
-    from cogs.ids import MariIds
-    return MariIds.__new__(MariIds)
+    from cogs.ids import ChunsikIds
+    return ChunsikIds.__new__(ChunsikIds)
 
 
 CHIEF = 999
@@ -167,7 +167,7 @@ def test_sections():
 def test_legacy_parser():
     print("\n[6] 옛 명단 문서 파서 — 구획 제목을 사람으로 오인하지 않기")
     load_config(TWO_RANKS)
-    from mari_utils import parse_legacy_id_document
+    from chunsik_utils import parse_legacy_id_document
 
     doc = "\n".join([
         "```ansi", "게임 아이디 목록", "",
@@ -206,7 +206,7 @@ def test_legacy_keys():
         "personas": {"papa": 12345},
     })
     check("🚨 옛 이름으로도 생일 멘션 역할을 읽음", cfg.BIRTHDAY_MENTION_ROLE_ID, 111222333)
-    check("나머지 역할은 그대로", cfg.MARI_CALL_ROLE_ID, 444555666)
+    check("나머지 역할은 그대로", cfg.CHUNSIK_CALL_ROLE_ID, 444555666)
     warns = " | ".join(cfg.GUILD_CONFIG_WARNINGS)
     check("이름을 바꾸라고 안내", "예전 이름이에요" in warns, True)
     check("창고로 간 설정도 알려줌 (최상위)", "onboarding" in warns and "personas" in warns, True)
@@ -241,11 +241,11 @@ def test_fatal():
     path = os.path.join(d, "guild.json")
     with open(path, "w", encoding="utf-8") as f:
         f.write('{"modules": ["shop"] "roles": {}}')     # 쉼표 빠짐
-    os.environ["MARI_GUILD_CONFIG"] = path
-    os.environ["MARI_DATA_DIR"] = tempfile.mkdtemp()
-    for name in [m for m in sys.modules if m.startswith(("mari", "cogs")) or m == "modules"]:
+    os.environ["CHUNSIK_GUILD_CONFIG"] = path
+    os.environ["CHUNSIK_DATA_DIR"] = tempfile.mkdtemp()
+    for name in [m for m in sys.modules if m.startswith(("chunsik", "cogs")) or m == "modules"]:
         del sys.modules[name]
-    import mari_config as broken
+    import chunsik_config as broken
     check("기동을 막는 표시가 켜짐", bool(broken.GUILD_CONFIG_FATAL), True)
     check("이유에 원인이 담김", "JSONDecodeError" in broken.GUILD_CONFIG_FATAL, True)
     check("고치는 법도 안내", "jsonlint" in broken.GUILD_CONFIG_FATAL, True)
@@ -256,11 +256,11 @@ def test_fatal():
     path = os.path.join(tempfile.mkdtemp(), "guild.json")
     with open(path, "w", encoding="utf-8") as f:
         f.write('["shop", "birthday"]')
-    os.environ["MARI_GUILD_CONFIG"] = path
-    os.environ["MARI_DATA_DIR"] = tempfile.mkdtemp()
-    for name in [m for m in sys.modules if m.startswith(("mari", "cogs")) or m == "modules"]:
+    os.environ["CHUNSIK_GUILD_CONFIG"] = path
+    os.environ["CHUNSIK_DATA_DIR"] = tempfile.mkdtemp()
+    for name in [m for m in sys.modules if m.startswith(("chunsik", "cogs")) or m == "modules"]:
         del sys.modules[name]
-    import mari_config as arr
+    import chunsik_config as arr
     check("기동을 막는 표시가 켜짐", bool(arr.GUILD_CONFIG_FATAL), True)
 
     print("\n[13] 🚨 못 읽었으면 데이터 파일도 만들면 안 됨")
@@ -270,14 +270,14 @@ def test_fatal():
     path = os.path.join(tempfile.mkdtemp(), "guild.json")
     with open(path, "w", encoding="utf-8") as f:
         f.write("{이건 JSON이 아님")
-    os.environ["MARI_GUILD_CONFIG"] = path
-    os.environ["MARI_DATA_DIR"] = data_dir
-    for name in [m for m in sys.modules if m.startswith(("mari", "cogs")) or m == "modules"]:
+    os.environ["CHUNSIK_GUILD_CONFIG"] = path
+    os.environ["CHUNSIK_DATA_DIR"] = data_dir
+    for name in [m for m in sys.modules if m.startswith(("chunsik", "cogs")) or m == "modules"]:
         del sys.modules[name]
-    import mari_storage  # noqa: F401  (import하는 순간 init_json_files가 돕니다)
+    import chunsik_storage  # noqa: F401  (import하는 순간 init_json_files가 돕니다)
     made = sorted(os.listdir(data_dir))
     check("주문 안 한 기능의 빈 JSON이 안 생김", made, [])
-    # (실제 기동에서는 mari_settings.json 하나가 생겨요. 기동 중단 메세지에 봇 이름을
+    # (실제 기동에서는 chunsik_settings.json 하나가 생겨요. 기동 중단 메세지에 봇 이름을
     #  쓰느라 설정을 읽기 때문인데, 모든 배포가 갖는 공용 파일이라 괜찮습니다)
 
     print("\n[14] 정상 설정은 당연히 안 막힘")
@@ -292,11 +292,11 @@ def test_fatal():
     path = os.path.join(tempfile.mkdtemp(), "guild.json")
     with open(path, "w", encoding="utf-8-sig") as f:
         f.write('{"modules": ["shop"], "roles": {}}')
-    os.environ["MARI_GUILD_CONFIG"] = path
-    os.environ["MARI_DATA_DIR"] = tempfile.mkdtemp()
-    for name in [m for m in sys.modules if m.startswith(("mari", "cogs")) or m == "modules"]:
+    os.environ["CHUNSIK_GUILD_CONFIG"] = path
+    os.environ["CHUNSIK_DATA_DIR"] = tempfile.mkdtemp()
+    for name in [m for m in sys.modules if m.startswith(("chunsik", "cogs")) or m == "modules"]:
         del sys.modules[name]
-    import mari_config as bom
+    import chunsik_config as bom
     check("기동을 안 막음", bom.GUILD_CONFIG_FATAL, None)
     check("주문한 모듈만", bom.ENABLED_MODULES, ["shop"])
 
@@ -304,11 +304,11 @@ def test_fatal():
     # 여기 걸리면 첫 줄 키가 '\ufeffDISCORD_TOKEN'이 돼서 "토큰 없음"으로 안 켜집니다.
     env_path = os.path.join(tempfile.mkdtemp(), ".env")
     with open(env_path, "w", encoding="utf-8-sig") as f:
-        f.write("MARI_BOM_TEST=ok\n")
-    os.environ.pop("MARI_BOM_TEST", None)
+        f.write("CHUNSIK_BOM_TEST=ok\n")
+    os.environ.pop("CHUNSIK_BOM_TEST", None)
     bom.load_env_file(env_path)
-    check("첫 줄 키가 안 깨짐", os.environ.get("MARI_BOM_TEST"), "ok")
-    os.environ.pop("MARI_BOM_TEST", None)
+    check("첫 줄 키가 안 깨짐", os.environ.get("CHUNSIK_BOM_TEST"), "ok")
+    os.environ.pop("CHUNSIK_BOM_TEST", None)
 
 
 if __name__ == "__main__":

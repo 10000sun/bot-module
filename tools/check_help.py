@@ -15,7 +15,7 @@
 **여러 모듈 조합으로 검사합니다.** 예전엔 전부 켠 상태로만 봤어요. `cogs/help.py`의
 안내문이 어떤 모듈이 올라왔는지 보지 않는 고정 문자열이라, 조합별로 돌리면 "이 조합엔
 없는 명령"이 잔뜩 나와서 진짜 오타가 묻혔거든요. 지금은 도움말이 모듈 구성을 보고
-스스로 걸러내므로(`MariHelp._visible`) **어느 조합에서든 0개가 정상**입니다.
+스스로 걸러내므로(`ChunsikHelp._visible`) **어느 조합에서든 0개가 정상**입니다.
 
 조합을 섞어 보는 게 중요해요. 전부 켠 상태만 보면 "안 담긴 기능의 명령을 안내한다"는,
 납품할 때마다 실제로 터지던 문제를 영영 못 잡습니다.
@@ -42,8 +42,8 @@ import sys
 import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-MARI = os.path.join(os.path.dirname(HERE), "mari")
-sys.path.insert(0, MARI)
+CHUNSIK = os.path.join(os.path.dirname(HERE), "chunsik")
+sys.path.insert(0, CHUNSIK)
 
 # 🧩 검사할 조합들. 납품에서 실제로 나올 법한 모양으로 골랐어요.
 # (None은 "설정 파일 없음" = 전부 켜짐. 코어만 담은 구성은 유저용 카테고리가 통째로
@@ -105,10 +105,10 @@ def _use_config(mods):
         path = os.path.join(tempfile.mkdtemp(), "guild.json")
         with open(path, "w", encoding="utf-8") as f:
             json.dump({"modules": mods}, f)
-    os.environ["MARI_GUILD_CONFIG"] = path
-    os.environ["MARI_DATA_DIR"] = tempfile.mkdtemp()
+    os.environ["CHUNSIK_GUILD_CONFIG"] = path
+    os.environ["CHUNSIK_DATA_DIR"] = tempfile.mkdtemp()
     # 설정은 import 시점에 한 번 읽고 굳어요. 조합마다 모듈을 다시 들여야 합니다.
-    for name in [m for m in sys.modules if m.startswith(("mari", "cogs")) or m == "modules"]:
+    for name in [m for m in sys.modules if m.startswith(("chunsik", "cogs")) or m == "modules"]:
         del sys.modules[name]
 
 
@@ -203,16 +203,16 @@ async def check_one(mods, label) -> int:
     """조합 하나를 검사하고 없는 명령 개수를 돌려줍니다."""
     _use_config(mods)
 
-    import mari_config as cfg
-    from mari_client import MariBotClient
+    import chunsik_config as cfg
+    from chunsik_client import ChunsikBotClient
 
-    bot = MariBotClient(command_prefix="/", intents=cfg.intents)
+    bot = ChunsikBotClient(command_prefix="/", intents=cfg.intents)
     await bot.load_modules()
 
     real = _registered_command_paths(bot)
-    help_cog = bot.get_cog("MariHelp")
+    help_cog = bot.get_cog("ChunsikHelp")
     if help_cog is None:
-        print("🚨 도움말 모듈(MariHelp)이 올라오지 않았어요. 대조할 수가 없습니다.")
+        print("🚨 도움말 모듈(ChunsikHelp)이 올라오지 않았어요. 대조할 수가 없습니다.")
         await bot.close()
         return 1
 
