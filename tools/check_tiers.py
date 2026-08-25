@@ -1,6 +1,6 @@
 """판매 라인(에센셜·스탠다드·프리미엄)으로 납품해도 되는지 한 번에 검사합니다.
 
-라인별 조합은 `mari/modules.py`의 TIER_SPECS 한 곳에만 적혀 있어요. 납품할 때마다
+라인별 조합은 `chunsik/modules.py`의 TIER_SPECS 한 곳에만 적혀 있어요. 납품할 때마다
 modules 목록을 손으로 적으면 조합이 조금씩 어긋나고, 나중에 "이 서버는 어느 라인으로
 판 건가"를 아무도 모르게 됩니다. 그래서 코드에 박아두고 이 도구가 대조해요.
 
@@ -32,12 +32,12 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
-MARI = os.path.join(ROOT, "mari")
-sys.path.insert(0, MARI)
+CHUNSIK = os.path.join(ROOT, "chunsik")
+sys.path.insert(0, CHUNSIK)
 
 import modules as mod  # noqa: E402  (경로를 먼저 꽂아야 해서)
 
-EXAMPLE = os.path.join(MARI, "guild.example.json")
+EXAMPLE = os.path.join(CHUNSIK, "guild.example.json")
 
 # 🇰🇷 한국어 윈도우 콘솔(cp949)에서 이모지를 찍으면 UnicodeEncodeError로 죽습니다.
 #    납품 절차에서 클라이언트가 직접 돌리는 도구라 콘솔을 고르게 할 수 없어요.

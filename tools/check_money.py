@@ -17,7 +17,7 @@
 
 문제가 있으면 종료 코드 1로 끝납니다.
 
-⚠️ 진짜 `mari/data/`는 절대 안 건드려요. 매번 임시 폴더를 새로 씁니다.
+⚠️ 진짜 `chunsik/data/`는 절대 안 건드려요. 매번 임시 폴더를 새로 씁니다.
 
 ## 여기서 **안 보는** 것 (과신하지 마세요)
 
@@ -38,12 +38,12 @@ import sys
 import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-MARI = os.path.join(os.path.dirname(HERE), "mari")
-sys.path.insert(0, MARI)
+CHUNSIK = os.path.join(os.path.dirname(HERE), "chunsik")
+sys.path.insert(0, CHUNSIK)
 
 # 설정을 읽기 전에 임시 데이터 폴더를 꽂아둡니다. (import 시점에 굳어요)
-os.environ["MARI_GUILD_CONFIG"] = os.path.join(tempfile.gettempdir(), "no-such-guild.json")
-os.environ["MARI_DATA_DIR"] = tempfile.mkdtemp()
+os.environ["CHUNSIK_GUILD_CONFIG"] = os.path.join(tempfile.gettempdir(), "no-such-guild.json")
+os.environ["CHUNSIK_DATA_DIR"] = tempfile.mkdtemp()
 
 _fails = []
 
@@ -79,7 +79,7 @@ def tmp(name="x.json"):
 # ============================================================
 def test_storage():
     """저장 계층 — 여기가 무너지면 아래 전부가 무의미해요."""
-    from mari_storage import (DataSaveError, atomic_json_save,
+    from chunsik_storage import (DataSaveError, atomic_json_save,
                               atomic_json_save_or_raise, safe_json_load)
 
     print("\n[1] 저장하고 다시 읽기")
@@ -125,8 +125,8 @@ def test_storage():
 # ============================================================
 def test_ledger():
     """원장 — /지갑내역과 /지급취소가 이걸 봅니다."""
-    import mari_config as cfg
-    from mari_state import load_ledger, record_ledger, record_ledger_many
+    import chunsik_config as cfg
+    from chunsik_state import load_ledger, record_ledger, record_ledger_many
 
     print("\n[6] 원장 한 건 기록")
     entry_id = record_ledger(111, -500, 4500, "송금", "테스트", actor_id=222)
@@ -144,12 +144,12 @@ def test_ledger():
     # 잔액은 이미 바뀐, 제일 나쁜 상태가 됩니다.
     saved = cfg.LEDGER_FILE
     try:
-        import mari_state
-        mari_state.LEDGER_FILE = tempfile.mkdtemp()   # 폴더 → 저장 실패
+        import chunsik_state
+        chunsik_state.LEDGER_FILE = tempfile.mkdtemp()   # 폴더 → 저장 실패
         got = record_ledger(111, -1, 0, "실패해야함")
         check("저장이 실패해도 조용히 넘어감", got, "")
     finally:
-        mari_state.LEDGER_FILE = saved
+        chunsik_state.LEDGER_FILE = saved
 
     print("\n[8] 일괄 지급은 batch로 묶임")
     batch = record_ledger_many([(1, 100, 100), (2, 100, 100), (3, 100, 100)],
@@ -159,13 +159,13 @@ def test_ledger():
     check("되돌리기 단위가 됨 (batch id 존재)", bool(batch), True)
 
     print("\n[9] 원장이 무한정 커지지 않음")
-    from mari_state import LEDGER_MAX_ENTRIES
+    from chunsik_state import LEDGER_MAX_ENTRIES
     check("상한이 정해져 있음", LEDGER_MAX_ENTRIES > 0, True)
     n = load_ledger()
     n["entries"] = [dict(id=str(i), user="1", delta=1, balance=1, kind="k",
                          detail="", actor=None, batch=None, reverted=False)
                     for i in range(LEDGER_MAX_ENTRIES + 50)]
-    from mari_storage import atomic_json_save
+    from chunsik_storage import atomic_json_save
     atomic_json_save(cfg.LEDGER_FILE, n)
     record_ledger(1, 1, 1, "넘침")
     check(f"{LEDGER_MAX_ENTRIES}건으로 잘림",
@@ -175,11 +175,11 @@ def test_ledger():
 # ============================================================
 def test_wallet():
     """지갑 — 잔액을 읽고 만드는 자리."""
-    from cogs.economy import MariEconomy
-    from mari_storage import DataSaveError, atomic_json_save, safe_json_load
-    import mari_config as cfg
+    from cogs.economy import ChunsikEconomy
+    from chunsik_storage import DataSaveError, atomic_json_save, safe_json_load
+    import chunsik_config as cfg
 
-    eco = MariEconomy.__new__(MariEconomy)   # 생성자(루프 시작)를 거치지 않아요
+    eco = ChunsikEconomy.__new__(ChunsikEconomy)   # 생성자(루프 시작)를 거치지 않아요
 
     print("\n[10] 지갑 읽기·자동 생성")
     atomic_json_save(cfg.ECONOMY_FILE, {})
