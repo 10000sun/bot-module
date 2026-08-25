@@ -10,7 +10,8 @@ from discord import app_commands
 from discord.ext import commands, tasks
 
 from chunsik_config import (ALERT_DISCONNECT_SECONDS, ENABLED_SPECS, GUILD_LOCK_ON,
-                         HEARTBEAT_FILE, KST, MODULE_WARNINGS, guild_allowed)
+                         HEARTBEAT_FILE, KST, MODULE_WARNINGS, TEST_GUILD_ID,
+                         guild_allowed)
 from chunsik_alerts import send_alert
 from chunsik_utils import describe_user_error
 from chunsik_names import bot_name, is_configured
@@ -337,8 +338,18 @@ class ChunsikBotClient(commands.Bot):
 
         if not self.synced_once:
             try:
-                await self.tree.sync()
-                self.synced_once = True
-                print("🔁 setup_hook: 글로벌 슬래시 명령 동기화 완료")
+                # ⚡ 개발 중엔 테스트 서버로만 동기화하면 **즉시** 반영돼요.
+                #    글로벌은 디스코드가 퍼뜨리는 데 최대 1시간이 걸립니다.
+                if TEST_GUILD_ID:
+                    test_guild = discord.Object(id=int(TEST_GUILD_ID))
+                    self.tree.copy_global_to(guild=test_guild)
+                    await self.tree.sync(guild=test_guild)
+                    self.synced_once = True
+                    print(f"⚡ setup_hook: 테스트 서버({TEST_GUILD_ID})에 즉시 동기화 완료 "
+                          "— 명령이 바로 보입니다. 납품 전에 .env의 CHUNSIK_TEST_GUILD를 비우세요!")
+                else:
+                    await self.tree.sync()
+                    self.synced_once = True
+                    print("🔁 setup_hook: 글로벌 슬래시 명령 동기화 완료")
             except Exception as e:
                 print("❗ setup_hook 동기화 오류:", type(e).__name__, repr(e))

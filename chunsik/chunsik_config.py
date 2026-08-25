@@ -524,6 +524,16 @@ def _load_allowed_guilds() -> tuple:
     return tuple(ids)
 
 
+# ⚡ 개발용 — 테스트 서버에 **즉시** 명령을 동기화합니다.
+#
+# 글로벌 동기화(tree.sync())는 디스코드가 퍼뜨리는 데 최대 1시간이 걸려요. 버튼을
+# 눌러보고 고치고 다시 켜는 걸 반복해야 하는 개발 중엔 그 대기가 일을 막습니다.
+# 특정 서버로만 동기화하면 **즉시** 반영돼요.
+#
+# .env에 CHUNSIK_TEST_GUILD=<서버ID> 를 넣으면 켜집니다. 안 넣으면 예전 그대로예요.
+# 🚨 납품할 때는 반드시 비우세요. 이게 켜져 있으면 그 서버에서만 명령이 보입니다.
+TEST_GUILD_ID = os.environ.get("CHUNSIK_TEST_GUILD", "").strip()
+
 ALLOWED_GUILD_IDS = _load_allowed_guilds()
 GUILD_LOCK_ON = bool(ALLOWED_GUILD_IDS)
 
