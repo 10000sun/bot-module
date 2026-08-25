@@ -480,13 +480,65 @@ def _load_ranks() -> list:
 RANKS = _load_ranks()
 
 
+# ========== 🔒 서버 잠금 ==========
+# 납품한 코드가 옆 서버로 복사돼 그대로 돌아가는 걸 막습니다. `guild.json`에 적은
+# 서버에서만 동작하고, 다른 서버에 초대되면 스스로 나가요.
+#
+#   "allowed_guilds": [123456789012345678]
+#
+# ⚠️ **이건 기술적 보호가 아니라 자물쇠입니다.** 코드를 뜯으면 이 검사도 지울 수
+#    있어요. 실제로 남을 막는 건 LICENSE고, 이건 "복사해서 옆 서버에 꽂아 쓰기"라는
+#    제일 흔하고 제일 쉬운 새어나감을 막는 장치입니다.
+#
+# 🚨 **비어 있으면 잠금이 꺼집니다(=아무 서버에서나 동작).** 이렇게 한 이유 —
+#    비었을 때 기동을 막으면 개발 PC와 이미 돌고 있는 서버가 전부 죽어요. `modules`가
+#    없으면 전부 켜는 것과 같은 원칙입니다(설정이 **없는** 건 새 서버, 설정이 **깨진**
+#    건 사고). 대신 꺼져 있으면 기동할 때마다 시끄럽게 알리고, 납품 체크리스트에도
+#    넣어뒀어요.
+
+
+def _load_allowed_guilds() -> tuple:
+    """이 봇이 동작해도 되는 서버 ID들. 비었으면 잠금이 꺼진 것."""
+    raw = _GUILD.get("allowed_guilds")
+    if raw is None:
+        return ()
+    # 한 곳에만 납품하는 게 보통이라 숫자 하나로 적는 사람이 많아요. 그것도 받아줍니다.
+    if isinstance(raw, (int, str)):
+        raw = [raw]
+    if not isinstance(raw, list):
+        GUILD_CONFIG_WARNINGS.append(
+            "'allowed_guilds'는 서버 ID 목록([123, 456])이어야 해요. 무시하고 넘어갑니다 "
+            "— 🔓 서버 잠금이 꺼진 채로 돕니다.")
+        return ()
+
+    ids = []
+    for value in raw:
+        guild_id = _as_id(value, "allowed_guilds")
+        if guild_id:
+            ids.append(guild_id)
+    if raw and not ids:
+        # 값을 적기는 했는데 하나도 못 읽은 경우예요. 조용히 넘어가면 잠갔다고 믿게 됩니다.
+        GUILD_CONFIG_WARNINGS.append(
+            "🚨 'allowed_guilds'에 적힌 값을 하나도 못 읽었어요. **서버 잠금이 꺼진 채로 돕니다.**")
+    return tuple(ids)
+
+
+ALLOWED_GUILD_IDS = _load_allowed_guilds()
+GUILD_LOCK_ON = bool(ALLOWED_GUILD_IDS)
+
+
+def guild_allowed(guild_id: int) -> bool:
+    """이 서버에서 동작해도 되나. 잠금이 꺼져 있으면 언제나 True."""
+    return not GUILD_LOCK_ON or int(guild_id) in ALLOWED_GUILD_IDS
+
+
 # 🧹 코드가 읽지 않는 항목 알려주기.
 #
 # guild.json은 깃이 안 건드리는 파일이라(`.gitignore`), 창고로 보낸 기능의 설정이
 # 그대로 남아 있기 쉬워요. 지금은 그냥 조용히 무시되는데, 그러면 오타로 적은 키도
 # 똑같이 조용히 무시됩니다. 역할 ID를 정성껏 채워 넣고 "왜 안 되지?" 하는 상황이
 # 제일 나빠서, 무엇을 안 읽고 있는지 기동 때 알려줍니다.
-_READ_TOP_LEVEL = {"modules", "roles", "ranks"}
+_READ_TOP_LEVEL = {"modules", "roles", "ranks", "allowed_guilds"}
 _READ_ROLES = {"birthday_mention", "bot_mention"}
 
 # 📦 창고(parked/)로 간 기능이 쓰던 것들. 지워도 되는 잔재라고 알려줄 수 있어요.
@@ -570,6 +622,14 @@ def report_guild_config() -> None:
             print(f" • {warning}")
     else:
         print(f"🏷️ 서버 설정을 읽었어요. 역할 {len(_ROLES)}개")
+
+    # 🔒 잠금 상태는 경고가 있든 없든 매번 알립니다. 납품 직전에 제일 자주 빠뜨리는
+    #    자리라, 기동 로그를 훑기만 해도 눈에 걸리게 해뒀어요.
+    if GUILD_LOCK_ON:
+        print(f"🔒 서버 잠금 켜짐 — 허가된 서버 {len(ALLOWED_GUILD_IDS)}곳에서만 동작해요.")
+    else:
+        print("🔓 서버 잠금이 꺼져 있어요 — 아무 서버에서나 동작합니다. "
+              "납품할 거면 guild.json에 \"allowed_guilds\": [서버ID] 를 넣어주세요.")
 
 
 report_guild_config()

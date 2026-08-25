@@ -9,8 +9,8 @@ import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 
-from chunsik_config import (ALERT_DISCONNECT_SECONDS, ENABLED_SPECS, HEARTBEAT_FILE, KST,
-                         MODULE_WARNINGS)
+from chunsik_config import (ALERT_DISCONNECT_SECONDS, ENABLED_SPECS, GUILD_LOCK_ON,
+                         HEARTBEAT_FILE, KST, MODULE_WARNINGS, guild_allowed)
 from chunsik_alerts import send_alert
 from chunsik_utils import describe_user_error
 from chunsik_names import bot_name, is_configured
@@ -65,8 +65,71 @@ class ChunsikBotClient(commands.Bot):
                 color=0x2ECC71,
             )
         await self._mark_connected()
+        await self._report_unlicensed_guilds()
         if not self.heartbeat_loop.is_running():
             self.heartbeat_loop.start()
+
+    # ========== 🔒 서버 잠금 ==========
+
+    async def on_guild_join(self, guild: discord.Guild):
+        """허가되지 않은 서버에 초대되면 곧바로 나갑니다.
+
+        🔒 코드를 복사해 옆 서버에 꽂아 쓰는 걸 막는 자리예요. 여기서 나가는 건
+           **안전합니다** — 방금 초대된 서버라 잃을 게 없거든요. (아래 기동 검사가
+           나가지 않는 것과 대비됩니다)
+        """
+        if guild_allowed(guild.id):
+            return
+
+        owner = f"{guild.owner} (`{guild.owner_id}`)" if guild.owner else f"`{guild.owner_id}`"
+        print(f"🔒 허가되지 않은 서버에 초대돼 나왔어요: {guild.name} (`{guild.id}`) · 초대한 서버 주인 {owner}")
+
+        # 📣 나가기 전에 남깁니다. 나간 뒤에는 채널을 못 찾아요.
+        #    누가 어디에 꽂아보려 했는지가 이 알림의 핵심입니다.
+        await send_alert(
+            "🔒 허가되지 않은 서버에서 나왔어요",
+            f"서버: **{guild.name}** (`{guild.id}`)\n"
+            f"서버 주인: {owner}\n"
+            f"인원: {guild.member_count}명\n"
+            f"시각: {dt.datetime.now(KST).strftime('%Y-%m-%d %H:%M:%S')} KST",
+            color=0xE74C3C,
+        )
+        try:
+            await guild.leave()
+        except Exception as e:
+            print(f"❗ 서버에서 나가지 못했어요: {type(e).__name__}: {e}")
+
+    async def _report_unlicensed_guilds(self):
+        """기동할 때 이미 들어와 있는 허가되지 않은 서버를 알립니다.
+
+        🚨 **여기서는 일부러 나가지 않습니다.** 초대는 명백한 신호지만(새 서버니까),
+           기동 시점의 불일치는 **설정 오타일 수 있어요.** allowed_guilds에 서버 ID를
+           한 자리 잘못 적으면 봇이 클라이언트의 진짜 서버에서 스스로 나가버립니다.
+           그러면 역할·권한이 통째로 날아가고 다시 초대해서 세팅을 처음부터 해야 해요.
+           고작 오타 하나에 치르는 대가로는 너무 큽니다.
+
+           나가지 않아도 목적은 달성돼요 — _guild_only_check가 그 서버의 명령을 전부
+           막으니 봇은 아무 일도 하지 않습니다. 그리고 오타라면 한 줄만 고치면 됩니다.
+        """
+        if not GUILD_LOCK_ON:
+            return
+        strangers = [g for g in self.guilds if not guild_allowed(g.id)]
+        if not strangers:
+            return
+
+        listed = "\n".join(f"· **{g.name}** (`{g.id}`)" for g in strangers[:10])
+        print(f"🔒 허가되지 않은 서버 {len(strangers)}곳에 들어가 있어요 (명령은 전부 막습니다):")
+        for g in strangers[:10]:
+            print(f"   · {g.name} ({g.id})")
+        print("   허가할 서버라면 guild.json의 allowed_guilds에 그 ID를 넣어주세요.")
+        await send_alert(
+            "🔒 허가되지 않은 서버에 들어가 있어요",
+            f"{listed}\n\n"
+            "이 서버들에서는 **명령이 전부 막힙니다.** 나가지는 않았어요 — 설정 오타라면 "
+            "봇을 다시 초대하고 세팅을 처음부터 해야 하거든요.\n"
+            "허가할 서버라면 `guild.json`의 `allowed_guilds`에 ID를 넣고 다시 켜주세요.",
+            color=0xE67E22,
+        )
 
     async def on_disconnect(self):
         # ⚠️ 이 이벤트는 정상적인 짧은 재연결에서도 자주 발생해요.
@@ -140,6 +203,20 @@ class ChunsikBotClient(commands.Bot):
                 )
             except Exception:
                 pass    # 이미 응답이 나갔거나 만료된 경우 — 어차피 아래에서 실행을 막아요
+            return False
+
+        # 🔒 허가되지 않은 서버에서는 명령을 받지 않습니다. 여기 한 곳에서 막으면
+        #    슬래시 명령 전부가 한 번에 걸려요. (아래 on_guild_join이 애초에 못
+        #    들어오게 막지만, 잠금을 나중에 켠 경우엔 이미 들어와 있을 수 있어요)
+        if not guild_allowed(interaction.guild.id):
+            try:
+                await interaction.response.send_message(
+                    "🔒 이 봇은 사용이 허가된 서버에서만 동작해요.\n"
+                    "구매하신 분이라면 설정에 이 서버가 빠져 있는 것일 수 있습니다. 제작자에게 문의해 주세요.",
+                    ephemeral=True,
+                )
+            except Exception:
+                pass
             return False
         return True
 

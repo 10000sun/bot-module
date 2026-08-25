@@ -311,12 +311,59 @@ def test_fatal():
     os.environ.pop("CHUNSIK_BOM_TEST", None)
 
 
+def test_guild_lock():
+    """🔒 서버 잠금 — 잘못 켜지면 클라이언트 서버에서 봇이 나가버리는 자리라 촘촘히 봅니다."""
+    print()
+    print("[17] 🔒 안 적으면 잠금이 꺼져야 함 (개발 PC·기존 서버가 죽으면 안 돼요)")
+    off = load_config({"modules": ["shop"]})
+    check("잠금 꺼짐", off.GUILD_LOCK_ON, False)
+    check("아무 서버나 통과", off.guild_allowed(999), True)
+
+    print()
+    print("[18] 🔒 적으면 그 서버만 통과해야 함")
+    on = load_config({"modules": ["shop"], "allowed_guilds": [111, 222]})
+    check("잠금 켜짐", on.GUILD_LOCK_ON, True)
+    check("허가된 서버", on.guild_allowed(111), True)
+    check("허가된 서버 2", on.guild_allowed(222), True)
+    check("남의 서버는 막힘", on.guild_allowed(333), False)
+
+    print()
+    print("[19] 🔒 숫자 하나로 적어도 받아야 함 (한 곳에만 납품하는 게 보통이라 흔한 형태)")
+    single = load_config({"modules": ["shop"], "allowed_guilds": 111})
+    check("목록으로 감싸줌", single.ALLOWED_GUILD_IDS, (111,))
+    check("남의 서버는 막힘", single.guild_allowed(222), False)
+
+    print()
+    print("[20] 🔒 문자열 ID도 받아야 함 (자릿수가 커서 따옴표를 치는 사람이 많아요)")
+    text = load_config({"modules": ["shop"], "allowed_guilds": ["111", 222]})
+    check("숫자로 바뀜", text.ALLOWED_GUILD_IDS, (111, 222))
+
+    print()
+    print("[21] 🚨 값을 하나도 못 읽으면 '잠갔다고 믿는' 상태가 제일 위험 — 반드시 경고")
+    broken = load_config({"modules": ["shop"], "allowed_guilds": ["여기에_서버ID"]})
+    check("잠금은 꺼짐", broken.GUILD_LOCK_ON, False)
+    check("경고가 뜸", any("allowed_guilds" in w for w in broken.GUILD_CONFIG_WARNINGS), True)
+
+    print()
+    print("[22] 🚨 형식이 아예 틀려도 조용히 넘어가면 안 됨")
+    wrong = load_config({"modules": ["shop"], "allowed_guilds": {"id": 111}})
+    check("잠금은 꺼짐", wrong.GUILD_LOCK_ON, False)
+    check("경고가 뜸", any("allowed_guilds" in w for w in wrong.GUILD_CONFIG_WARNINGS), True)
+
+    print()
+    print("[23] 🔒 allowed_guilds를 '코드가 안 읽는 키'로 잘못 신고하면 안 됨")
+    known = load_config({"modules": ["shop"], "allowed_guilds": [111]})
+    check("오타 경고 없음",
+          any("allowed_guilds" in w and "읽지 않아요" in w for w in known.GUILD_CONFIG_WARNINGS), False)
+
+
 if __name__ == "__main__":
     test_parsing()
     test_sections()
     test_legacy_parser()
     test_legacy_keys()
     test_fatal()
+    test_guild_lock()
     print()
     if _fails:
         print(f"🚨 {len(_fails)}건 실패: {', '.join(_fails)}")
