@@ -174,12 +174,13 @@ class ChunsikSetting(commands.Cog):
         "아이디등록": "id_submit", "역할로그": "role_log",
         "생일알림": "birthday_announce", "생일로그": "birthday_log",
         "환영": "welcome", "입퇴장로그": "member_log", "레벨알림": "level_announce",
+        "내전로그": "scrim_log",
     }
     _ROLE_COMMANDS = {
         "아이디": "ids_admin", "상점": "shop_admin", "주식": "stock_admin",
         "이벤트": "evashi_admin", "연대기": "chronicle_admin", "테스트": "test_admin",
         "셀프역할": "selfrole_admin", "입장": "welcome_admin", "레벨": "level_admin",
-        "파티": "party_admin",
+        "파티": "party_admin", "내전": "scrim_admin",
     }
 
     def _prune_module_commands(self):

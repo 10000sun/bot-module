@@ -139,6 +139,18 @@ MODULE_SPECS = (
              "module_active('id')로만 판단합니다. 모집글은 명령을 친 채널에 올라가서 전용 채널이 없어요.",
     ),
     ModuleSpec(
+        "scrim", "내전", "cogs.scrim", "ChunsikScrim",
+        channels=("scrim_log",),
+        roles=("scrim_admin",),
+        features=("scrim",),
+        data_files=("SCRIM_FILE",),
+        note="파티 모집(party)과 겹치지 않아요. 파티는 '같이 하러 가기'(정원·대기열), 내전은 "
+             "'우리끼리 붙기'(팀 분할·승패 기록)입니다. 둘 다 담아도 되고 하나만 담아도 온전해요. "
+             "모집 버튼 부분이 party.py와 닮았지만 일부러 따로 뒀습니다 — 코그끼리 import하면 "
+             "한쪽만 담아 납품할 때 죽어요. 아이디 등록부(id)를 함께 담으면 팀 명단에 게임 "
+             "아이디가 붙습니다(module_active로만 판단). scrim_log는 없어도 동작해요.",
+    ),
+    ModuleSpec(
         "levels", "활동 레벨", "cogs.levels", "ChunsikLevels",
         channels=("level_announce",),
         roles=("level_admin",),
@@ -214,7 +226,7 @@ TIER_SPECS = (
              "levels는 지갑 없이도 돌지만(역할 보상만), 함께 있을 때 값이 설명됩니다.",
     ),
     TierSpec(
-        "premium", "프리미엄", ("stock", "chronicle", "gpt", "party"),
+        "premium", "프리미엄", ("stock", "chronicle", "gpt", "party", "scrim"),
         pitch="＋ 운영 콘텐츠·AI",
         note="기능 수가 아니라 납품 뒤 손이 가는 정도로 갈랐어요. 주식은 매일 종가게시를 사람이 눌러야 하고 "
              "종목 설계가 따라붙습니다. AI 대화는 GEMINI_API_KEY 사용량이 계속 나가고요. "

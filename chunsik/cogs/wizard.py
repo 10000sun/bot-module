@@ -44,6 +44,7 @@ CATEGORY_BY_CHANNEL = {
     "shop_log": "📋 로그",
     "stock_log": "📋 로그",
     "birthday_log": "📋 로그",
+    "scrim_log": "📋 로그",
     "member_log": "📋 로그",
 
     # 🆔 아이디 등록부 — 유저가 올리는 채널과 명단이 나란히 있어야 편해요.
@@ -99,6 +100,7 @@ CHANNEL_PURPOSE = {
     "birthday_log":      ("생일을 등록·수정한 기록이 남습니다.", SEEN_BY_STAFF),
     "welcome":           ("새로 들어온 사람에게 인사하는 곳이에요.", SEEN_BY_USERS),
     "member_log":        ("누가 들어오고 나갔는지 남습니다.", SEEN_BY_STAFF),
+    "scrim_log":         ("내전 결과가 쌓입니다. 누가 어느 팀으로 이겼는지요.", SEEN_BY_USERS),
     "level_announce":    ("레벨업 축하를 모아서 올리는 곳이에요.", SEEN_BY_USERS),
 }
 
@@ -115,6 +117,7 @@ ROLE_PURPOSE = {
     "welcome_admin":  "입장 자동 역할과 환영 인사를 정합니다.",
     "level_admin":    "경험치와 레벨 보상을 조정합니다.",
     "party_admin":    "남이 연 모집도 마감하고, 끝난 기록을 정리합니다.",
+    "scrim_admin":    "남이 연 내전도 팀을 짜고 결과를 남길 수 있어요.",
 }
 
 

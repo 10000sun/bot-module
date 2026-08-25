@@ -59,7 +59,7 @@
     "",
     "  essential  에센셜    서버 관리 기본     아이디 등록부 · 생일 · 위키 · 나중에 답장 · 셀프 역할 · 입장 자동화",
     "  standard   스탠다드  ＋ 활동과 보상      ＋ 지갑·송금·출석 · 상점 · 미니게임 · 활동 레벨",
-    "  premium    프리미엄  ＋ 운영 콘텐츠·AI   ＋ 모의 주식 · 연대기 · AI 대화 · 파티 모집",
+    "  premium    프리미엄  ＋ 운영 콘텐츠·AI   ＋ 모의 주식 · 연대기 · AI 대화 · 파티 모집 · 내전",
     "",
     "위 라인은 아래 라인을 통째로 포함해요. 라인 안에서 의존 관계도 이미 맞춰뒀습니다",
     "(상점을 넣으면 지갑이 같이 들어 있음). 그래서 주문에 없던 기능이 딸려가지 않아요.",
@@ -74,7 +74,7 @@
   "_티어프리셋": {
     "essential": ["id", "wiki", "birthday", "snooze", "welcome", "selfrole"],
     "standard": ["id", "economy", "wiki", "games", "shop", "birthday", "snooze", "levels", "welcome", "selfrole"],
-    "premium": ["id", "economy", "stock", "wiki", "games", "gpt", "shop", "birthday", "chronicle", "snooze", "party", "levels", "welcome", "selfrole"]
+    "premium": ["id", "economy", "stock", "wiki", "games", "gpt", "shop", "birthday", "chronicle", "snooze", "party", "scrim", "levels", "welcome", "selfrole"]
   },
   "modules": [
     "id",
