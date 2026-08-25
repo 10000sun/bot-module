@@ -84,6 +84,52 @@ async def report_broken_transaction(
 EMBED_CHUNK_LIMIT = 1900
 
 
+# 📏 디스코드 임베드 한도. 넘으면 **메세지가 통째로 거부**돼요(400 Invalid Form Body).
+# discord.py는 이걸 로컬에서 검사하지 않습니다 — 3000자짜리 필드도 그냥 만들어지고,
+# 보내는 순간에야 터져요. 그래서 자유 입력이 들어가는 자리는 부르는 쪽에서 잘라야 합니다.
+EMBED_TITLE_LIMIT = 256
+EMBED_DESC_LIMIT = 4096
+EMBED_FIELD_LIMIT = 1024
+
+
+def clip(text: str, limit: int) -> str:
+    """글자를 한도에 맞춰 자릅니다. 잘렸으면 끝에 …을 붙여 알려줘요."""
+    text = text or ""
+    return text if len(text) <= limit else text[:limit - 1] + "…"
+
+
+def add_lines_field(embed, name: str, lines: list, *, empty: str = "*(없어요)*",
+                    inline: bool = False, budget: int = EMBED_FIELD_LIMIT * 2,
+                    note: str = "*…외 {count}줄*"):
+    """줄 목록을 임베드 필드에 담습니다. 한 필드(1024자)를 넘으면 나눠 이어 붙여요.
+
+    🚨 명단이 길어지는 자리(파티 참가자·설치 결과)에서 **이걸 안 쓰면 조용히 터집니다.**
+       참가자 20명에 게임 아이디가 붙으면 벌써 1310자예요. 그 순간부터 모집글이
+       영영 갱신되지 않고, 누른 사람은 "참가했어요" 뒤에 오류 안내를 같이 봅니다.
+
+    budget을 넘는 뒷줄은 접고 "…외 N줄"을 답니다. 필드를 무한정 늘리면 이번엔 임베드
+    전체 한도(6000자)에 걸려서 같은 사고가 나거든요. (99명 × 아이디 = 6524자)
+    """
+    if not lines:
+        embed.add_field(name=clip(name, EMBED_TITLE_LIMIT), value=empty, inline=inline)
+        return
+
+    kept, used = [], 0
+    for i, line in enumerate(lines):
+        if used + len(line) + 1 > budget:
+            kept.append(note.format(count=len(lines) - i))
+            break
+        kept.append(line)
+        used += len(line) + 1
+
+    for i, chunk in enumerate(chunk_lines(kept, EMBED_FIELD_LIMIT)):
+        embed.add_field(
+            name=clip(name if i == 0 else f"{name} (계속)", EMBED_TITLE_LIMIT),
+            value=clip(chunk, EMBED_FIELD_LIMIT),
+            inline=inline,
+        )
+
+
 def chunk_lines(lines: list, limit: int = EMBED_CHUNK_LIMIT) -> list:
     """줄 목록을 limit 글자 이하의 덩어리 여러 개로 나눕니다. (줄 중간에서 자르지 않아요)
 

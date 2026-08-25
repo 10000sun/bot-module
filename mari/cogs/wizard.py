@@ -22,7 +22,7 @@ from discord.ext import commands
 
 from mari_config import ENABLED_MODULE_KEYS
 from mari_settings import load_settings, save_settings
-from mari_utils import MariView
+from mari_utils import MariView, add_lines_field
 from modules import is_active
 
 
@@ -309,15 +309,20 @@ class MariWizard(commands.Cog):
             title="🧰 설치 완료" if saved and not failed else "🧰 설치 결과",
             color=0x77DD77 if saved and not failed else 0xFF6B6B,
         )
+        # ✂️ 만든 것이 많으면 필드 하나(1024자)를 넘길 수 있어요. 그러면 **결과 화면이
+        #    통째로 안 뜹니다** — 채널은 다 만들어놓고 "무엇을 만들었는지"만 사라지는,
+        #    제일 헷갈리는 실패예요.
         if made_channels:
-            result.add_field(
-                name=f"📺 만든 채널 {len(made_channels)}개 (카테고리 {len(made_categories)}개)",
-                value=" ".join(c.mention for c in made_channels) + board_note, inline=False)
+            add_lines_field(
+                result, f"📺 만든 채널 {len(made_channels)}개 (카테고리 {len(made_categories)}개)",
+                [c.mention for c in made_channels] + ([board_note.strip()] if board_note else []),
+                note="*…외 {count}개*")
         if made_roles:
-            result.add_field(name=f"🎭 만든 역할 {len(made_roles)}개",
-                             value=" ".join(r.mention for r in made_roles) +
-                                   "\n담당자에게 이 역할을 달아주면 그 기능의 관리자가 돼요.", inline=False)
+            add_lines_field(
+                result, f"🎭 만든 역할 {len(made_roles)}개",
+                [r.mention for r in made_roles] + ["담당자에게 이 역할을 달아주면 그 기능의 관리자가 돼요."],
+                note="*…외 {count}개*")
         if failed:
-            result.add_field(name="🚨 못 만든 것", value="\n".join(failed[:10]), inline=False)
+            add_lines_field(result, "🚨 못 만든 것", failed[:10], note="*…외 {count}개*")
         result.set_footer(text="남은 설정은 /설치 점검으로 다시 확인할 수 있어요.")
         await interaction.edit_original_response(content=None, embed=result, view=None)

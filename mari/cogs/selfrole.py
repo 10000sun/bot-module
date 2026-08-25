@@ -17,7 +17,9 @@ from discord.ext import commands
 from mari_settings import (feature_gate, has_admin_or_role, is_feature_enabled,
                            send_log_embed)
 from mari_state import load_selfroles, save_selfroles
-from mari_utils import MariView, dangerous_permission, role_reject_reason
+from mari_utils import (EMBED_DESC_LIMIT, EMBED_FIELD_LIMIT,
+                        EMBED_TITLE_LIMIT, MariView, clip,
+                        dangerous_permission, role_reject_reason)
 
 # 📏 디스코드 제한 — 한 메시지에 버튼은 5줄 × 5개까지.
 MAX_ROLES_PER_PANEL = 25
@@ -94,9 +96,12 @@ class MariSelfRole(commands.Cog):
     def _panel_embed(self, panel: dict) -> discord.Embed:
         lines = [f"{(e.get('emoji') or '•')} **{e.get('label')}** — <@&{e['id']}>"
                  for e in panel.get("roles", [])]
+        # ✂️ 제목·설명은 관리자가 자유롭게 적는 자리라 한도를 넘길 수 있어요. 넘으면
+        #    패널이 아예 안 올라가고, 그 뒤로는 다시 그릴 수도 없습니다.
         embed = discord.Embed(
-            title=panel.get("title") or "셀프 역할",
-            description=(panel.get("description") or "") + ("\n\n" + "\n".join(lines) if lines else ""),
+            title=clip(panel.get("title") or "셀프 역할", EMBED_TITLE_LIMIT),
+            description=clip((panel.get("description") or "") + ("\n\n" + "\n".join(lines) if lines else ""),
+                             EMBED_DESC_LIMIT),
             color=0x89CFF0,
         )
         embed.set_footer(text="버튼을 누르면 역할이 붙고, 한 번 더 누르면 떨어져요.")
@@ -287,8 +292,8 @@ class MariSelfRole(commands.Cog):
         for panel_id, panel in list(panels.items())[:25]:
             roles = ", ".join(f"<@&{e['id']}>" for e in panel.get("roles", [])) or "*(담긴 역할 없음)*"
             embed.add_field(
-                name=f"{panel.get('title') or '제목 없음'} — <#{panel['channel_id']}>",
-                value=f"{roles}\n`{panel_id}`",
+                name=clip(f"{panel.get('title') or '제목 없음'} — <#{panel['channel_id']}>", EMBED_TITLE_LIMIT),
+                value=clip(f"{roles}\n`{panel_id}`", EMBED_FIELD_LIMIT),
                 inline=False,
             )
         await interaction.response.send_message(embed=embed, ephemeral=True)

@@ -25,7 +25,9 @@ from mari_names import server_name
 from mari_settings import (feature_gate, has_admin_or_role, is_feature_enabled,
                            load_settings, send_log_embed)
 from mari_state import load_welcome, save_welcome
-from mari_utils import MariView, role_reject_reason
+from mari_utils import (EMBED_DESC_LIMIT, EMBED_FIELD_LIMIT,
+                        EMBED_TITLE_LIMIT, MariView, clip,
+                        dangerous_permission, role_reject_reason)
 
 # 📝 환영 문구에 넣을 수 있는 자리표시자. 여기 없는 글자는 그대로 나갑니다.
 #    (설명을 한 곳에서만 만들려고 표로 뒀어요 — 명령 설명과 안내문이 같이 따라옵니다)
@@ -39,6 +41,10 @@ PLACEHOLDERS = {
 DEFAULT_MESSAGE = "{멘션} 님, {서버}에 오신 걸 환영해요! 🎉 (지금 {인원}번째 멤버예요)"
 
 MAX_AUTO_ROLES = 10
+
+# ✂️ 인사말이 차지할 수 있는 최대 길이. 디스코드 본문 한도(2000자)에서 자리표시자가
+#    실제 이름으로 부풀 몫을 빼둔 값이에요.
+WELCOME_MESSAGE_LIMIT = 1500
 
 
 def _fill(template: str, member: discord.Member) -> str:
@@ -127,11 +133,25 @@ class MariWelcome(commands.Cog):
 
         ⚠️ 하나가 실패해도 나머지는 붙여야 해요. 역할 하나가 봇보다 위에 있다는 이유로
            나머지 역할까지 통째로 안 붙으면, 새 멤버가 아무 채널도 못 보게 됩니다.
+
+        🔐 **붙이기 직전에 권한을 다시 봅니다.** 담을 때(`/입장 자동역할`)만 검사하면
+           그 뒤에 그 역할에 관리자 권한이 붙는 순간, 이후 들어오는 사람 **전원이**
+           자동으로 관리자를 받아요. 셀프 역할이 '누를 때 한 번 더' 보는 것과 같은
+           이유입니다 — 거기만 있고 여기 없으면 같은 구멍이 그대로 열려 있는 거예요.
         """
         granted = []
         for rid in role_ids:
             role = member.guild.get_role(int(rid))
             if role is None:
+                continue
+            danger = dangerous_permission(role)
+            if danger:
+                print(f"🚨 입장 자동 역할 차단: {role.name}({role.id})에 '{danger}' 권한이 생겼어요.")
+                await send_log_embed(
+                    self.bot, "member_log",
+                    f"⛔ **{role.name}** 역할에 **{danger}** 권한이 생겨서 자동 지급을 멈췄어요.\n"
+                    "`/입장 자동역할`에서 빼거나, 그 역할의 권한을 내려주세요.",
+                )
                 continue
             try:
                 await member.add_roles(role, reason=reason)
@@ -236,7 +256,10 @@ class MariWelcome(commands.Cog):
             save_welcome(data)
             return await interaction.response.send_message("🔕 환영 인사를 올리지 않을게요.", ephemeral=True)
 
-        data["message"] = 문구 or DEFAULT_MESSAGE
+        # ✂️ 인사말은 그대로 **메세지 본문**으로 나갑니다(임베드가 아니에요). 디스코드
+        #    본문 한도는 2000자인데 자리표시자가 실제 이름으로 바뀌면서 더 길어지니,
+        #    넉넉히 여유를 두고 받습니다. 넘으면 인사가 통째로 안 나가요.
+        data["message"] = clip(문구 or DEFAULT_MESSAGE, WELCOME_MESSAGE_LIMIT)
         save_welcome(data)
         guide = "\n".join(f"`{k}` — {v}" for k, v in PLACEHOLDERS.items())
         await interaction.response.send_message(
@@ -255,7 +278,11 @@ class MariWelcome(commands.Cog):
 
         await interaction.response.defer(ephemeral=True)
         label = 버튼 or "규칙에 동의합니다"
-        embed = discord.Embed(title=제목, description=내용.replace("\\n", "\n"), color=0x89CFF0)
+        # ✂️ 규칙 본문은 길게 적는 게 정상인 자리예요. 4096자를 넘으면 패널이 통째로
+        #    안 올라가니 잘라서라도 올립니다.
+        embed = discord.Embed(title=clip(제목, EMBED_TITLE_LIMIT),
+                              description=clip(내용.replace("\\n", "\n"), EMBED_DESC_LIMIT),
+                              color=0x89CFF0)
         embed.set_footer(text="아래 버튼을 누르면 서버를 이용할 수 있어요.")
         message = await interaction.channel.send(embed=embed, view=RuleAgreeView(self, label))
 
@@ -288,8 +315,9 @@ class MariWelcome(commands.Cog):
         channels = load_settings().get("channels", {})
         roles = ", ".join(f"<@&{r}>" for r in data.get("auto_roles", [])) or "*(없음)*"
         embed = discord.Embed(title="🚪 입장 설정", color=0x89CFF0)
-        embed.add_field(name="자동 역할", value=roles, inline=False)
-        embed.add_field(name="환영 인사", value=data.get("message") or "*(안 올림)*", inline=False)
+        embed.add_field(name="자동 역할", value=clip(roles, EMBED_FIELD_LIMIT), inline=False)
+        embed.add_field(name="환영 인사",
+                        value=clip(data.get("message") or "*(안 올림)*", EMBED_FIELD_LIMIT), inline=False)
         embed.add_field(name="환영 채널",
                         value=f"<#{channels['welcome']}>" if channels.get("welcome") else "*(미지정 — `/설정 채널 환영`)*",
                         inline=True)

@@ -25,7 +25,7 @@ from mari_settings import (feature_gate, has_admin_or_role, is_feature_enabled,
                            load_settings)
 from mari_state import load_levels, save_levels
 from mari_storage import DataSaveError
-from mari_utils import role_reject_reason
+from mari_utils import EMBED_FIELD_LIMIT, clip, dangerous_permission, role_reject_reason
 
 SAVE_INTERVAL_SECONDS = 30
 
@@ -162,6 +162,14 @@ class MariLevels(commands.Cog):
         role_id = self._data["rewards"].get(str(level))
         if role_id:
             role = message.guild.get_role(int(role_id))
+            # 🔐 보상 역할도 **본인 확인 없이 붙는 역할**이에요. 담을 때만 검사하면 그 뒤에
+            #    권한이 붙는 순간, 그 레벨에 닿는 사람마다 관리자를 받게 됩니다.
+            #    (셀프 역할·입장 자동 역할과 같은 검사 — mari_utils에 함께 있어요)
+            danger = dangerous_permission(role) if role else None
+            if danger:
+                print(f"🚨 레벨 {level} 보상 역할 차단: {role.name}({role.id})에 '{danger}' 권한이 생겼어요. "
+                      "`/레벨 보상삭제`로 빼거나 그 역할의 권한을 내려주세요.")
+                role = None
             if role:
                 try:
                     await member.add_roles(role, reason=f"레벨 {level} 달성")
@@ -329,7 +337,11 @@ class MariLevels(commands.Cog):
             where_note = ("\n  ⚠️ 아직 채널을 안 정하셨어요. `/설정 채널 레벨알림`으로 정하기 전까지는 "
                           "말한 채널에 올라가요.")
         rewards = self._data.get("rewards", {})
-        reward_text = ", ".join(f"Lv.{lv} → <@&{rid}>" for lv, rid in sorted(rewards.items(), key=lambda kv: int(kv[0]))) or "없음"
+        # ✂️ 보상이 수십 개면 이 안내가 본문 한도(2000자)를 넘겨서 **응답이 통째로 실패**해요.
+        #    설정은 이미 저장된 뒤라, 관리자에겐 "안 먹혔나?"로 보입니다.
+        reward_text = clip(
+            ", ".join(f"Lv.{lv} → <@&{rid}>" for lv, rid in sorted(rewards.items(), key=lambda kv: int(kv[0])))
+            or "없음", EMBED_FIELD_LIMIT)
         await interaction.response.send_message(
             f"⚙️ **레벨 설정**\n"
             f"· 경험치: 메시지당 {now['min_xp']}~{now['max_xp']} (쿨다운 {now['cooldown']}초)\n"

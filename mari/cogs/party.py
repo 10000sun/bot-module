@@ -20,7 +20,8 @@ from discord.ext import commands, tasks
 from mari_config import KST, module_active
 from mari_settings import feature_gate, has_admin_or_role, is_feature_enabled
 from mari_state import load_party, save_party, state
-from mari_utils import MariView, parse_datetime_text
+from mari_utils import (EMBED_DESC_LIMIT, EMBED_TITLE_LIMIT, MariView,
+                        add_lines_field, clip, parse_datetime_text)
 
 # ⏰ 시작 몇 분 전에 부를지. 0이면 시작할 때만 불러요.
 REMIND_BEFORE_MINUTES = 10
@@ -97,8 +98,10 @@ class MariParty(commands.Cog):
         state_text = "🔒 **마감됐어요**" if party.get("closed") else (
             "🈵 **정원이 찼어요** (지금 누르면 대기)" if len(joined) >= size else "🈳 모집 중")
         embed = discord.Embed(
-            title=f"🎯 {party['title']}",
-            description=(party.get("note") or "") + f"\n\n{state_text}",
+            # ✂️ 제목·설명은 관리자가 자유롭게 적는 자리예요. 한도를 넘으면 모집글이
+            #    아예 안 올라가니 여기서 자릅니다. (mari_utils.clip)
+            title=clip(f"🎯 {party['title']}", EMBED_TITLE_LIMIT),
+            description=clip((party.get("note") or "") + f"\n\n{state_text}", EMBED_DESC_LIMIT),
             color=0x9B59B6 if not party.get("closed") else 0x99AAB5,
         )
         # ⏱️ 디스코드 타임스탬프로 넣으면 보는 사람의 시간대로 알아서 바뀌어요.
@@ -106,14 +109,16 @@ class MariParty(commands.Cog):
         embed.add_field(name="인원", value=f"**{len(joined)}** / {size}", inline=True)
         embed.add_field(name="주최", value=f"<@{party['host']}>", inline=True)
 
-        embed.add_field(
-            name=f"참가자 {len(joined)}명",
-            value="\n".join(f"`{i + 1}.` <@{uid}>{_ids_line(guild_id, uid)}" for i, uid in enumerate(joined))
-                  or "*(아직 없어요)*",
-            inline=False)
+        # 🚨 참가자 명단은 **반드시** add_lines_field로 담습니다. 한 필드에 몰아넣으면
+        #    20명(아이디까지 붙으면 1310자)에서 디스코드가 메세지를 거부해요. 그러면
+        #    참가는 저장됐는데 모집글만 그 시점에서 얼어붙습니다 — 정원 99명까지
+        #    받는 명령이라 반드시 밟게 되는 자리예요.
+        add_lines_field(
+            embed, f"참가자 {len(joined)}명",
+            [f"`{i + 1}.` <@{uid}>{_ids_line(guild_id, uid)}" for i, uid in enumerate(joined)],
+            empty="*(아직 없어요)*")
         if waiting:
-            embed.add_field(name=f"대기 {len(waiting)}명",
-                            value="\n".join(f"<@{uid}>" for uid in waiting), inline=False)
+            add_lines_field(embed, f"대기 {len(waiting)}명", [f"<@{uid}>" for uid in waiting])
         embed.set_footer(text="참가를 누르면 자리를 잡아요. 못 가게 되면 취소를 눌러주세요.")
         return embed
 
@@ -289,7 +294,7 @@ class MariParty(commands.Cog):
         for pid, p in rows[:MAX_OPEN_PARTIES]:
             start = int(dt.datetime.fromisoformat(p["start"]).timestamp())
             embed.add_field(
-                name=f"{p['title']} — {len(p.get('members', []))}/{p['size']}",
+                name=clip(f"{p['title']} — {len(p.get('members', []))}/{p['size']}", EMBED_TITLE_LIMIT),
                 value=f"<t:{start}:R> · <#{p['channel_id']}> · 주최 <@{p['host']}>\n"
                       f"https://discord.com/channels/{p['guild_id']}/{p['channel_id']}/{pid}",
                 inline=False)
