@@ -13,7 +13,9 @@
    돌아갑니다. 그래서 빈 역할이면 충분하고, 그래야 안전해요.
 
 ⚠️ 채널·역할을 만들려면 봇에게 **채널 관리**와 **역할 관리** 권한이 있어야 해요.
-   없으면 무엇이 없어서 실패했는지 그대로 알려줍니다. (README 3번 초대 URL 참고)
+   시작하기 전에 먼저 확인하고(`_permission_problem`), 없으면 아무것도 만들지 않은 채
+   무엇을 켜야 하는지 알려줍니다. 만들다가 중간에 막히면 서버에 쓰다 만 카테고리가
+   남거든요. (README 3번 초대 URL 참고)
 """
 
 import discord
@@ -449,6 +451,39 @@ class ChunsikWizard(commands.Cog):
             return {}, {}
         return cog._CHANNEL_COMMANDS, cog._ROLE_COMMANDS
 
+    # ---------- 만들기 전에 권한부터 ----------
+
+    @staticmethod
+    def _permission_problem(guild, need_channels: bool, need_roles: bool):
+        """지금 상태로 만들기를 시작하면 중간에 막히는지 미리 봅니다. 괜찮으면 None.
+
+        🚧 [왜 미리 보는가] apply()는 Forbidden을 만나면 그 자리에서 멈추는데, 그때는 이미
+           카테고리 한두 개가 만들어진 뒤예요. 클라이언트 서버에 쓰다 만 카테고리가 남고,
+           다시 돌리면 그건 재사용되지만 "왜 반만 됐지"를 먼저 겪게 됩니다.
+           초대 링크의 권한 숫자를 빼먹는 건 README가 제일 자주 빠뜨린다고 적어둔 자리예요.
+
+        먼저 걸러내면 아무것도 안 건드리고 "이걸 켜주세요" 한 줄로 끝납니다.
+        """
+        me = guild.me
+        if me is None:          # 캐시가 아직 안 찼을 때. 막을 근거가 없으니 통과시켜요.
+            return None
+        perms = me.guild_permissions
+        if perms.administrator:
+            return None
+
+        missing = []
+        if need_channels and not perms.manage_channels:
+            missing.append("**채널 관리**(Manage Channels) — 카테고리와 채널을 만들려면 필요해요")
+        if need_roles and not perms.manage_roles:
+            missing.append("**역할 관리**(Manage Roles) — 관리자 표식 역할을 만들려면 필요해요")
+        if not missing:
+            return None
+
+        lines = "\n".join(f"└ {item}" for item in missing)
+        return ("⛔ 봇에게 권한이 모자라서 시작하지 않았어요. **아무것도 만들지 않았습니다.**\n"
+                f"{lines}\n\n"
+                "서버 설정 → 역할에서 봇 역할에 켜주시거나, README의 초대 링크로 다시 초대해 주세요.")
+
     def _missing(self):
         """아직 지정되지 않은 (채널, 역할) 목록. 담긴 기능 것만 봅니다."""
         channel_table, role_table = self._tables()
@@ -487,6 +522,11 @@ class ChunsikWizard(commands.Cog):
                 "바꾸고 싶은 게 있으면 `/설정 채널`·`/설정 관리자`로 하나씩 고칠 수 있어요.",
                 ephemeral=True)
 
+        # 🚧 안내를 다 따라가게 해놓고 마지막에 권한이 없어서 멈추면 제일 허탈해요.
+        problem = self._permission_problem(interaction.guild, bool(channels), bool(roles))
+        if problem:
+            return await interaction.response.send_message(problem, ephemeral=True)
+
         view = GuidedSetup(self, interaction.user.id, channels, roles)
         view._rebuild()
         await interaction.response.send_message(embed=view._intro_embed(), view=view, ephemeral=True)
@@ -513,6 +553,13 @@ class ChunsikWizard(commands.Cog):
         if roles:
             embed.add_field(name=f"🎭 관리자 역할 {len(roles)}개",
                             value=", ".join(f"`{label}`" for label, _ in roles), inline=False)
+        # 🔑 이 명령의 일이 "아직 뭐가 준비 안 됐나"를 알려주는 거예요. 만들 게 남았는데
+        #    만들 권한이 없다면, 그게 지금 제일 먼저 알아야 할 사실입니다.
+        problem = self._permission_problem(interaction.guild, bool(channels), bool(roles))
+        if problem:
+            embed.add_field(name="⛔ 봇 권한이 모자라요", value=problem, inline=False)
+            embed.color = 0xE74C3C
+
         embed.set_footer(text="담지 않은 기능의 채널·역할은 여기 나오지 않아요.")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
@@ -529,6 +576,12 @@ class ChunsikWizard(commands.Cog):
         if not channels and not roles:
             return await interaction.response.send_message(
                 "✅ 이미 전부 지정돼 있어요. 만들 게 없습니다.", ephemeral=True)
+
+        # 🚧 권한부터 봅니다. 미리보기를 보여주고 "만들기"까지 누르게 한 다음 권한이 없어서
+        #    반만 만들고 멈추면, 클라이언트 서버에 쓰다 만 카테고리가 남아요.
+        problem = self._permission_problem(interaction.guild, bool(channels), bool(roles))
+        if problem:
+            return await interaction.response.send_message(problem, ephemeral=True)
 
         # 🚧 만들기 전에 무엇이 생길지 그대로 보여줍니다. 채널·역할을 만드는 건 되돌리기가
         #    번거로운 일이라, 확인 없이 진행하지 않아요.
