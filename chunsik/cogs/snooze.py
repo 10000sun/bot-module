@@ -251,7 +251,14 @@ class ChunsikSnooze(commands.Cog):
             amount = int(rel.group(1))
             if amount <= 0:
                 return None, "❌ 시간은 1 이상으로 넣어주세요."
-            wake_at = now + dt.timedelta(**{_REL_UNITS[rel.group(2)]: amount})
+            # 🔢 자릿수가 큰 숫자를 넣으면 timedelta가 OverflowError로 터집니다.
+            #    ("9999999999999분 뒤") 이 함수의 약속은 "(값, 오류문구) 중 하나를 돌려준다"인데
+            #    예외를 던져버리면 부르는 쪽은 안내 대신 "예상치 못한 오류"만 보여줘요.
+            #    어차피 그 정도 숫자는 아래 MAX_DAYS 검사에서 걸릴 값이라, 같은 안내로 돌려줍니다.
+            try:
+                wake_at = now + dt.timedelta(**{_REL_UNITS[rel.group(2)]: amount})
+            except (OverflowError, ValueError):
+                return None, f"❌ 너무 먼 미래예요. 최대 {MAX_DAYS}일 뒤까지만 미뤄둘 수 있어요."
         else:
             wake_at = self._parse_absolute(raw.replace("/", "-").replace(".", "-"), now)
 
