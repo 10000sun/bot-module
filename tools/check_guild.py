@@ -30,6 +30,13 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 CHUNSIK = os.path.join(os.path.dirname(HERE), "chunsik")
 sys.path.insert(0, CHUNSIK)
 
+# 🇰🇷 한국어 윈도우 콘솔(cp949)에서 이모지를 찍으면 UnicodeEncodeError로 죽습니다.
+#    납품 절차에서 클라이언트가 직접 돌리는 도구라 콘솔을 고르게 할 수 없어요.
+#    아래 chunsik 모듈들은 import되는 순간 이모지를 찍으므로 반드시 그보다 먼저 불러야 합니다.
+from chunsik_console import force_utf8_console  # noqa: E402  (경로를 먼저 꽂아야 해서)
+
+force_utf8_console()
+
 _fails = []
 
 

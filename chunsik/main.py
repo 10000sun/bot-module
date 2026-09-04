@@ -3,39 +3,19 @@
 실행: python main.py
 """
 
-import sys
-
-
 # 🖥️ [안전장치] 콘솔 출력 인코딩을 UTF-8로 고정합니다.
 #
-# ⚠️ 이 블록은 **다른 봇 모듈을 import하기 전에** 실행돼야 해요. 아래 설명 참고.
-#
-# 한국어 윈도우에서 파이썬은 콘솔 코드페이지(cp949)를 그대로 출력 인코딩으로 씁니다.
-# 그런데 이 프로젝트는 로그에 이모지를 잔뜩 쓰기 때문에, cp949 콘솔에서는 print 한 줄이
-# UnicodeEncodeError로 터져요. (cp949에는 이모지 글리프가 아예 없어요)
-#
-# 제일 위험한 건 chunsik_storage.init_json_files()입니다. 이건 **모듈을 import하는 순간**
-# 실행되면서 "📦 빈 데이터 파일이 자동 생성됐어요"를 찍어요. 여기서 터지면 아래 try/except나
-# 다운 알림 웹훅에 닿기도 전에 죽어서, 봇이 왜 안 켜졌는지 아무도 모르는 상태가 됩니다.
-# (main() 안에서 state.load()를 감싸둔 것과 똑같은 이유예요)
-#
-# 지금 서버 콘솔은 UTF-8이라 잘 돌지만, 작업 스케줄러나 cmd.exe로 실행 방식이 바뀌면 걸립니다.
-# errors="replace"까지 붙여서, 혹시 UTF-8로 못 바꾸는 환경이어도 글자가 물음표로 바뀔지언정
-# 봇이 죽지는 않게 했어요.
-def _force_utf8_console() -> None:
-    for stream in (sys.stdout, sys.stderr):
-        try:
-            stream.reconfigure(encoding="utf-8", errors="replace")
-        except Exception:
-            # pythonw처럼 stdout이 아예 없거나(None) 바꿀 수 없는 스트림인 경우예요.
-            # 출력 인코딩을 못 바꾼다고 봇을 못 켤 이유는 없으니 조용히 넘어갑니다.
-            pass
+# ⚠️ 이 두 줄은 **다른 봇 모듈을 import하기 전에** 실행돼야 해요. import하는 순간
+#    이모지를 찍는 모듈이 있어서, 순서가 밀리면 봇이 왜 안 켜졌는지 모를게 죽습니다.
+#    상세한 이유는 chunsik_console.py 안에 적어두었어요.
+#    (chunsik_console은 sys만 쓰는 잎사귀 모듈이라 여기서 먼저 import해도 안전합니다)
+from chunsik_console import force_utf8_console
 
-
-_force_utf8_console()
+force_utf8_console()
 
 import asyncio      # noqa: E402  (위 인코딩 설정이 반드시 먼저 실행돼야 해요)
 import os
+import sys
 import traceback
 import discord
 
