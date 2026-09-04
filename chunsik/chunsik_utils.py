@@ -178,6 +178,32 @@ def mention_list(user_ids, limit: int = 40) -> str:
     return shown if len(ids) <= limit else f"{shown} 외 {len(ids) - limit}명"
 
 
+def mention_lines(user_ids, limit: int = 900) -> list:
+    """멘션 목록을 limit 글자 이하의 **줄 여러 개**로 나눕니다.
+
+    🚨 [왜 mention_list나 chunk_lines로는 안 되는가]
+       · mention_list는 40명에서 끊고 "외 N명"을 붙여요. 결과 발표처럼 **전원이 호명돼야
+         하는** 자리에서는 나머지가 통째로 사라집니다.
+       · chunk_lines는 줄과 줄 **사이**에서만 나눠요. 멘션을 한 줄에 몰아넣으면 그 줄
+         하나가 통째로 한 덩어리가 돼서, 나눠도 여전히 2000자를 넘습니다.
+         (실측: 참가 100명이면 제일 긴 조각이 2,211자 — 발송이 통째로 실패해요)
+
+    멘션 하나가 22자쯤이라 기본값 900이면 한 줄에 40명 안팎이 들어갑니다.
+    이렇게 만든 줄들은 전부 짧으니 그다음 chunk_lines에 넣어도 안전해요.
+    """
+    lines, current = [], ""
+    for uid in user_ids:
+        mention = f"<@{uid}>"
+        if current and len(current) + 1 + len(mention) > limit:
+            lines.append(current)
+            current = mention
+        else:
+            current = f"{current} {mention}" if current else mention
+    if current:
+        lines.append(current)
+    return lines
+
+
 def clip(text: str, limit: int) -> str:
     """글자를 한도에 맞춰 자릅니다. 잘렸으면 끝에 …을 붙여 알려줘요."""
     text = text or ""
