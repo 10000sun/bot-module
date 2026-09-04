@@ -184,6 +184,13 @@ LOG_STYLES = {
     "stock_log":    {"color": discord.Color.green(),   "emoji": "📈", "title": "주식 로그"},
     "closing_log":  {"color": discord.Color.green(),   "emoji": "📊", "title": "주식 로그"},
     "birthday_log": {"color": discord.Color.red(),     "emoji": "🎂", "title": "생일 로그"},
+    # 🐛 [버그 수정] 아래 둘이 빠져 있었어요. 로그는 정상적으로 갔지만 스타일 표에 없어서
+    #    회색 "📋 로그"로 뭉뚱그려 나왔습니다. 로그 채널을 한 곳에 몰아둔 서버에서는
+    #    제목만 보고 무슨 로그인지 구분할 수가 없어요.
+    #    (나중에 들어온 코그의 것만 빠졌습니다. 새 로그를 만들면 여기도 꼭 추가하세요 —
+    #     빠뜨리면 check_modules.py의 소유 표 검사가 잡아줍니다)
+    "member_log":   {"color": discord.Color.teal(),     "emoji": "🚪", "title": "입퇴장 로그"},
+    "scrim_log":    {"color": discord.Color.dark_red(), "emoji": "⚔️", "title": "내전 로그"},
 }
 
 def build_log_embed(channel_key: str, description: str, fields: list = None) -> discord.Embed:
