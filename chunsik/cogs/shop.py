@@ -12,7 +12,8 @@ from chunsik_storage import atomic_json_save_or_raise, safe_json_load
 from chunsik_settings import feature_gate, has_admin_or_role, load_settings, send_log_embed
 from chunsik_state import record_ledger
 from chunsik_utils import (EMBED_DESC_LIMIT, EMBED_FIELD_LIMIT, EMBED_TITLE_LIMIT, ChunsikView,
-                          clip, name_choices, report_broken_transaction, schedule_delete)
+                          clip, dangerous_permission, name_choices, report_broken_transaction,
+                          role_reject_reason, schedule_delete)
 from chunsik_names import currency, josa
 
 class ShopPurchaseView(ChunsikView):
@@ -176,6 +177,17 @@ class ShopActionButtons(ChunsikView):
                 return await self._notify(interaction, "❌ 서버에 지급할 역할이 존재하지 않아요.", error=True)
             if role in interaction.user.roles:
                 return await self._notify(interaction, "❌ 이미 해당 역할을 보유하고 있어 중복 구매할 수 없어요.", error=True)
+            # 🔐 역할 상품은 **재화만 있으면 본인 확인 없이 붙는 역할**이에요. 셀프 역할·레벨
+            #    보상과 같은 검사를 씁니다. 진열할 때 한 번 봤어도 그 뒤에 권한이 붙었을 수
+            #    있어서, 살 때 다시 봐요. (안 보면 그 순간부터 관리자를 돈 주고 살 수 있어요)
+            danger = dangerous_permission(role)
+            if danger:
+                print(f"🚨 상점 역할 상품 차단: {role.name}({role.id})에 '{danger}' 권한이 생겼어요. "
+                      "`/상점 항목삭제`로 빼거나 그 역할의 권한을 내려주세요.")
+                return await self._notify(
+                    interaction,
+                    f"⛔ 이 역할에 **{danger}** 권한이 생겨서 더 이상 살 수 없어요.\n"
+                    "관리자가 매대에서 빼야 합니다.", error=True)
 
         # 2. 결제 처리
         # 🔒 [동시성 제어] 연타로 인한 돈 복사 버그 원천 차단
@@ -1397,6 +1409,14 @@ class ChunsikShop(commands.Cog):
             )
         if 되팔기퍼센트 is not None and not (0 <= 되팔기퍼센트 <= 100):
             return await interaction.response.send_message("❌ 되팔기퍼센트는 0~100 사이여야 해요.", ephemeral=True)
+        # 🔐 진열하는 순간부터 **재화만 있으면 아무나 가져가는 역할**이 됩니다. 셀프 역할·
+        #    입장 자동 역할·레벨 보상이 쓰는 그 검사를 여기서도 씁니다. 역할 상품만 빠져 있었어요.
+        #    (위험 권한 말고도 @everyone·다른 봇이 관리하는 역할·봇보다 위에 있는 역할을 걸러요.
+        #     뒤 둘은 등록은 되는데 구매할 때마다 실패해서, 사는 사람만 계속 헛걸음합니다)
+        if 역할지급 is not None:
+            reason = role_reject_reason(역할지급, interaction.guild.me)
+            if reason:
+                return await interaction.response.send_message(reason, ephemeral=True)
         data = self._load_shop()
         board = self._get_board(data, interaction.channel_id)
         if not board: return await interaction.response.send_message("❌ 이 채널엔 매대가 없어요. 먼저 `/상점 생성`으로 만들어 주세요.", ephemeral=True)
