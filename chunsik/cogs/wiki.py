@@ -5,6 +5,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from chunsik_settings import feature_gate, has_admin_or_role
+from chunsik_utils import fit_embed
 from chunsik_state import load_wiki, save_wiki
 from chunsik_names import server_name
 
@@ -91,6 +92,9 @@ class ChunsikWiki(commands.Cog):
         embed.add_field(name="\u200B", value="\u200B", inline=False)
         embed.add_field(name="📎 TMI", value=_fit_field(entry.get("TMI")), inline=False)
         embed.set_footer(text=f"last edit by {interaction.user.display_name}")
+        # 🧮 칸마다 1024자로 잘라도 여섯 칸이 쌓이면 합이 6000자를 넘어 조회가 통째로 실패해요.
+        #    (위 FIELD_LIMIT은 "칸 하나" 기준이라, 칸이 여러 개면 그것만으론 모자랍니다)
+        fit_embed(embed)
         await interaction.response.send_message(embed=embed)
 
     @wiki_group.command(name="수정", description="[관리자] 위키 항목 중 하나를 수정해요")

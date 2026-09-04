@@ -93,6 +93,47 @@ EMBED_DESC_LIMIT = 4096
 EMBED_FIELD_LIMIT = 1024
 MESSAGE_LIMIT = 2000      # 임베드가 아닌 그냥 본문
 
+# 🧮 임베드 **전체** 한도. 제목·설명·필드 이름·필드 값·푸터를 전부 더한 값이에요.
+# 필드를 하나하나 1024자로 잘라도 여러 개가 쌓이면 여기 걸립니다. 예를 들어 상품
+# 25개짜리 매대는 설명을 200자로 묶어놔도 합이 9,687자예요. 그러면 그 줄만 빠지는 게
+# 아니라 **전광판 메세지 자체가 400으로 거부**됩니다.
+EMBED_TOTAL_LIMIT = 6000
+EMBED_TRIM_NOTE = " …(길어서 줄였어요)"
+
+
+def fit_embed(embed, limit: int = EMBED_TOTAL_LIMIT):
+    """임베드 전체 길이를 한도 안으로 줄입니다. 제일 긴 필드 값부터 깎아요.
+
+    🚨 [왜 필요한가] discord.py는 이걸 **검사하지 않습니다.** 6000자를 넘는 임베드도
+       그냥 만들어지고, 보내는 순간에야 디스코드가 400으로 거부해요. 그래서 상점 전광판·
+       주식 목록·위키 조회처럼 자유 입력이 여러 칸에 쌓이는 화면이 통째로 안 보이게 됩니다.
+
+    제목·설명·필드 **이름**은 건드리지 않아요. 무엇을 보는 화면인지와 항목이 몇 개인지는
+    남아야 쓸모가 있고, 길이를 실제로 잡아먹는 건 대부분 값 쪽입니다.
+
+    (한 항목만 통째로 빼지 않고 제일 긴 것부터 조금씩 깎는 이유: 상품 25개 중 하나가
+     소리 없이 사라지면 "왜 내 물건이 안 보이지"가 되거든요. 전부 보이되 뒷부분이
+     줄어드는 편이 낫습니다)
+    """
+    for _ in range(len(embed.fields) * 2 + 2):   # 못 줄이는 상황에서 맴돌지 않게
+        over = len(embed) - limit
+        if over <= 0:
+            break
+        idx, field = max(enumerate(embed.fields), key=lambda pair: len(pair[1].value or ""),
+                         default=(None, None))
+        if idx is None:
+            break
+        value = field.value or ""
+        keep = len(value) - over - len(EMBED_TRIM_NOTE)
+        if keep < 1:
+            keep = 1        # 값은 비울 수 없어요 (디스코드가 빈 값을 거부합니다)
+        if keep >= len(value):
+            break           # 더 깎을 게 없으면 그만둡니다
+        embed.set_field_at(idx, name=field.name,
+                           value=value[:keep].rstrip() + EMBED_TRIM_NOTE,
+                           inline=field.inline)
+    return embed
+
 
 # 📏 자동완성·드롭다운 한도. 임베드와 똑같이 넘기면 **응답이 통째로 거부**됩니다.
 # 자동완성이 거부되면 화면에는 오류가 아니라 "일치하는 항목 없음"만 뜨기 때문에,

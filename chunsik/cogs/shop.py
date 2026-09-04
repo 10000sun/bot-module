@@ -12,8 +12,8 @@ from chunsik_storage import atomic_json_save_or_raise, safe_json_load
 from chunsik_settings import feature_gate, has_admin_or_role, load_settings, send_log_embed
 from chunsik_state import record_ledger
 from chunsik_utils import (EMBED_DESC_LIMIT, EMBED_FIELD_LIMIT, EMBED_TITLE_LIMIT, ChunsikView,
-                          clip, dangerous_permission, name_choices, report_broken_transaction,
-                          role_reject_reason, schedule_delete)
+                          clip, dangerous_permission, fit_embed, name_choices,
+                          report_broken_transaction, role_reject_reason, schedule_delete)
 from chunsik_names import currency, josa
 
 class ShopPurchaseView(ChunsikView):
@@ -1156,6 +1156,11 @@ class ChunsikShop(commands.Cog):
             )
         else:
             embed.set_footer(text=f"✨ 마지막 업데이트: {dt.datetime.now(KST).strftime('%H:%M:%S')}")
+        # 🧮 [순서 주의] 푸터까지 다 붙인 **맨 마지막**에 불러야 해요. 임베드 총량에는
+        #    푸터도 들어가서, 줄인 뒤에 푸터를 붙이면 그만큼 다시 넘칩니다.
+        #    필드를 하나씩 잘라도 25개가 쌓이면 합이 6000자를 넘어 메세지가 통째로 거부돼요.
+        #    (위 상한을 지킨 입력만으로도 9,687자였어요)
+        fit_embed(embed)
         return embed
 
     @tasks.loop(hours=1)
