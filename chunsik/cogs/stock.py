@@ -20,7 +20,7 @@ from chunsik_storage import atomic_json_save, atomic_json_save_or_raise, safe_js
 from chunsik_settings import LOG_STYLES, build_log_embed, feature_gate, has_admin_or_role, load_settings
 from chunsik_state import record_ledger
 from chunsik_utils import (EMBED_FIELD_LIMIT, EMBED_TITLE_LIMIT, ChunsikView, chunk_lines,
-                          clip, holding_avg_price, holding_shares, name_choices,
+                          clip, fit_embed, holding_avg_price, holding_shares, name_choices,
                           portfolio_value, report_broken_transaction)
 from chunsik_names import currency, josa, server_name
 
@@ -1052,6 +1052,11 @@ class ChunsikStock(commands.Cog):
         if hidden > 0:
             embed.set_footer(text=f"⚠️ 종목이 {len(stocks_dict)}개라 {self.MAX_STOCKS}개만 보여요 (숨은 종목 {hidden}개)")
 
+        # 🧮 [순서 주의] 푸터까지 다 붙인 **맨 마지막**에 불러야 해요. 임베드 총량에는
+        #    푸터도 들어가서, 줄인 뒤에 푸터를 붙이면 그만큼 다시 넘칩니다.
+        #    필드를 하나씩 잘라도 25개가 쌓이면 합이 6000자를 넘어 메세지가 통째로 거부돼요.
+        #    (찌라시 상한을 지킨 입력만으로도 7,214자였어요)
+        fit_embed(embed)
         await interaction.response.send_message(embed=embed)
 
     @stock_group.command(name="그래프", description="특정 종목의 최근 가격 변동 추이를 그래프로 보여줍니다.")
@@ -1133,7 +1138,10 @@ class ChunsikStock(commands.Cog):
                         inline=False
                     )
                     
+            # 🧮 `/주식 목록`과 같은 이유예요. 종목이 차면 합이 6000자를 넘어 전광판이 통째로 안 그려져요.
             embed.set_footer(text="⚠️ 주식 투자는 신중하게 결정하세요.")
+            # 🧮 `/주식 목록`과 같은 이유예요. 푸터까지 붙인 뒤 마지막에 줄입니다.
+            fit_embed(embed)
 
             # 🔔 [변경] 예전엔 전광판이 채널의 마지막 메시지일 때 조용히 edit(수정)만 해서
             # 사람들이 갱신된 걸 못 알아채는 경우가 많았어요. 이제는 항상 기존 메시지를
