@@ -150,6 +150,35 @@ class ShopActionButtons(ChunsikView):
         except Exception:
             pass
 
+    def _stale_reason(self, board: dict, action: str):
+        """패널을 연 뒤 상품이 바뀌었으면 그 이유. 그대로여도 되면 None.
+
+        🚨 [왜 필요한가] 이 패널은 열릴 때의 상품 정보(self.item_info)를 **사본으로** 들고
+           있는데, 그 사본으로 결제까지 합니다. 패널이 60초 살아 있으니 그 사이 관리자가
+           `/상점 항목설정`으로 값을 바꾸면 **바뀌기 전 가격으로 사고팔 수 있어요.**
+           1,000원짜리를 100,000원으로 올린 직후에도 창을 열어둔 사람은 1,000원에 삽니다.
+           `구매가능: False`로 내려도 이미 열린 패널의 버튼은 그대로 눌려요.
+
+        ⚠️ 바뀐 값으로 **조용히 진행하면 더 나쁩니다.** 유저는 1,000원을 보고 눌렀는데
+           100,000원이 빠지니까요. 그래서 진행하지 않고 "다시 열어달라"고 알립니다.
+        """
+        item = (board or {}).get("items", {}).get(self.item_id)
+        if item is None:
+            return "❌ 그 사이에 이 상품이 매대에서 빠졌어요."
+
+        old, new = self.item_info, item
+        old_price, new_price = int(old.get("price", 0)), int(new.get("price", 0))
+        if old_price != new_price:
+            return (f"🔄 그 사이에 가격이 바뀌었어요. ({old_price:,} → {new_price:,} {currency()})"
+                    "\n패널을 닫고 다시 열어주세요.")
+        if int(old.get("resale_percent", 0)) != int(new.get("resale_percent", 0)):
+            return "🔄 그 사이에 되팔기 비율이 바뀌었어요.\n패널을 닫고 다시 열어주세요."
+        allowed = new.get("can_buy", True) if action == "buy" else new.get("can_sell", True)
+        if not allowed:
+            what = "구매" if action == "buy" else "되팔기"
+            return f"🚧 그 사이에 관리자가 이 상품의 {what}를 막았어요."
+        return None
+
     async def _notify(self, interaction: discord.Interaction, text: str, *, error: bool = False):
         """안내 메시지를 띄우고 자동 삭제를 예약합니다. (락을 붙잡지 않아요)"""
         try:
@@ -203,8 +232,12 @@ class ShopActionButtons(ChunsikView):
                          f"└ 보유 잔액: {current_balance:,} {currency()} / 필요 금액: {price:,} {currency()}")
             # 🏪 매대가 살아 있는지만 먼저 확인해요. 여기서 읽은 사본은 **일부러 버립니다.**
             #    (아래 역할 지급 await을 건너온 사본은 낡은 것이라 저장에 쓰면 안 돼요)
-            elif not self.cog._get_board(self.cog._load_shop(), self.channel_id):
+            #    🔄 같은 김에 패널을 연 뒤 상품이 바뀌지 않았는지도 봅니다. 값이 바뀌었는데
+            #       그대로 진행하면 **옛 가격으로 결제**되거든요. (_stale_reason 참고)
+            elif (fresh_board := self.cog._get_board(self.cog._load_shop(), self.channel_id)) is None:
                 error = "❌ 이 매대는 더 이상 존재하지 않아요."
+            elif (stale := self._stale_reason(fresh_board, "buy")) is not None:
+                error = stale
             else:
                 self.cog._set_balance(user_id, current_balance - price)
 
@@ -316,6 +349,13 @@ class ShopActionButtons(ChunsikView):
                     error = "❌ 현재 해당 역할을 가지고 있지 않아 판매할 수 없어요."
             elif board.get("inventories", {}).get(user_id_str, {}).get(self.item_id, 0) <= 0:
                 error = "❌ 인벤토리에 반납할 아이템 수량이 없어요."
+
+            # 🔄 자격이 있어도, 패널을 연 뒤 값이 바뀌었으면 진행하지 않아요.
+            #    환급액(refund)은 위에서 **옛 비율로** 이미 계산해뒀거든요.
+            if error is None:
+                stale = self._stale_reason(board, "sell")
+                if stale is not None:
+                    error = stale
 
             # 2. 역할 회수 — 이 함수에서 유일한 await 구간이에요.
             if error is None and self.item_info["is_role"]:
