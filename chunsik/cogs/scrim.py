@@ -31,6 +31,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 
+from chunsik_alerts import report_loop_error
 from chunsik_config import KST, module_active
 from chunsik_settings import (feature_gate, has_admin_or_role, is_feature_enabled,
                               send_log_embed)
@@ -391,6 +392,12 @@ class ChunsikScrim(commands.Cog):
     @tick.before_loop
     async def _before_tick(self):
         await self.bot.wait_until_ready()
+
+    @tick.error
+    async def tick_error(self, error: BaseException):
+        # ⏰ 이 루프가 죽으면 내전 시작 알림이 조용히 영영 안 옵니다.
+        #    scrim.json이 손상되거나 start 값이 깨져 fromisoformat이 던지면 여기로 와요.
+        await report_loop_error(self.tick, "내전 알림", error)
 
     # ---------- 명령 ----------
 

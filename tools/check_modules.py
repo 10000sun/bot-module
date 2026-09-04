@@ -24,6 +24,7 @@
    (기본 실행에서도 이 검사를 별도 프로세스로 자동으로 한 번 돌립니다)
 """
 
+import ast
 import asyncio
 import json
 import os
@@ -213,6 +214,43 @@ def _check_ownership(bot) -> list:
     return problems
 
 
+def _check_loop_guards():
+    """모든 백그라운드 루프에 @루프이름.error 핸들러가 붙어 있는지 봅니다.
+
+    🚨 discord.py의 tasks.loop은 예외가 밖으로 새어나가면 **영구히 멈춥니다.** 자동
+    재시작이 없고, 화면에도 아무것도 안 떠요. 그래서 파일이 한 번 손상된 순간부터
+    파티 알림이나 경험치 저장이 조용히 죽은 채로 며칠이 지나갈 수 있습니다.
+    (실제로 레벨·파티·내전 세 코그가 이걸 빠뜨린 채 나갔어요)
+
+    handler에서 chunsik_alerts.report_loop_error를 부르면 관리자에게 알리고 루프를
+    되살립니다. 담은 모듈과 무관한 정적 검사라 소스만 읽어요.
+    """
+    problems = []
+    files = [os.path.join(CHUNSIK, f) for f in sorted(os.listdir(CHUNSIK)) if f.endswith(".py")]
+    cogs_dir = os.path.join(CHUNSIK, "cogs")
+    files += [os.path.join(cogs_dir, f) for f in sorted(os.listdir(cogs_dir)) if f.endswith(".py")]
+
+    for path in files:
+        with open(path, "r", encoding="utf-8") as f:
+            tree = ast.parse(f.read(), filename=path)
+        loops, guarded = [], set()
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef)):
+                continue
+            for dec in node.decorator_list:
+                text = ast.unparse(dec)
+                if text.startswith("tasks.loop"):
+                    loops.append(node.name)
+                elif re.fullmatch(r"\w+\.error", text):
+                    guarded.add(text.split(".")[0])
+        rel = os.path.relpath(path, os.path.dirname(HERE))
+        for name in loops:
+            if name not in guarded:
+                problems.append(f"{rel}: {name} 루프에 @{name}.error 핸들러가 없어요 "
+                                f"(한 번 터지면 그 기능이 조용히 영영 멈춥니다)")
+    return problems
+
+
 async def main(label, max_names):
     import chunsik_config as cfg
     from chunsik_client import ChunsikBotClient
@@ -260,6 +298,13 @@ async def main(label, max_names):
         for problem in ownership:
             print(f"     - {problem}")
 
+    # 🔁 백그라운드 루프가 한 번 터지고 조용히 멈추지 않는지. (이것도 정적 검사예요)
+    loop_guards = _check_loop_guards()
+    print(f"  루프 안전망 : {'✅ 전부 있음' if not loop_guards else f'🚨 {len(loop_guards)}건 없음'}")
+    if loop_guards:
+        for problem in loop_guards:
+            print(f"     - {problem}")
+
     if bot.failed_modules:
         print(f"\n  🚨 실패한 모듈 {len(bot.failed_modules)}개:")
         for key, reason in bot.failed_modules:
@@ -267,7 +312,7 @@ async def main(label, max_names):
 
     await bot.close()
 
-    failed = bool(bot.failed_modules or too_long or ownership)
+    failed = bool(bot.failed_modules or too_long or ownership or loop_guards)
 
     # 기본 실행이면 "이름을 상한까지 늘린" 검사도 자동으로 한 번 더 돌립니다.
     # (이름은 import 시점에 설명문으로 굳기 때문에 같은 프로세스에서 두 번 볼 수 없어요)

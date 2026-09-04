@@ -20,6 +20,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 
+from chunsik_alerts import report_loop_error
 from chunsik_names import currency
 from chunsik_settings import (feature_gate, has_admin_or_role, is_feature_enabled,
                            load_settings)
@@ -105,6 +106,13 @@ class ChunsikLevels(commands.Cog):
     @flush_loop.before_loop
     async def _before_flush(self):
         await self.bot.wait_until_ready()
+
+    @flush_loop.error
+    async def flush_loop_error(self, error: BaseException):
+        # 💾 이 루프가 죽으면 경험치가 메모리에만 쌓이다 재시작 때 통째로 날아가요.
+        #    _flush는 DataSaveError만 잡습니다. 파일이 손상돼 safe_json_load가 던지는
+        #    RuntimeError처럼 그 밖의 예외는 여기로 빠져나와 루프를 영구히 멈춰요.
+        await report_loop_error(self.flush_loop, "레벨 경험치 저장", error)
 
     def _flush(self):
         if not self._dirty:
