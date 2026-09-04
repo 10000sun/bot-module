@@ -523,7 +523,16 @@ class ChunsikSnooze(commands.Cog):
                 ephemeral=True,
             )
 
-        mine.sort(key=lambda r: r.get("wake_at", ""))
+        await interaction.response.send_message(embed=self.build_list_embed(mine), ephemeral=True)
+
+    def build_list_embed(self, mine: list) -> discord.Embed:
+        """미뤄둔 예약 목록 임베드를 만듭니다.
+
+        (명령 안쪽에 있던 걸 밖으로 뺐어요. tools/check_embeds.py가 이 함수를 그대로 불러서
+         "예약이 꽉 찼을 때도 한도 안에 들어오는가"를 검사합니다. 안쪽에 두면 검사 도구가
+         같은 코드를 베껴 써야 하고, 그러면 여기가 바뀌어도 검사는 옛 코드를 계속 통과시켜요)
+        """
+        mine = sorted(mine, key=lambda r: r.get("wake_at", ""))
         embed = discord.Embed(title="⏰ 미뤄둔 메시지", color=0x5CE6B4)
 
         # 개수뿐 아니라 **글자 수 총합**도 같이 셉니다. (위 EMBED_TOTAL_LIMIT 주석 참고)
@@ -564,7 +573,7 @@ class ChunsikSnooze(commands.Cog):
             )
         else:
             embed.set_footer(text="취소하려면 /스누즈 취소 에 번호를 넣어주세요")
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        return embed
 
     @스누즈.command(name="취소", description="미뤄둔 메시지 알림을 취소합니다. (번호는 /스누즈 목록의 #숫자)")
     @app_commands.describe(번호="취소할 예약 번호 (예: 7 또는 #7)")
