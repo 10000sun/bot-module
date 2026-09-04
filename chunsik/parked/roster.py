@@ -217,7 +217,7 @@ class ChunsikRoster(commands.Cog):
             formatted_description = f"```ansi\n{chunk.rstrip()}\n```"
 
             embed = discord.Embed(
-                title=f"📋 [서버 조건부 인원 명단]" + (f" ({idx + 1}/{len(chunks)})" if len(chunks) > 1 else ""),
+                title="📋 [서버 조건부 인원 명단]" + (f" ({idx + 1}/{len(chunks)})" if len(chunks) > 1 else ""),
                 description=formatted_description,
                 color=0x2ecc71,
                 timestamp=dt.datetime.now(KST)

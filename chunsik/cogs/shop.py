@@ -9,7 +9,7 @@ from discord.ext import commands, tasks
 from chunsik_config import ECONOMY_FILE, KST, SHOP_FILE, SHOP_TRANSACTIONS_FILE
 from chunsik_alerts import report_loop_error
 from chunsik_storage import atomic_json_save_or_raise, safe_json_load
-from chunsik_settings import feature_gate, has_admin_or_role, load_settings, send_log_embed
+from chunsik_settings import feature_gate, has_admin_or_role, send_log_embed
 from chunsik_state import record_ledger
 from chunsik_utils import (EMBED_DESC_LIMIT, EMBED_FIELD_LIMIT, EMBED_TITLE_LIMIT, ChunsikView,
                           clip, dangerous_permission, fit_embed, name_choices,

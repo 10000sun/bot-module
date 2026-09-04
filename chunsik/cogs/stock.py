@@ -419,7 +419,7 @@ class ChunsikStock(commands.Cog):
 
         if not os.path.exists(self.STOCKS_FILE):
             if atomic_json_save(self.STOCKS_FILE, default_structure, indent=4):
-                print(f"📁 [자동 생성] 표준 주식 데이터베이스 파일 생성 완료")
+                print("📁 [자동 생성] 표준 주식 데이터베이스 파일 생성 완료")
             return default_structure
 
         # ⚠️ 파일이 있는데 손상되어 있으면 safe_json_load가 예외를 던져서 여기서 멈춥니다.
@@ -1365,7 +1365,7 @@ class ChunsikStock(commands.Cog):
         
         embed = discord.Embed(
             title="🟢 [주식 시장 강제 개장]",
-            description=f"관리자에 의해 주식 거래가 **임시 개장** 됐어요.\n이 개장 상태는 오늘 장 마감(자정) 시까지 유지되며 이후 자연스럽게 종료됩니다.",
+            description="관리자에 의해 주식 거래가 **임시 개장** 됐어요.\n이 개장 상태는 오늘 장 마감(자정) 시까지 유지되며 이후 자연스럽게 종료됩니다.",
             color=0x00ff00,
             timestamp=dt.datetime.now(KST)
         )

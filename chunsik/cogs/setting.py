@@ -789,7 +789,7 @@ class ChunsikSetting(commands.Cog):
         if success_removed:
             result_msg.append(f"🗑️ **제거된 역할:** {', '.join(success_removed)}")
         if failed_actions:
-            result_msg.append(f"❌ **일부 작업 실패:**\n> " + "\n> ".join(failed_actions))
+            result_msg.append("❌ **일부 작업 실패:**\n> " + "\n> ".join(failed_actions))
         if not result_msg:
             result_msg.append("ℹ️ 적용된 변경사항이 없어요.")
 

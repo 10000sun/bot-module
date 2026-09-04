@@ -303,7 +303,7 @@ class ChunsikEconomy(commands.Cog):
             data["today_users"] = []
 
             self._save_attendance(data)
-            print(f"⏰ [시스템 알림] 자정이 되어 오늘 하루 출석체크 명단이 정상적으로 초기화됐어요.")
+            print("⏰ [시스템 알림] 자정이 되어 오늘 하루 출석체크 명단이 정상적으로 초기화됐어요.")
         except Exception as e:
             print(f"❗ [자정 초기화 실패] {type(e).__name__}: {e}")
 

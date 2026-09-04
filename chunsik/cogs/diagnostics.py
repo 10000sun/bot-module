@@ -123,7 +123,6 @@ class ChunsikTest(commands.Cog):
             return await interaction.response.send_message("⛔ 서버 관리자 또는 테스트 관리자만 사용할 수 있어요.", ephemeral=True)
         target = 유저 or interaction.user
         settings = load_settings()
-        role_map = settings.get("roles", {})
         role_labels = {
             "ids_admin": "🆔 아이디 관리자", "shop_admin": "🛒 상점 관리자", "stock_admin": "📈 주식 관리자",
             "evashi_admin": f"🎉 {event_name()} 관리자",
