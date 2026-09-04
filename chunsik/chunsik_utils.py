@@ -5,6 +5,7 @@ import datetime as dt
 import re
 from typing import Any, Optional
 import discord
+from discord import app_commands
 
 from chunsik_alerts import send_alert
 from chunsik_config import KST
@@ -91,6 +92,37 @@ EMBED_TITLE_LIMIT = 256
 EMBED_DESC_LIMIT = 4096
 EMBED_FIELD_LIMIT = 1024
 MESSAGE_LIMIT = 2000      # 임베드가 아닌 그냥 본문
+
+
+# 📏 자동완성·드롭다운 한도. 임베드와 똑같이 넘기면 **응답이 통째로 거부**됩니다.
+# 자동완성이 거부되면 화면에는 오류가 아니라 "일치하는 항목 없음"만 뜨기 때문에,
+# 목록에 긴 이름이 하나 섞였다는 걸 아무도 알아채지 못한 채 그 명령어가 못 쓰게 돼요.
+CHOICE_TEXT_LIMIT = 100     # 항목의 표시 이름·값 각각
+CHOICE_COUNT_LIMIT = 25     # 한 응답에 담을 수 있는 항목 수
+
+
+def name_choices(names, current: str, *, label=None) -> list:
+    """이름 목록에서 자동완성 항목을 만듭니다. (`current`가 들어간 것만, 최대 25개)
+
+    같은 코드가 주식 자동완성 다섯 곳과 상점에 복붙돼 있었고, 전부 길이를 안 봤어요.
+
+    ✂️ 표시 이름은 100자로 자릅니다. 값(=실제 이름)은 **자르지 않고, 100자를 넘으면
+       그 항목만 뺍니다.** 값을 자르면 없는 이름을 가리키게 돼서 고르는 순간
+       "찾을 수 없어요"가 나거든요. 한 항목을 빼는 쪽이 목록 전체가 사라지는 것보다 낫습니다.
+       (등록하는 자리에서 길이를 막으므로 새로 생기지는 않고, 옛 데이터만 여기 걸려요)
+
+    label을 주면 표시 이름만 그 함수로 만듭니다. 예: `f"{이름} (1,000 코인)"`
+    """
+    needle = (current or "").lower()
+    picked = []
+    for name in names:
+        if needle not in name.lower() or len(name) > CHOICE_TEXT_LIMIT:
+            continue
+        shown = label(name) if label else name
+        picked.append(app_commands.Choice(name=clip(shown, CHOICE_TEXT_LIMIT), value=name))
+        if len(picked) >= CHOICE_COUNT_LIMIT:
+            break
+    return picked
 
 
 def mention_list(user_ids, limit: int = 40) -> str:

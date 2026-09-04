@@ -11,7 +11,8 @@ from chunsik_alerts import report_loop_error
 from chunsik_storage import atomic_json_save_or_raise, safe_json_load
 from chunsik_settings import feature_gate, has_admin_or_role, load_settings, send_log_embed
 from chunsik_state import record_ledger
-from chunsik_utils import ChunsikView, report_broken_transaction, schedule_delete
+from chunsik_utils import (EMBED_DESC_LIMIT, EMBED_FIELD_LIMIT, EMBED_TITLE_LIMIT, ChunsikView,
+                          clip, name_choices, report_broken_transaction, schedule_delete)
 from chunsik_names import currency, josa
 
 class ShopPurchaseView(ChunsikView):
@@ -403,6 +404,18 @@ MAX_SELECT_OPTIONS = 25     # 디스코드 드롭다운 한 개에 넣을 수 �
 # 게다가 드롭다운 생성이 터지면 봇 기동 시 Persistent View 등록까지 실패해서, 봇을 다시
 # 켜도 기존 매대의 구매 버튼이 죽은 채로 남아요. 그래서 나중에 터뜨리지 않고 등록 자리에서 막습니다.
 MAX_BOARD_ITEMS = 25
+
+# ✂️ 관리자가 손으로 적는 글자 수 상한.
+# 매대 이름·설명과 상품 이름·설명은 손대지 않은 채로 임베드와 드롭다운·자동완성에 들어가요.
+# 디스코드 한도(임베드 제목 256·필드 이름 256·필드 값 1024, 드롭다운 라벨 100,
+# 자동완성 항목 100)를 넘기면 **그 줄만 잘리는 게 아니라 전광판 메세지와 자동완성 응답이
+# 통째로 400으로 실패합니다.** 위 MAX_BOARD_ITEMS와 똑같은 사고예요 — 설명란에 긴 글을
+# 한 번 붙여넣으면 그 매대에서 아무도 물건을 살 수 없게 됩니다.
+# 화면 쪽에서도 clip으로 한 번 더 자르지만(옛 데이터 대비), 애초에 못 넣게 여기서 막아요.
+MAX_ITEM_NAME = 40      # 자동완성이 "이름 (가격 재화)" 꼴로 보여줘서 100자보다 넉넉히 낮게 잡았어요
+MAX_ITEM_DESC = 200
+MAX_BOARD_NAME = 100    # 임베드 제목이 됩니다
+MAX_BOARD_DESC = 500    # 임베드 설명이 됩니다 (고정 안내문이 뒤에 붙어요)
 
 
 class GiftItemSelect(discord.ui.Select):
@@ -1097,9 +1110,11 @@ class ChunsikShop(commands.Cog):
         )
 
     def _generate_shop_embed(self, board: dict) -> discord.Embed:
+        # ✂️ 위 MAX_BOARD_NAME/DESC로 새 입력은 막았지만, 그 상한이 생기기 전에 저장된
+        #    매대가 있을 수 있어요. 한 글자만 넘겨도 전광판이 통째로 안 그려지니 여기서도 자릅니다.
         embed = discord.Embed(
-            title=board.get("shop_name", "🛒 상점"),
-            description=f"{board.get('shop_desc', '')}\n\n⚠️ **주의사항**\n└ *이 게시판 하단의 메뉴를 통해서만 구매/되팔기가 가능합니다.*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+            title=clip(board.get("shop_name", "🛒 상점"), EMBED_TITLE_LIMIT),
+            description=clip(f"{board.get('shop_desc', '')}\n\n⚠️ **주의사항**\n└ *이 게시판 하단의 메뉴를 통해서만 구매/되팔기가 가능합니다.*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", EMBED_DESC_LIMIT),
             color=0x5ce6b4
         )
         items = board.get("items", {})
@@ -1117,7 +1132,8 @@ class ChunsikShop(commands.Cog):
 
                 type_str = f"역할 지급 (<@&{info['role_id']}>)" if info["is_role"] else "일반 아이템"
                 field_value = f"💵 **가격**: {info['price']:,} {currency()}\n📝 **설명**: {info['desc']}\n🏷️ **타입**: {type_str}\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-                embed.add_field(name=f"📦 {info['name']} ({', '.join(status)})", value=field_value, inline=False)
+                embed.add_field(name=clip(f"📦 {info['name']} ({', '.join(status)})", EMBED_TITLE_LIMIT),
+                                value=clip(field_value, EMBED_FIELD_LIMIT), inline=False)
 
         hidden = len(items) - MAX_BOARD_ITEMS
         if hidden > 0:
@@ -1259,7 +1275,9 @@ class ChunsikShop(commands.Cog):
 
     @shop_group.command(name="생성", description="[관리자] 현재 채널에 새로운 상점 매대 전광판을 만듭니다. (채널마다 독립적으로 여러 개 개설 가능)")
     @app_commands.guild_only()
-    async def create_shop(self, interaction: discord.Interaction, 이름: str, 설명: str):
+    async def create_shop(self, interaction: discord.Interaction,
+                          이름: app_commands.Range[str, 1, MAX_BOARD_NAME],
+                          설명: app_commands.Range[str, 1, MAX_BOARD_DESC]):
         if not self._is_admin(interaction): return await interaction.response.send_message("⛔ 권한이 없어요.", ephemeral=True)
         data = self._load_shop()
 
@@ -1342,7 +1360,9 @@ class ChunsikShop(commands.Cog):
 
     @shop_group.command(name="설정", description="[관리자] 현재 채널에 있는 매대의 타이틀 이름과 설명을 수정합니다.")
     @app_commands.guild_only()
-    async def edit_shop(self, interaction: discord.Interaction, 이름: str, 설명: str):
+    async def edit_shop(self, interaction: discord.Interaction,
+                        이름: app_commands.Range[str, 1, MAX_BOARD_NAME],
+                        설명: app_commands.Range[str, 1, MAX_BOARD_DESC]):
         if not self._is_admin(interaction): return await interaction.response.send_message("⛔ 권한이 없어요.", ephemeral=True)
         data = self._load_shop()
         board = self._get_board(data, interaction.channel_id)
@@ -1360,7 +1380,11 @@ class ChunsikShop(commands.Cog):
     @shop_group.command(name="항목추가", description="[관리자] 현재 채널 매대에 새 물품을 진열합니다 (이름 기반으로 처리).")
     @app_commands.guild_only()
     @app_commands.describe(되팔기퍼센트="되팔기 시 원가의 몇 %를 돌려줄지 (0~100, 판매가능일 때만 사용, 생략 시 0)")
-    async def add_item(self, interaction: discord.Interaction, 이름: str, 가격: int, 설명: str, 구매가능: bool, 판매가능: bool, 역할지급: Optional[discord.Role] = None, 되팔기퍼센트: Optional[int] = None):
+    async def add_item(self, interaction: discord.Interaction,
+                       이름: app_commands.Range[str, 1, MAX_ITEM_NAME], 가격: int,
+                       설명: app_commands.Range[str, 1, MAX_ITEM_DESC],
+                       구매가능: bool, 판매가능: bool, 역할지급: Optional[discord.Role] = None,
+                       되팔기퍼센트: Optional[int] = None):
         if not self._is_admin(interaction): return await interaction.response.send_message("⛔ 권한이 없어요.", ephemeral=True)
         # 🚨 [버그 수정] 여기만 가격 검증이 빠져 있었어요. (`/상점 항목설정`은 이미 막고 있었습니다)
         # 가격이 음수면 _do_buy의 잔액 검사(`current_balance < price`)를 무조건 통과하고,
@@ -1411,12 +1435,10 @@ class ChunsikShop(commands.Cog):
         board = self._get_board(data, interaction.channel_id)
         if not board:
             return []
-        choices = []
-        for info in board.get("items", {}).values():
-            name = info.get("name", "")
-            if current.lower() in name.lower():
-                choices.append(app_commands.Choice(name=f"{name} ({info.get('price', 0):,} {currency()})", value=name))
-        return choices[:25]
+        # ✂️ 100자를 넘는 항목이 하나만 섞여도 자동완성 응답이 통째로 거부돼서
+        #    `/상점 항목삭제`·`/상점 항목설정`의 목록이 아예 안 뜹니다. name_choices가 걸러요.
+        prices = {info.get("name", ""): info.get("price", 0) for info in board.get("items", {}).values()}
+        return name_choices(prices, current, label=lambda n: f"{n} ({prices[n]:,} {currency()})")
 
     @shop_group.command(name="항목삭제", description="[관리자] 현재 채널 매대의 진열 물품을 이름 기반으로 식별해 삭제합니다.")
     @app_commands.guild_only()
@@ -1442,7 +1464,14 @@ class ChunsikShop(commands.Cog):
     @shop_group.command(name="항목설정", description="[관리자] 현재 채널 매대에 있는 상품의 옵션(새이름/새가격/변동률/설명/상태/되팔기퍼센트 등)을 일괄 수정합니다.")
     @app_commands.guild_only()
     @app_commands.describe(새이름="상품 이름을 바꾸고 싶을 때 입력 (선택)")
-    async def edit_item(self, interaction: discord.Interaction, 이름: str, 새이름: Optional[str] = None, 새가격: Optional[int] = None, 퍼센트변동: Optional[float] = None, 설명: Optional[str] = None, 구매가능: Optional[bool] = None, 판매가능: Optional[bool] = None, 되팔기퍼센트: Optional[int] = None):
+    # ℹ️ `이름`(찾을 상품)에는 상한을 걸지 않습니다. 상한이 생기기 전에 등록된 긴 이름의
+    #    상품을 지우거나 고칠 길이 막히거든요. 새로 저장되는 값에만 겁니다.
+    async def edit_item(self, interaction: discord.Interaction, 이름: str,
+                        새이름: Optional[app_commands.Range[str, 1, MAX_ITEM_NAME]] = None,
+                        새가격: Optional[int] = None, 퍼센트변동: Optional[float] = None,
+                        설명: Optional[app_commands.Range[str, 1, MAX_ITEM_DESC]] = None,
+                        구매가능: Optional[bool] = None, 판매가능: Optional[bool] = None,
+                        되팔기퍼센트: Optional[int] = None):
         if not self._is_admin(interaction): return await interaction.response.send_message("⛔ 권한이 없어요.", ephemeral=True)
         if 되팔기퍼센트 is not None and not (0 <= 되팔기퍼센트 <= 100):
             return await interaction.response.send_message("❌ 되팔기퍼센트는 0~100 사이여야 해요.", ephemeral=True)
