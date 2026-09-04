@@ -324,8 +324,39 @@ def check_event_announce():
         measure_message(f"결과 발표 (선착순 3명 + 참가 {count}명)", build(3, count))
 
 
+def check_roster(ids_mod):
+    print("\n[8] 🆔 아이디 명단 — 아주 긴 아이디가 섞였을 때 (```ansi 코드블록)")
+
+    def build(members, id_len):
+        # cogs/ids.py의 _refresh_id_roster가 만드는 것과 같은 모양이에요.
+        # ⚠️ ESC 문자는 편집 도구를 거치면 진짜 제어문자로 박혀요. chr(27)로 직접 만듭니다.
+        #    (NEXT.md의 "소스에 이스케이프를 넣을 때 편집 도구를 믿지 말 것" 항목)
+        esc = chr(27)
+        lines = ["게임 아이디 목록", "", f"{esc}[2;34m멤버{esc}[0m", ""]
+        for i in range(members):
+            lines.append(f"[{esc}[2;34m유저{i}{esc}[0m]")
+            lines.append(f"롤 : {_fill(id_len)}")
+            lines.append("")
+        return lines
+
+    for members, id_len in ((30, 12), (30, ids_mod.MAX_ID_LENGTH), (1, 6000), (1, 50000)):
+        lines = build(members, id_len)
+        # 진짜 코드를 그대로 부릅니다. 여기서 베껴 쓰면 코드가 바뀌어도 검사는 옛것을 봐요.
+        chunks = ids_mod.split_roster_lines(lines)
+        longest = max((len(f"```ansi\n{chunk}\n```") for chunk in chunks), default=0)
+        label = f"명단 (멤버 {members}명 · 아이디 {id_len:,}자)"
+        if longest > MESSAGE_MAX:
+            _fails.append(label)
+            print(f"  🚨 {label} — {len(chunks)}조각인데 제일 긴 메세지가 {longest:,}자 > {MESSAGE_MAX:,}")
+            print("       · 한 줄이 혼자 한도를 넘으면 줄 사이에서만 나눠서는 못 줄여요.")
+            print("       · 명단 게시가 거부되면 그때부터 명단이 그 상태로 굳습니다.")
+        else:
+            print(f"  OK  {label} — {len(chunks)}조각, 제일 긴 메세지 {longest:,}자 / {MESSAGE_MAX:,}")
+
+
 def main():
     import cogs.chronicle as chron_mod
+    import cogs.ids as ids_mod
     import cogs.party as party_mod
     import cogs.scrim as scrim_mod
     import cogs.selfrole as selfrole_mod
@@ -344,6 +375,7 @@ def main():
     check_recruit(party_mod, scrim_mod)
     check_selfrole(selfrole_mod)
     check_event_announce()
+    check_roster(ids_mod)
 
     print("\n" + "=" * 62)
     if _fails:
