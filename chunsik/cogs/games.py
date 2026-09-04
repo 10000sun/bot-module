@@ -12,7 +12,7 @@ from discord.ext import commands, tasks
 from chunsik_config import KST
 from chunsik_alerts import report_loop_error
 from chunsik_state import record_ledger
-from chunsik_utils import chunk_lines
+from chunsik_utils import chunk_lines, mention_lines
 from chunsik_settings import has_admin_or_role, load_settings, save_settings, send_log_embed
 from chunsik_names import bot_name, currency, event_name, josa
 
@@ -165,15 +165,25 @@ class ChunsikGames(commands.Cog):
 
         # 📢 [버그 수정] 예전엔 사람이 몰릴 때마다 개인별로 로그가 따로 남아서 도배됐었어요.
         # 이제는 창이 닫히는 시점에 딱 한 번, 참가자 전원(선착순+나머지)을 모아서 공지해요.
+        # 🚨 [버그 수정] 멘션을 **한 줄에 몰아넣으면 안 됩니다.** 아래 _send_evashi_announce가
+        #    chunk_lines로 나눠 보내는데, 그건 줄과 줄 **사이**에서만 나눠요. 한 줄이 혼자
+        #    2000자를 넘으면 나눠도 그대로라 발송이 통째로 실패합니다.
+        #    (실측: 참가 100명이면 제일 긴 조각이 2,211자. 90명쯤부터 걸린다고 적어두고
+        #     고쳤다고 생각했지만, 정작 그 인원에서 여전히 안 나가고 있었어요)
+        #    mention_lines가 40명 안팎씩 줄을 끊어줍니다.
         lines = [f"🎉 **{event_name()} 이벤트 결과** (총 {len(self.evashi_participants)}명 참여)"]
         if self.evashi_first_winners:
-            mentions = " ".join(f"<@{uid}>" for uid in self.evashi_first_winners)
-            lines.append(f"🥇 선착순 {len(self.evashi_first_winners)}명: {mentions}\n└ 각 {evashi['first_amount']:,} {currency()} 지급")
+            lines.append("")
+            lines.append(f"🥇 선착순 {len(self.evashi_first_winners)}명 · 각 {evashi['first_amount']:,} {currency()} 지급")
+            lines.extend(mention_lines(self.evashi_first_winners))
         if rest_ids:
-            mentions = " ".join(f"<@{uid}>" for uid in rest_ids)
-            lines.append(f"🎊 참가 {len(rest_ids)}명: {mentions}\n└ 각 {evashi['rest_amount']:,} {currency()} 지급")
+            lines.append("")
+            lines.append(f"🎊 참가 {len(rest_ids)}명 · 각 {evashi['rest_amount']:,} {currency()} 지급")
+            lines.extend(mention_lines(rest_ids))
 
-        await self._send_evashi_announce(self.evashi_guild, "\n\n".join(lines))
+        # 줄 사이를 비우는 건 위에서 넣은 빈 줄이 맡아요. 여기서 "\n\n"로 이으면
+        # 멘션 줄 사이사이에도 빈 줄이 끼어서 발표가 세로로 길어집니다.
+        await self._send_evashi_announce(self.evashi_guild, "\n".join(lines))
 
         await send_log_embed(
             self.bot, "economy_log", f"{event_name()} 이벤트 전체 결과 기록이에요.",

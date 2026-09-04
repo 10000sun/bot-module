@@ -2,6 +2,9 @@
 
 `check_money`가 돈 계층의 바닥을 본다면, 이건 **화면의 바닥**을 봅니다.
 
+임베드 말고 **그냥 메세지 본문(2000자)**도 같이 봅니다. 여기도 똑같이 한 글자만
+넘어가면 그 메세지가 통째로 안 나가요.
+
 디스코드 임베드에는 한도가 다섯 개 있어요.
 
     제목 256 · 설명 4096 · 필드 이름 256 · 필드 값 1024 · **전체 6000**
@@ -35,7 +38,7 @@ discord.py는 이걸 로컬에서 전혀 검사하지 않아요 — 보내는 �
 ## 여기서 **안 보는** 것
 
   · 여기 적지 않은 화면. 자유 입력이 들어가는 화면을 새로 만들면 **여기에도 추가**하세요.
-  · 메세지 본문(2000자)·드롭다운(라벨 100자)·자동완성(항목 100자) 한도.
+  · 드롭다운(라벨 100자)·자동완성(항목 100자) 한도.
     (자동완성은 chunsik_utils.name_choices가, 드롭다운은 각 View가 따로 막고 있어요)
   · 실제 디스코드가 받아주는지. 여기서 통과해도 권한·레이트리밋은 별개예요.
 """
@@ -63,7 +66,7 @@ os.environ["CHUNSIK_DATA_DIR"] = tempfile.mkdtemp()
 import discord  # noqa: E402
 from chunsik_config import KST  # noqa: E402
 from chunsik_names import currency  # noqa: E402
-from chunsik_utils import fit_embed  # noqa: E402
+from chunsik_utils import chunk_lines, fit_embed, mention_lines  # noqa: E402
 
 # 📏 디스코드 임베드 한도. chunsik_utils에도 같은 값이 있지만, 검사 도구가 검사 대상의
 #    상수를 그대로 가져다 쓰면 그 값이 틀렸을 때 둘 다 같이 틀려서 아무것도 못 잡아요.
@@ -77,6 +80,9 @@ TOTAL_MAX = 6000
 # 디스코드 슬래시 명령의 문자열 옵션이 받을 수 있는 최대 길이.
 # 코드에 상한이 없으면 유저는 여기까지 넣을 수 있어요.
 DISCORD_STRING_MAX = 6000
+
+# 임베드가 아닌 그냥 메세지 본문의 한도.
+MESSAGE_MAX = 2000
 
 _fails = []
 
@@ -277,6 +283,47 @@ def check_selfrole(selfrole_mod):
         print("       · cogs/selfrole.py의 DESCRIPTION_LIMIT을 줄이거나 목록을 필드로 옮기세요")
 
 
+def measure_message(label, text, limit=MESSAGE_MAX):
+    """나눠 보내는 메세지가 조각마다 한도 안에 들어오는지 봅니다.
+
+    ⚠️ 나눠 보낸다고 안심하면 안 돼요. chunk_lines는 줄과 줄 **사이**에서만 나눕니다.
+       멘션처럼 한 줄에 몰아넣은 내용은 그 줄이 통째로 한 조각이 돼서, 나눠도 여전히
+       한도를 넘어요. 그래서 재야 하는 건 본문 전체 길이가 아니라
+       **나눈 뒤 제일 긴 조각**입니다.
+    """
+    parts = chunk_lines(text.split("\n"), limit=1900)
+    longest = max((len(part) for part in parts), default=0)
+    if longest > limit:
+        _fails.append(label)
+        print(f"  🚨 {label} — 본문 {len(text):,}자를 {len(parts)}조각으로 나눴는데도 "
+              f"제일 긴 조각이 {longest:,}자 > {limit:,}")
+        print("       · 한 줄이 혼자 한도를 넘으면 chunk_lines로는 못 나눠요.")
+        print("       · 멘션 목록이라면 chunsik_utils.mention_lines로 줄을 먼저 끊으세요.")
+    else:
+        print(f"  OK  {label} — {len(parts)}조각, 제일 긴 조각 {longest:,}자 / {limit:,}")
+
+
+def check_event_announce():
+    print("\n[7] 🎉 이벤트 결과 발표 — 참가자가 몰렸을 때 (임베드가 아니라 그냥 메세지)")
+
+    def build(first_n, rest_n):
+        # cogs/games.py의 _close_evashi_window_now가 만드는 것과 같은 모양이에요.
+        lines = [f"🎉 **이벤트 결과** (총 {first_n + rest_n}명 참여)"]
+        if first_n:
+            lines.append("")
+            lines.append(f"🥇 선착순 {first_n}명 · 각 5,000 {currency()} 지급")
+            lines.extend(mention_lines([700000000000000000 + i for i in range(first_n)]))
+        if rest_n:
+            lines.append("")
+            lines.append(f"🎊 참가 {rest_n}명 · 각 1,000 {currency()} 지급")
+            lines.extend(mention_lines([800000000000000000 + i for i in range(rest_n)]))
+        return "\n".join(lines)
+
+    # 참가 인원에 상한이 없는 기능이라, 큰 서버 기준으로 넉넉히 봅니다.
+    for count in (100, 500, 1000):
+        measure_message(f"결과 발표 (선착순 3명 + 참가 {count}명)", build(3, count))
+
+
 def main():
     import cogs.chronicle as chron_mod
     import cogs.party as party_mod
@@ -296,10 +343,11 @@ def main():
     check_chronicle(chron_mod)
     check_recruit(party_mod, scrim_mod)
     check_selfrole(selfrole_mod)
+    check_event_announce()
 
     print("\n" + "=" * 62)
     if _fails:
-        print(f"🚨 {len(_fails)}개 화면이 디스코드 한도를 넘어요")
+        print(f"🚨 {len(_fails)}개가 디스코드 한도를 넘어요")
         for label in _fails:
             print(f"   - {label}")
         print("\n넘긴 화면은 '일부만 잘리는' 게 아니라 **통째로 안 보입니다.**")
