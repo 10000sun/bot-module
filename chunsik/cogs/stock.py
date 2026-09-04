@@ -20,7 +20,8 @@ from chunsik_storage import atomic_json_save, atomic_json_save_or_raise, safe_js
 from chunsik_settings import LOG_STYLES, build_log_embed, feature_gate, has_admin_or_role, load_settings
 from chunsik_state import record_ledger
 from chunsik_utils import (EMBED_FIELD_LIMIT, EMBED_TITLE_LIMIT, ChunsikView, chunk_lines,
-                          clip, fit_embed, holding_avg_price, holding_shares, name_choices,
+                          clip, describe_user_error, fit_embed, holding_avg_price,
+                          holding_shares, name_choices,
                           portfolio_value, report_broken_transaction)
 from chunsik_names import currency, josa, server_name
 
@@ -55,7 +56,7 @@ class ClosingPriceView(ChunsikView):
                 # 🚨 손상 파일을 조용히 넘기지 않고, 원본을 백업한 뒤 중단시켜요.
                 data = safe_json_load(self.stock_cog.STOCKS_FILE, {})
             except Exception as e:
-                return await interaction.followup.send(f"❌ 데이터 로드 오류: {e}")
+                return await interaction.followup.send(describe_user_error(e))
 
             stocks_data = data.get("stocks", {})
             user_shares = data.get("user_shares", {})
@@ -826,7 +827,13 @@ class ChunsikStock(commands.Cog):
             
         except Exception as e:
             print(f"❌ [포폴 명령어 오류] {e}")
-            await interaction.followup.send(f"❗ 포트폴리오를 불러오는 중 오류가 발생했어요: `{e}`\n관리자(콘솔)를 확인해주세요.", ephemeral=True)
+            # 🔒 예외 원문을 그대로 보여주면 파일 경로가 딸려 나갑니다. 파일이 깨졌을 때
+            #    나오는 메세지가 "E:\...\chunsik\data\chunsik_stocks.json 이(가) 손상되어…"
+            #    같은 식이라, 남의 서버 유저에게 우리 폴더 구조가 그대로 보여요.
+            #    describe_user_error가 저장 실패·파일 손상만 골라 안전한 문구로 바꿔줍니다.
+            #    (슬래시 명령·버튼의 공용 오류 처리가 이미 쓰는 함수예요)
+            await interaction.followup.send(
+                f"{describe_user_error(e)}\n관리자(콘솔)를 확인해주세요.", ephemeral=True)
 
         # 🗑️ [제거] 예전엔 여기서 자산 추세 그래프를 이미지로 만들어 함께 보냈어요.
         # 포폴은 텍스트 요약만으로 충분하다는 판단으로 뺐습니다.
