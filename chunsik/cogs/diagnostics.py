@@ -72,6 +72,44 @@ class ChunsikTest(commands.Cog):
         # 🔑 서버 관리자 또는 '/설정 관리자 테스트'로 지정된 테스트 관리자 역할 보유자만 사용 가능
         return has_admin_or_role(interaction, "test_admin")
 
+    def _channel_labels(self) -> dict:
+        """점검할 채널 {키: 이름표}. `/설정` 명령이 쓰는 표를 그대로 빌려옵니다.
+
+        🐛 [버그 수정] 예전엔 여기에 채널 13개를 **손으로 적어둔 표**가 따로 있었어요.
+           그런데 그 뒤에 채널이 늘면서 표는 안 따라갔고, `/설정`으로 지정할 수 있는 18개 중
+           **5개가 점검에서 통째로 빠져 있었습니다** — 상점 전광판·환영·입퇴장 로그·
+           내전 로그·레벨 알림. 하필 상점 전광판처럼 유저가 제일 자주 보는 채널이 빠져서,
+           "점검 다 통과했는데 왜 안 되지"가 될 수 있는 자리였어요.
+
+           점검 명령이 놓치는 건 조용합니다. 결과에 안 나오니 아무도 빠진 줄 몰라요.
+           그래서 표를 두 벌 두지 않고, 지정하는 쪽 표를 그대로 씁니다. 이제 채널을
+           새로 만들면 `/설정`에 넣는 순간 점검에도 자동으로 들어와요.
+
+        🧩 `from cogs.setting import ...` 하지 않는 이유는 wizard._tables()와 같아요.
+           코그끼리 직접 import하면 한쪽만 담아 납품했을 때 import 단계에서 죽습니다.
+        """
+        cog = self.bot.get_cog("ChunsikSetting")
+        if cog is None:
+            return {}
+        # 이름표는 `/설정 채널 …`의 하위 명령 이름이에요. 관리자가 이미 그 이름으로
+        # 지정했으니, 점검 결과도 같은 이름으로 보여야 어느 채널인지 바로 압니다.
+        return {key: name for name, key in cog._CHANNEL_COMMANDS.items()}
+
+    def _role_labels(self) -> dict:
+        """점검할 관리자 역할 {키: 이름표}. 채널과 같은 이유로 `/설정` 표를 빌려옵니다.
+
+        🐛 [버그 수정] 여기도 손으로 적은 표라 같이 낡아 있었어요. 지정할 수 있는 역할 11개 중
+           **5개가 빠져 있었습니다** — 셀프역할·입장·레벨·파티·내전 관리자. 나중에 들어온
+           다섯 코그의 것만 정확히 빠졌어요. 그 역할을 받은 사람이 `/테스트 권한확인`을 하면
+           "특별한 관리 권한이 없어요"가 나옵니다.
+
+        👑 대장은 `/설정 명단 대장`으로 따로 지정하는 자리라 표에 없어요. 손으로 붙입니다.
+        """
+        cog = self.bot.get_cog("ChunsikSetting")
+        labels = {key: f"{name} 관리자" for name, key in cog._ROLE_COMMANDS.items()} if cog else {}
+        labels["chief_role"] = "👑 대장"
+        return labels
+
     # ---------- 1. 채널점검 ----------
     @test_group.command(name="채널점검", description="[관리자] 설정된 채널에 전부 테스트 메세지를 보내보고, 문제(권한 없음/미설정)를 한 번에 리포트해요.")
     async def test_channels(self, interaction: discord.Interaction):
@@ -79,16 +117,11 @@ class ChunsikTest(commands.Cog):
             return await interaction.response.send_message("⛔ 서버 관리자 또는 테스트 관리자만 사용할 수 있어요.", ephemeral=True)
         await interaction.response.defer(ephemeral=True)
 
-        channel_labels = {
-            "attendance": "📅 출석체크", "economy_log": "💰 경제 로그", "shop_log": "🛒 상점 로그",
-            "stock_board": "📈 주식 전광판", "stock_log": "📊 주식 로그", "closing_log": "🔔 종가 게시판",
-            "id_log": "🆔 아이디 로그", "role_log": "👥 역할 로그",
-            "birthday_announce": "🎂 생일 알림", "birthday_log": "🎉 생일 로그", "evashi_announce": f"🎉 {event_name()} 안내",
-            "id_submit": "🆔 아이디 자동등록", "level_roster": "📋 아이디 명단",
-        }
+        channel_labels = self._channel_labels()
         settings = load_settings()
         channels = settings.get("channels", {})
         ok, failed, missing = [], [], []
+        sent = []      # 보낸 테스트 메세지 (전부 보낸 뒤 한꺼번에 지워요)
 
         for key, label in channel_labels.items():
             ch_id = channels.get(key)
@@ -100,14 +133,27 @@ class ChunsikTest(commands.Cog):
                 failed.append(f"{label} (채널 자체를 못 찾음)")
                 continue
             try:
-                msg = await channel.send(f"🧪 `/테스트 채널점검` - {label} 채널 발송 테스트예요. (5초 후 자동 삭제)")
+                msg = await channel.send(f"🧪 `/테스트 채널점검` - {label} 채널 발송 테스트예요. (곧 자동 삭제)")
                 ok.append(label)
-                await asyncio.sleep(5)
-                await msg.delete()
+                sent.append(msg)
             except discord.Forbidden:
                 failed.append(f"{label} (봇 권한 부족)")
             except Exception as e:
                 failed.append(f"{label} ({e})")
+
+        # 🧹 전부 보낸 **뒤에** 한 번만 쉬고 한꺼번에 지웁니다.
+        #    예전엔 채널마다 5초씩 기다리고 지웠어요. 채널이 13개일 땐 65초였는데
+        #    이제 18개라 90초가 됩니다. 그동안 명령을 부른 사람은 아무 답도 못 받고,
+        #    테스트 메세지는 채널마다 5초씩 차례로 남아 있어요.
+        #    한 번에 지우면 "5초쯤 떴다가 사라진다"는 성질은 그대로면서 전체가 5초에 끝납니다.
+        if sent:
+            await asyncio.sleep(5)
+            for msg in sent:
+                try:
+                    await msg.delete()
+                except Exception:
+                    # 지우기 실패는 점검 결과와 상관없어요. (메세지 관리 권한이 없는 채널 등)
+                    pass
 
         embed = discord.Embed(title="🧪 채널점검 결과", color=discord.Color.blurple())
         embed.add_field(name=f"✅ 정상 ({len(ok)})", value=", ".join(ok) if ok else "없음", inline=False)
@@ -123,12 +169,7 @@ class ChunsikTest(commands.Cog):
             return await interaction.response.send_message("⛔ 서버 관리자 또는 테스트 관리자만 사용할 수 있어요.", ephemeral=True)
         target = 유저 or interaction.user
         settings = load_settings()
-        role_labels = {
-            "ids_admin": "🆔 아이디 관리자", "shop_admin": "🛒 상점 관리자", "stock_admin": "📈 주식 관리자",
-            "evashi_admin": f"🎉 {event_name()} 관리자",
-            "chronicle_admin": "📜 연대기 관리자", "chief_role": "👑 대장",
-            "test_admin": "🧪 테스트 관리자",
-        }
+        role_labels = self._role_labels()
         has = []
         for key, label in role_labels.items():
             role_ids = _get_role_ids(settings, key)
