@@ -8,7 +8,7 @@ from discord.ext import commands, tasks
 
 from chunsik_config import ATTENDANCE_FILE, ECONOMY_FILE, KST, LEDGER_FILE, SHOP_FILE, STOCKS_FILE, module_active
 from chunsik_alerts import report_loop_error
-from chunsik_storage import atomic_json_save, atomic_json_save_or_raise, safe_json_load
+from chunsik_storage import atomic_json_save_or_raise, safe_json_load
 from chunsik_settings import feature_gate, has_admin_or_role, load_settings, send_log_embed
 from chunsik_state import load_ledger, record_ledger, record_ledger_many
 from chunsik_utils import ChunsikView, chunk_lines, describe_user_error, portfolio_value
@@ -438,22 +438,43 @@ class ChunsikEconomy(commands.Cog):
             return await interaction.followup.send("❌ 이미 되돌렸거나 기록을 찾을 수 없어요.", ephemeral=True)
 
         undo_rows = []
+        mark_failed = None
         async with self.bot.economy_lock:
-            economy = self._load_raw_economy()
-            for e in rows:
-                uid = e["user"]
-                economy[uid] = economy.get(uid, 0) - e["delta"]   # 부호를 뒤집어 원복
-                undo_rows.append((uid, -e["delta"], economy[uid]))
-            self._save_raw_economy(economy)
-
-            # 원본 기록에 취소 표시 (같은 건을 두 번 되돌리지 못하게)
+            # 🚨 [순서 주의] '되돌림' 표시를 **돈보다 먼저** 박습니다.
+            #
+            # 예전엔 돈을 먼저 옮기고 표시를 나중에 저장했어요. 그런데 그 저장이 실패하면
+            # 돈은 이미 원복됐는데 목록에는 "아직 안 되돌림"으로 남습니다. 관리자가 한 번 더
+            # 누르면 **같은 금액이 두 번 빠져요.** 50명에게 준 10,000을 두 번 되돌리면
+            # 한 사람당 20,000이 사라집니다.
+            #
+            # 게다가 그 저장은 atomic_json_save라 실패해도 **예외를 안 던지고 False를 돌려줍니다.**
+            # 반환값을 안 보고 있었으니 try/except가 잡을 것도 없었어요. 콘솔 경고조차 안 떴습니다.
+            #
+            # 순서를 뒤집으면 최악이 "표시는 됐는데 돈은 안 옮겨진" 상태인데, 그건 화면에
+            # 그대로 알려주고 관리자가 `/지급`으로 손수 맞출 수 있어요. 돈이 두 번 빠지는 것보다
+            # 훨씬 낫습니다. (되돌릴 수 없는 쪽으로 기울지 않게)
             for e in ledger["entries"]:
                 if e.get("batch") == batch_id:
                     e["reverted"] = True
             try:
-                atomic_json_save(LEDGER_FILE, ledger, indent=2)
+                atomic_json_save_or_raise(LEDGER_FILE, ledger, indent=2)
             except Exception as ex:
-                print(f"⚠️ 원장 취소 표시 저장 실패: {type(ex).__name__}: {ex}")
+                mark_failed = f"{type(ex).__name__}: {ex}"
+            else:
+                economy = self._load_raw_economy()
+                for e in rows:
+                    uid = e["user"]
+                    economy[uid] = economy.get(uid, 0) - e["delta"]   # 부호를 뒤집어 원복
+                    undo_rows.append((uid, -e["delta"], economy[uid]))
+                self._save_raw_economy(economy)
+
+        if mark_failed:
+            # 아무것도 안 옮겼어요. 다시 눌러도 안전합니다.
+            print(f"❗ [되돌리기] 취소 표시를 저장하지 못해 중단했어요: {mark_failed}")
+            return await interaction.followup.send(
+                "❌ 되돌리기를 **시작하지 않았어요.** 기록 파일에 저장을 못 했습니다.\n"
+                "└ 돈은 하나도 움직이지 않았으니 잠시 후 다시 시도해 주세요.\n"
+                f"└ ({mark_failed})", ephemeral=True)
 
         kind = rows[0].get("kind", "관리자 지급")
         record_ledger_many(undo_rows, f"{kind} 취소", rows[0].get("detail", ""),
