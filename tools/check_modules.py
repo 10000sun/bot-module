@@ -251,6 +251,57 @@ def _check_loop_guards():
     return problems
 
 
+# 🔢 코드·문서에 적어도 되는 자리표시자 ID.
+#
+# 안내문에 "이렇게 생긴 숫자를 넣으세요"를 보여주려면 예시가 하나는 있어야 해요.
+# 여기 없는 17~20자리 숫자가 나오면 **원본 서버의 진짜 ID**로 보고 잡습니다.
+PLACEHOLDER_IDS = {
+    "123456789012345678",   # guild.example.json·README의 표준 예시
+    "234567890123456789",   # 두 번째 예시가 필요한 자리 (ranks 표)
+    "700000000000000000",   # check_embeds.py가 만들어 쓰는 가짜 유저 번호
+    "800000000000000000",
+}
+
+_ID_RE = re.compile(r"\b\d{17,20}\b")
+
+
+def _check_delivery_ids():
+    """납품물에 **원본 서버의 진짜 ID**가 남아 있는지 봅니다.
+
+    🚚 이 레포는 통째로 클라이언트에게 넘어갑니다. 이 프로젝트의 출발점이 "서버 고유 ID를
+       코드에서 걷어내 guild.json으로 분리"였는데, 주석이나 창고 파일(parked/)에 예시로
+       적어둔 진짜 역할 ID는 그 정리에서 두 번 빠져나갔어요. 실제로 두 개가 남아 있었습니다.
+
+    비밀값은 아니에요 — 역할 ID는 그 서버 사람이면 다 볼 수 있습니다. 다만 납품물에
+    남의 서버 ID가 섞여 있는 건 그 자체로 사고고, 나중에 그 값을 진짜로 쓰는 코드가
+    생기면 엉뚱한 서버를 가리킵니다.
+
+    깃이 **추적하는** 파일만 봅니다. 로컬의 guild.json·data/는 원래 안 나가니까요.
+    """
+    problems = []
+    root = os.path.dirname(HERE)
+    listed = subprocess.run(["git", "ls-files"], cwd=root, capture_output=True, text=True,
+                            encoding="utf-8")
+    if listed.returncode != 0:
+        return []      # 깃 저장소가 아니면 볼 게 없어요. 검사를 실패로 만들진 않습니다.
+
+    for rel in listed.stdout.split("\n"):
+        if not rel.strip():
+            continue
+        try:
+            with open(os.path.join(root, rel), "r", encoding="utf-8") as f:
+                text = f.read()
+        except (OSError, UnicodeDecodeError):
+            continue   # 이미지 같은 건 넘어갑니다
+        for number, line in enumerate(text.split("\n"), 1):
+            for found in _ID_RE.findall(line):
+                if found in PLACEHOLDER_IDS:
+                    continue
+                problems.append(f"{rel}:{number}: 진짜 디스코드 ID로 보이는 값 {found} "
+                                f"— 자리표시자로 바꾸거나 문장에서 빼주세요")
+    return problems
+
+
 async def main(label, max_names):
     import chunsik_config as cfg
     from chunsik_client import ChunsikBotClient
@@ -305,6 +356,13 @@ async def main(label, max_names):
         for problem in loop_guards:
             print(f"     - {problem}")
 
+    # 🚚 납품물에 원본 서버의 진짜 ID가 섞여 있지 않은지. (이것도 정적 검사예요)
+    delivery = _check_delivery_ids()
+    print(f"  납품물 ID   : {'✅ 자리표시자만 있음' if not delivery else f'🚨 {len(delivery)}건 남음'}")
+    if delivery:
+        for problem in delivery:
+            print(f"     - {problem}")
+
     if bot.failed_modules:
         print(f"\n  🚨 실패한 모듈 {len(bot.failed_modules)}개:")
         for key, reason in bot.failed_modules:
@@ -312,7 +370,7 @@ async def main(label, max_names):
 
     await bot.close()
 
-    failed = bool(bot.failed_modules or too_long or ownership or loop_guards)
+    failed = bool(bot.failed_modules or too_long or ownership or loop_guards or delivery)
 
     # 기본 실행이면 "이름을 상한까지 늘린" 검사도 자동으로 한 번 더 돌립니다.
     # (이름은 import 시점에 설명문으로 굳기 때문에 같은 프로세스에서 두 번 볼 수 없어요)
