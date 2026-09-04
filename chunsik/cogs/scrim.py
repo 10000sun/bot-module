@@ -37,10 +37,18 @@ from chunsik_settings import (feature_gate, has_admin_or_role, is_feature_enable
                               send_log_embed)
 from chunsik_state import load_scrim, save_scrim, state
 from chunsik_utils import (EMBED_DESC_LIMIT, EMBED_TITLE_LIMIT, MESSAGE_LIMIT,
-                           ChunsikView, add_lines_field, clip, mention_list,
+                           ChunsikView, add_lines_field, clip, fit_embed, mention_list,
                            parse_datetime_text)
 
 REMIND_BEFORE_MINUTES = 10
+
+# ✍️ 주최자가 손으로 적는 칸의 글자 수 상한.
+# 제목은 임베드 제목, 설명은 임베드 설명으로 그대로 들어갑니다. 칸마다 자르고는
+# 있었지만 **합계(6000자)를 보는 데가 없어서**, 길게 적으면 모집글이 통째로 거부돼요.
+# 그러면 글이 안 올라가는 데서 그치지 않고, 참가 버튼을 눌러도 모집글을 다시 그릴 수
+# 없어서 명단이 그 시점에 얼어붙습니다. (실측: 파티 6,056자 · 내전 6,505자)
+TITLE_LIMIT = 100
+NOTE_LIMIT = 500
 MAX_OPEN_SCRIMS = 25
 MAX_TEAM_SIZE = 20          # 한 팀 인원 상한 (모드가 커봐야 이 정도예요)
 
@@ -226,7 +234,8 @@ class ChunsikScrim(commands.Cog):
 
         if not result:
             embed.set_footer(text="참가를 누르면 자리를 잡아요. 못 오게 되면 취소를 눌러주세요.")
-        return embed
+        # 🧮 상한이 생기기 전에 올라간 모집글 대비. (푸터까지 붙인 맨 마지막에 불러야 해요)
+        return fit_embed(embed)
 
     @staticmethod
     def _record_tag(records: dict, uid) -> str:
@@ -413,8 +422,10 @@ class ChunsikScrim(commands.Cog):
         app_commands.Choice(name="전적을 보고 (기본)", value="balanced"),
         app_commands.Choice(name="완전 무작위", value="random"),
     ])
-    async def open_scrim(self, interaction: discord.Interaction, 제목: str, 한팀인원: int, 시각: str,
-                         팀짜기: app_commands.Choice[str] = None, 설명: str = ""):
+    async def open_scrim(self, interaction: discord.Interaction,
+                         제목: app_commands.Range[str, 1, TITLE_LIMIT], 한팀인원: int, 시각: str,
+                         팀짜기: app_commands.Choice[str] = None,
+                         설명: app_commands.Range[str, None, NOTE_LIMIT] = ""):
         if await feature_gate(interaction, "scrim", "내전"):
             return
         if not 1 <= 한팀인원 <= MAX_TEAM_SIZE:

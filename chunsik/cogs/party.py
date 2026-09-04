@@ -23,11 +23,19 @@ from chunsik_config import KST, module_active
 from chunsik_settings import feature_gate, has_admin_or_role, is_feature_enabled
 from chunsik_state import load_party, save_party, state
 from chunsik_utils import (EMBED_DESC_LIMIT, EMBED_TITLE_LIMIT, MESSAGE_LIMIT,
-                        ChunsikView, add_lines_field, clip, mention_list,
+                        ChunsikView, add_lines_field, clip, fit_embed, mention_list,
                         parse_datetime_text)
 
 # ⏰ 시작 몇 분 전에 부를지. 0이면 시작할 때만 불러요.
 REMIND_BEFORE_MINUTES = 10
+
+# ✍️ 주최자가 손으로 적는 칸의 글자 수 상한.
+# 제목은 임베드 제목, 설명은 임베드 설명으로 그대로 들어갑니다. 칸마다 자르고는
+# 있었지만 **합계(6000자)를 보는 데가 없어서**, 길게 적으면 모집글이 통째로 거부돼요.
+# 그러면 글이 안 올라가는 데서 그치지 않고, 참가 버튼을 눌러도 모집글을 다시 그릴 수
+# 없어서 명단이 그 시점에 얼어붙습니다. (실측: 파티 6,056자 · 내전 6,505자)
+TITLE_LIMIT = 100
+NOTE_LIMIT = 500
 MAX_OPEN_PARTIES = 25  # /파티 목록 임베드가 감당하는 칸 수와 같아요
 
 
@@ -127,7 +135,8 @@ class ChunsikParty(commands.Cog):
         if waiting:
             add_lines_field(embed, f"대기 {len(waiting)}명", [f"<@{uid}>" for uid in waiting])
         embed.set_footer(text="참가를 누르면 자리를 잡아요. 못 가게 되면 취소를 눌러주세요.")
-        return embed
+        # 🧮 상한이 생기기 전에 올라간 모집글 대비. (푸터까지 붙인 맨 마지막에 불러야 해요)
+        return fit_embed(embed)
 
     async def _repaint(self, party_id: str, party: dict):
         channel = self.bot.get_channel(int(party["channel_id"]))
@@ -282,7 +291,9 @@ class ChunsikParty(commands.Cog):
     @파티.command(name="모집", description="이 채널에 파티 모집글을 올려요. 참가 버튼으로 모입니다.")
     @app_commands.describe(제목="무엇을 하는 모집인지 (예: 심연 레이드)", 인원="주최자 포함 정원",
                            시각="예: `20:00` · `8-25 20:00` · `2026-08-25 20:00`", 설명="더 적을 말 (생략 가능)")
-    async def recruit(self, interaction: discord.Interaction, 제목: str, 인원: int, 시각: str, 설명: str = ""):
+    async def recruit(self, interaction: discord.Interaction,
+                      제목: app_commands.Range[str, 1, TITLE_LIMIT], 인원: int, 시각: str,
+                      설명: app_commands.Range[str, None, NOTE_LIMIT] = ""):
         if await feature_gate(interaction, "party", "파티 모집"):
             return
         if not 2 <= 인원 <= 99:
