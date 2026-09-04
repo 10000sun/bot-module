@@ -152,11 +152,13 @@ python -m venv .venv
 .venv\Scripts\python tools\check_help.py
 .venv\Scripts\python tools\check_guild.py
 .venv\Scripts\python tools\check_money.py
+.venv\Scripts\python tools\check_embeds.py
 ```
 
-넷 다 **종료 코드 0** 이어야 합니다. 토큰 없이 돌아가고 디스코드에 연결하지 않아요.
+다섯 다 **종료 코드 0** 이어야 합니다. 토큰 없이 돌아가고 디스코드에 연결하지 않아요.
 여기서 잡히는 사고 — 슬래시 명령 규격 위반(하나만 틀려도 **명령이 전부 사라집니다**),
-없는 명령을 안내하는 도움말, 주문하지 않은 기능이 안내문에 남는 것, 설정 파일 오타.
+없는 명령을 안내하는 도움말, 주문하지 않은 기능이 안내문에 남는 것, 설정 파일 오타,
+그리고 **화면이 디스코드 길이 한도를 넘어 통째로 안 보이는 것**.
 
 판매 라인으로 파는 거면 앞의 둘 대신 이 한 줄로 끝납니다. 라인 셋을 각각의 조합으로
 검사하고, 예시 파일의 프리셋이 코드와 어긋났는지도 같이 봐요.
@@ -263,7 +265,7 @@ cd chunsik
 
 - [ ] Privileged Intent 2개 켰나 (**제일 자주 빠뜨림**)
 - [ ] 봇 역할이 부여할 역할들보다 **위**에 있나
-- [ ] `check_modules` / `check_help` / `check_guild` / `check_money` 전부 종료 0
+- [ ] `check_modules` / `check_help` / `check_guild` / `check_money` / `check_embeds` 전부 종료 0
 - [ ] 기동 로그에 담은 모듈이 전부 보이나
 - [ ] `ALERT_WEBHOOK_URL` 넣었나 (안 넣으면 봇이 죽어도 아무도 모름)
 - [ ] `/초기설정` 으로 이름 넣었나
@@ -311,6 +313,7 @@ tools/
   check_help.py        도움말 ↔ 실제 명령 대조 + 안 담은 기능 언급 검사
   check_guild.py       guild.json 읽기
   check_money.py       돈 계층의 약속 (저장 실패·파일 손상 시 돈이 안 사라지는지)
+  check_embeds.py      화면이 디스코드 길이 한도 안에 들어오는지 (넘으면 통째로 안 보여요)
 ```
 
 `chunsik/guild.json`, `chunsik/.env`, `chunsik/data/` 는 `.gitignore` 대상이에요.
