@@ -27,6 +27,13 @@ from chunsik_utils import (EMBED_DESC_LIMIT, EMBED_FIELD_LIMIT,
 # 📏 디스코드 제한 — 한 메시지에 버튼은 5줄 × 5개까지.
 MAX_ROLES_PER_PANEL = 25
 
+# ✍️ 관리자가 손으로 적는 칸의 글자 수 상한.
+# 설명과 역할 목록이 임베드 설명 한 칸을 나눠 쓰기 때문에, 설명이 4096자를 채우면
+# clip이 **역할 목록을 통째로 잘라냅니다.** 버튼만 있고 무슨 역할인지는 안 보이는
+# 패널이 되는데, 오류가 나지 않아서 관리자는 왜 그런지 알 수 없어요.
+TITLE_LIMIT = 100
+DESCRIPTION_LIMIT = 500
+
 
 class SelfRoleButton(discord.ui.Button):
     """역할 하나를 켜고 끄는 버튼. custom_id에 역할 ID를 담아 재시작에도 살아남아요."""
@@ -184,7 +191,9 @@ class ChunsikSelfRole(commands.Cog):
 
     @셀프역할.command(name="만들기", description="[관리자] 이 채널에 셀프 역할 패널을 새로 올려요. (역할은 만든 뒤에 담습니다)")
     @app_commands.describe(제목="패널 제목 (예: 알림 역할)", 설명="패널에 적을 안내 문구 (생략 가능)")
-    async def create_panel(self, interaction: discord.Interaction, 제목: str, 설명: str = ""):
+    async def create_panel(self, interaction: discord.Interaction,
+                           제목: app_commands.Range[str, 1, TITLE_LIMIT],
+                           설명: app_commands.Range[str, None, DESCRIPTION_LIMIT] = ""):
         if await feature_gate(interaction, "selfrole", "셀프 역할"):
             return
         if not self._admin_only(interaction):
