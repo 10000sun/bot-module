@@ -128,6 +128,32 @@ def _walk(commands, prefix=""):
 SHARED_DATA_FILES = {"SETTINGS_FILE"}
 
 
+def _log_keys_in_code() -> set:
+    """send_log_embed / build_log_embed 에 실제로 넘기는 채널 키를 소스에서 뽑습니다.
+
+    부르는 자리가 코그 곳곳에 흩어져 있어서, 실행해봐야 아는 게 아니라 소스를 읽는 쪽이
+    빠짐없고 확실해요. 첫 번째 위치 인자가 채널 키인 호출만 봅니다.
+    """
+    keys = set()
+    for folder in (CHUNSIK, os.path.join(CHUNSIK, "cogs")):
+        for name in sorted(os.listdir(folder)):
+            if not name.endswith(".py"):
+                continue
+            with open(os.path.join(folder, name), "r", encoding="utf-8") as f:
+                tree = ast.parse(f.read(), filename=name)
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call):
+                    continue
+                called = ast.unparse(node.func)
+                if not called.endswith(("send_log_embed", "build_log_embed")):
+                    continue
+                for arg in node.args:
+                    if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+                        keys.add(arg.value)
+    # 채널 키만 남깁니다. (설명문 같은 다른 문자열 인자가 섞이니까요)
+    return {k for k in keys if k.endswith(("_log", "_announce", "_board"))}
+
+
 def _check_ownership(bot) -> list:
     """modules.py의 소유 표가 실제 코드와 어긋나지 않았는지 봅니다.
 
@@ -143,6 +169,7 @@ def _check_ownership(bot) -> list:
     돌려주는 건 사람이 읽을 문제 목록이에요. 비어 있으면 통과.
     """
     import chunsik_config as cfg
+    import chunsik_settings as cs
     from modules import MODULES, owners
     from chunsik_settings import _ALL_FEATURE_KEYS
 
@@ -184,7 +211,16 @@ def _check_ownership(bot) -> list:
             f"modules.py의 features에 없는 기능 키 {missing} — "
             f"그 기능을 빼도 /기능제어 선택지에 남습니다")
 
-    # ④ 다른 파일이 적어둔 모듈 키에 오타가 없는지
+    # ④ 로그 스타일 — 로그를 보내면서 스타일 표에 없으면 회색 "📋 로그"로 뭉뚱그려 나와요.
+    #    오류가 안 나는 종류라 아무도 모른 채 지나갑니다. (실제로 두 개가 그 상태였어요)
+    used_log_keys = _log_keys_in_code()
+    styleless = sorted(used_log_keys - set(cs.LOG_STYLES))
+    if styleless:
+        problems.append(
+            f"로그를 보내는데 chunsik_settings.LOG_STYLES에 없는 키 {styleless} — "
+            f"그 로그는 회색 '📋 로그'로 뭉뚱그려 나옵니다")
+
+    # ⑤ 다른 파일이 적어둔 모듈 키에 오타가 없는지
     diag_cog = bot.get_cog("ChunsikTest")
     if diag_cog is not None:
         check_module_keys("cogs/diagnostics.py의 _MODULE_COMMANDS", diag_cog._MODULE_COMMANDS.values())
