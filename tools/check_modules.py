@@ -204,12 +204,22 @@ def _check_ownership(bot) -> list:
                     f"설정 명령은 있는데 modules.py의 {kind}에 없는 키 {missing} — "
                     f"그 기능을 빼도 설정 명령이 남습니다")
 
-    # ③ 기능 킬 스위치 키
-    missing = sorted(set(_ALL_FEATURE_KEYS.values()) - set(owners("features")))
+    # ③ 기능 킬 스위치 키 — 양쪽 방향을 다 봅니다.
+    feature_labels = set(_ALL_FEATURE_KEYS.values())
+    owned_features = set(owners("features"))
+    missing = sorted(feature_labels - owned_features)
     if missing:
         problems.append(
             f"modules.py의 features에 없는 기능 키 {missing} — "
             f"그 기능을 빼도 /기능제어 선택지에 남습니다")
+    # 🐛 반대 방향이 비어 있었어요. modules.py는 선언했는데 _ALL_FEATURE_KEYS에 없으면
+    #    `/기능제어` 선택지에 아예 안 떠서 **그 기능만 끌 수 없습니다.** 코드가 게이트를
+    #    걸어둬도 켜고 끌 방법이 없으니 게이트가 없는 것과 같아요. (내전이 그 상태였습니다)
+    unswitchable = sorted(owned_features - feature_labels)
+    if unswitchable:
+        problems.append(
+            f"modules.py는 선언했는데 chunsik_settings._ALL_FEATURE_KEYS에 없는 기능 키 "
+            f"{unswitchable} — /기능제어로 끌 수가 없습니다")
 
     # ④ 로그 스타일 — 로그를 보내면서 스타일 표에 없으면 회색 "📋 로그"로 뭉뚱그려 나와요.
     #    오류가 안 나는 종류라 아무도 모른 채 지나갑니다. (실제로 두 개가 그 상태였어요)
