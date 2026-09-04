@@ -305,7 +305,7 @@ chunsik/
   chunsik_config.py       경로·비밀값·guild.json 읽기
   chunsik_names.py        재화·봇·이벤트·서버 이름 (클라이언트가 /초기설정으로 입력)
   modules.py           어떤 기능이 무엇을 데려오는지 (소유 표)
-  cogs/                기능별 코그 14개
+  cogs/                기능별 코그 (담긴 목록은 기동 로그와 check_modules가 보여줘요)
   parked/              특정 서버 전용이라 빼둔 기능 창고
   data/                실시간 데이터 (깃에 안 올라감)
 tools/
