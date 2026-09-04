@@ -354,8 +354,28 @@ def check_roster(ids_mod):
             print(f"  OK  {label} — {len(chunks)}조각, 제일 긴 메세지 {longest:,}자 / {MESSAGE_MAX:,}")
 
 
+def check_snooze(snooze_mod):
+    print("\n[9] ⏰ 스누즈 목록 — 예약이 꽉 찼을 때")
+    cog = object.__new__(snooze_mod.ChunsikSnooze)
+    now = dt.datetime.now(KST)
+    rows = [{
+        "id": str(i), "user_id": "1",
+        "preview": _fill(snooze_mod.PREVIEW_LIMIT),
+        "memo": _fill(FIELD_VALUE_MAX),
+        "message_link": "https://discord.com/channels/1/2/3",
+        "wake_at": (now + dt.timedelta(hours=i + 1)).isoformat(),
+    } for i in range(snooze_mod.MAX_PER_USER)]
+
+    # 진짜 코드를 그대로 부릅니다.
+    measure(f"목록 (예약 {snooze_mod.MAX_PER_USER}개, 미리보기·메모 상한까지)",
+            cog.build_list_embed(rows))
+    untouched("목록 (평범한 예약 3개)", cog.build_list_embed([
+        dict(row, preview="내일까지 답장", memo="") for row in rows[:3]]))
+
+
 def main():
     import cogs.chronicle as chron_mod
+    import cogs.snooze as snooze_mod
     import cogs.ids as ids_mod
     import cogs.party as party_mod
     import cogs.scrim as scrim_mod
@@ -376,6 +396,7 @@ def main():
     check_selfrole(selfrole_mod)
     check_event_announce()
     check_roster(ids_mod)
+    check_snooze(snooze_mod)
 
     print("\n" + "=" * 62)
     if _fails:
