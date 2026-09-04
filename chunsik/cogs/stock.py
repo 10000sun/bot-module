@@ -3,6 +3,7 @@
 import asyncio
 import os
 import io
+import math
 import datetime as dt
 from typing import Optional
 import holidays
@@ -883,6 +884,13 @@ class ChunsikStock(commands.Cog):
                         percent_val = -float(raw_percent[1:])
                     else:
                         percent_val = float(raw_percent)
+                    # 🔢 float은 ValueError 없이 무한대를 만들어냅니다. "inf%"는 물론
+                    #    "1e308%"나 자릿수만 많은 오타("999…9%")도 곱하는 순간 inf가 되고,
+                    #    int(inf)는 ValueError가 아니라 **OverflowError**로 터져요.
+                    #    아래 except가 ValueError만 잡고 있어서 안내 대신 "예상치 못한 오류"가
+                    #    떴습니다. 숫자가 아닌 값은 여기서 형식 오류로 돌려보내요.
+                    if not math.isfinite(percent_val):
+                        raise ValueError("퍼센트가 너무 크거나 숫자가 아니에요")
                     pending_price = int(current_price * (1 + percent_val / 100))
                 else:
                     if input_val.startswith("+"):
@@ -897,7 +905,8 @@ class ChunsikStock(commands.Cog):
                 if not pending_reason:
                     pending_reason = "시장의 흐름 반영"
 
-            except ValueError:
+            except (ValueError, OverflowError):
+                # OverflowError까지 잡는 이유는 위 isfinite 주석 참고. 두 겹으로 막아둡니다.
                 return await interaction.followup.send("❌ 올바른 형식의 금액, 퍼센트(%), 또는 '유지'를 입력해 주세요.", ephemeral=True)
 
         stock_info["pending_price"] = pending_price
