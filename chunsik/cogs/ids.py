@@ -18,6 +18,50 @@ from chunsik_state import state
 from chunsik_utils import KNOWN_PLATFORMS, ChunsikView, _looks_like_id_entry, _split_platform_and_id, extract_id_from_mention, find_guild_member_by_name, get_platform_candidates, next_misc_name, next_platform_name, normalize_platform, notify_log, parse_legacy_id_document, respond_modify
 from chunsik_names import bot_name, josa
 
+
+# ✂️ 아이디 하나와 공지의 글자 수 상한.
+#
+# 🚨 이게 없으면 명단이 **영영 갱신을 멈춥니다.** 명단은 ```ansi 코드블록으로 올라가는데,
+#    디스코드 메세지는 2000자까지예요. 아이디 하나가 그 길이를 넘으면 그 한 줄이 통째로
+#    한 메세지가 돼서 게시가 400으로 거부되고, 그때부터 명단이 그 상태로 굳습니다.
+#    (실측: 1800자짜리 아이디 하나면 메세지가 6,017자까지 커져요)
+#
+#    슬래시 명령만 막아서는 부족해요. 아이디는 **자동등록 채널에 그냥 글로 올려서도**
+#    들어옵니다. 그래서 저장이 지나가는 길목(_register_single_id)에서 자릅니다.
+MAX_ID_LENGTH = 100      # 게임 아이디는 길어야 수십 자예요 (Riot ID가 `이름#태그`로 제일 긴 편)
+MAX_NOTICE_LENGTH = 500  # 명단 맨 아래에 붙는 공지 한 덩어리
+
+ROSTER_CHUNK_LIMIT = 1800   # ```ansi 코드블록 오버헤드를 뺀 한 메세지 분량
+
+
+def split_roster_lines(block_lines: list, limit: int = ROSTER_CHUNK_LIMIT) -> list:
+    """명단 블록 하나를 한 메세지에 들어가는 덩어리 여러 개로 쪼갭니다.
+
+    🚨 [중요] 줄과 줄 **사이**에서만 나누면 안 돼요. 한 줄이 혼자 제한을 넘으면 그 줄이
+       통째로 한 덩어리가 돼서, 나눴는데도 메세지가 2000자를 넘습니다. 그러면 명단 게시가
+       400으로 거부되고 **명단이 그 상태로 굳어요.** 등록할 때 MAX_ID_LENGTH로 막지만,
+       그 상한이 생기기 전에 저장된 값이 남아 있을 수 있어서 여기서 한 번 더 봅니다.
+
+    (모듈 바깥에 둔 이유: tools/check_embeds.py가 이 함수를 그대로 불러서 검사해요.
+     안쪽 함수로 두면 검사 도구가 똑같은 코드를 베껴 써야 하고, 그러면 정작 진짜 코드가
+     바뀌었을 때 검사는 옛 코드를 계속 통과시킵니다)
+    """
+    result, current = [], ""
+    for line in block_lines:
+        # 혼자서 한 덩어리를 넘기는 줄은 글자 단위로라도 쪼갭니다.
+        # 억지로 자른 티가 나더라도 명단이 통째로 안 올라가는 것보단 낫습니다.
+        pieces = ([line[i:i + limit] for i in range(0, len(line), limit)]
+                  if len(line) > limit else [line])
+        for piece in pieces:
+            if len(current) + len(piece) + 1 > limit:
+                result.append(current)
+                current = piece + "\n"
+            else:
+                current += piece + "\n"
+    if current.strip():
+        result.append(current)
+    return result
+
 class ImportConfirmView(ChunsikView):
     """/아이디목록가져오기 미리보기 결과를 실제로 등록할지 확인받는 버튼"""
     def __init__(self, core_cog, guild: discord.Guild, matched: list, unmatched: list = None):
@@ -273,6 +317,12 @@ class ChunsikIds(commands.Cog):
         existing = state.user_ids[gid][uid]
         normalized = normalize_platform(plat_input)
 
+        # ✂️ 저장이 지나가는 길목이라 여기서 자릅니다. 슬래시 명령·자동등록 채널·명단
+        #    가져오기가 전부 이 함수를 지나가요. 긴 값 하나가 명단 게시를 통째로
+        #    막는 걸 여기서 끊습니다. (위 MAX_ID_LENGTH 주석 참고)
+        if isinstance(game_id, str) and len(game_id) > MAX_ID_LENGTH:
+            game_id = game_id[:MAX_ID_LENGTH]
+
         # 🐛 [버그 수정 + 강화] 이미 완전히 똑같은 값이 등록돼 있으면 새 키를 또 만들지 않고
         # 기존 키를 그대로 재사용해요. 예전엔 "같은 플랫폼 계열(Riot, Riot2...)" 안에서만
         # 검사해서, 플랫폼 표기가 다르게 들어오면(예: '라이엇' vs '롤') 못 걸러냈어요.
@@ -377,20 +427,8 @@ class ChunsikIds(commands.Cog):
 
                 # 📦 [개선] 칸마다 각각 독립된 블록을 만들고, 칸 경계를 넘어서 섞이지 않게 분할합니다.
                 # (예전엔 그냥 2000자 넘으면 뚝 잘라서, 한 칸이 메세지 두 개에 걸쳐 어중간하게 잘릴 수 있었어요)
-                CHUNK_LIMIT = 1800  # ```ansi 코드블록 오버헤드 감안
-
-                def split_lines_to_chunks(block_lines: list) -> list:
-                    """긴 블록 하나를 글자 수 제한에 맞춰 여러 청크로 쪼갭니다."""
-                    result, current = [], ""
-                    for line in block_lines:
-                        if len(current) + len(line) + 1 > CHUNK_LIMIT:
-                            result.append(current)
-                            current = line + "\n"
-                        else:
-                            current += line + "\n"
-                    if current.strip():
-                        result.append(current)
-                    return result
+                CHUNK_LIMIT = ROSTER_CHUNK_LIMIT  # ```ansi 코드블록 오버헤드 감안
+                split_lines_to_chunks = split_roster_lines
 
                 chunks = []
                 header = "게임 아이디 목록"
@@ -487,7 +525,9 @@ class ChunsikIds(commands.Cog):
         삭제="공지를 전부 지우려면 True로 설정하세요",
     )
     @app_commands.guild_only()
-    async def set_id_roster_notice(self, interaction: discord.Interaction, 내용: Optional[str] = None, 덮어쓰기: bool = False, 삭제: bool = False):
+    async def set_id_roster_notice(self, interaction: discord.Interaction,
+                                   내용: Optional[app_commands.Range[str, None, MAX_NOTICE_LENGTH]] = None,
+                                   덮어쓰기: bool = False, 삭제: bool = False):
         member = interaction.guild.get_member(interaction.user.id)
         if not member or not self.has_permission(member):
             return await interaction.response.send_message("❌ 권한이 없어요! 관리자에게 역할을 받아주세요.", ephemeral=True)
@@ -1095,7 +1135,11 @@ class ChunsikIds(commands.Cog):
     @id_group.command(name="수정", description="[관리자] 등록된 아이디를 수정해요")
     @app_commands.describe(user="수정할 유저", platform=f"플랫폼명 (비워두면 {bot_name()}{josa(bot_name(), '이가')} 목록 보여줘, 자동완성으로 이 유저가 등록해둔 플랫폼이 힌트로 떠요)", game_id="새 아이디")
     @app_commands.guild_only()
-    async def modify_id(self, interaction: discord.Interaction, user: discord.User, platform: Optional[str] = None, game_id: str = ""):
+    # ℹ️ platform은 찾는 값이라 상한을 안 겁니다. 상한이 생기기 전에 등록된 긴 플랫폼명도
+    #    고칠 수 있어야 하니까요. game_id는 새로 저장되는 값이라 막습니다.
+    async def modify_id(self, interaction: discord.Interaction, user: discord.User,
+                        platform: Optional[str] = None,
+                        game_id: app_commands.Range[str, None, MAX_ID_LENGTH] = ""):
         if await feature_gate(interaction, "id", "아이디"):
             return
         # 3초 초과(애플리케이션이 응답하지 않습니다) 에러 방지 선언
