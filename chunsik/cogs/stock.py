@@ -19,8 +19,9 @@ from chunsik_config import CHART_BG, CHART_DOWN, CHART_GRID, CHART_INK, CHART_IN
 from chunsik_storage import atomic_json_save, atomic_json_save_or_raise, safe_json_load
 from chunsik_settings import LOG_STYLES, build_log_embed, feature_gate, has_admin_or_role, load_settings
 from chunsik_state import record_ledger
-from chunsik_utils import (ChunsikView, chunk_lines, holding_avg_price, holding_shares,
-                        portfolio_value, report_broken_transaction)
+from chunsik_utils import (EMBED_FIELD_LIMIT, EMBED_TITLE_LIMIT, ChunsikView, chunk_lines,
+                          clip, holding_avg_price, holding_shares, name_choices,
+                          portfolio_value, report_broken_transaction)
 from chunsik_names import currency, josa, server_name
 
 # [UI 뷰 클래스] 종가 게시 승인용 버튼 뷰
@@ -233,6 +234,17 @@ class ClosingPriceView(ChunsikView):
                 await target_board_channel.send(embed=embed)
             except Exception as e:
                 print(f"⚠️ 종가게시판 전송 실패: {e}")
+
+
+# ✂️ 관리자가 손으로 적는 글자 수 상한.
+# 종목 이름과 찌라시(사유)는 손대지 않은 채로 `/주식 목록`·실시간 전광판의 임베드 필드와
+# 자동완성 항목에 들어가요. 디스코드 한도(필드 이름 256·값 1024, 자동완성 항목 100)를
+# 넘기면 **그 줄만 잘리는 게 아니라 목록·전광판 메세지와 자동완성 응답이 통째로 400으로
+# 실패합니다.** 아래 MAX_STOCKS와 똑같은 사고예요 — 찌라시에 긴 글을 한 번 붙여넣으면
+# 그때부터 아무도 주식 목록을 못 봅니다.
+# 화면 쪽에서도 clip으로 한 번 더 자르지만(옛 데이터 대비), 애초에 못 넣게 여기서 막아요.
+MAX_STOCK_NAME = 40
+MAX_STOCK_REASON = 200
 
 
 class ChunsikStock(commands.Cog):
@@ -458,11 +470,9 @@ class ChunsikStock(commands.Cog):
         try:
             stock_data = self._load_stocks()
             stocks_dict = stock_data.get("stocks", {})
-            return [
-                app_commands.Choice(name=name, value=name)
-                for name in stocks_dict.keys()
-                if current.lower() in name.lower()
-            ][:25]  
+            # ✂️ 100자를 넘는 종목이 하나만 섞여도 자동완성 응답이 통째로 거부돼서
+            #    목록이 아예 안 뜹니다. name_choices가 그런 항목만 빼줘요.
+            return name_choices(stocks_dict, current)
         except Exception as e:
             print(f"자동완성 오류 발생: {e}")
             return []
@@ -827,7 +837,8 @@ class ChunsikStock(commands.Cog):
 
     @stock_group.command(name="변동", description="[관리자] 특정 종목의 주가 변동 및 찌라시를 예약합니다.")
     @app_commands.describe(주식명="변동할 주식 이름", 변동값="예: 5000, +500, +10%, -5%, 또는 유지 입력", 찌라시="사유 (유지 입력 시 생략 가능)")
-    async def 주식변동(self, interaction: discord.Interaction, 주식명: str, 변동값: str, 찌라시: Optional[str] = None):
+    async def 주식변동(self, interaction: discord.Interaction, 주식명: str, 변동값: str,
+                    찌라시: Optional[app_commands.Range[str, 1, MAX_STOCK_REASON]] = None):
         if not self._has_admin_permissive(interaction):
             return await interaction.response.send_message("❌ 관리자 또는 상점주인 권한이 필요합니다.", ephemeral=True)
 
@@ -908,18 +919,17 @@ class ChunsikStock(commands.Cog):
         try:
             data = safe_json_load(self.STOCKS_FILE, {})
             stocks_data = data.get("stocks", {})
-            return [
-                app_commands.Choice(name=stock, value=stock)
-                for stock in stocks_data.keys()
-                if current.lower() in stock.lower()
-            ][:25]
+            # ✂️ 100자를 넘는 종목이 하나만 섞여도 자동완성 응답이 통째로 거부돼서
+            #    목록이 아예 안 뜹니다. name_choices가 그런 항목만 빼줘요.
+            return name_choices(stocks_data, current)
         except Exception as e:
             print(f"⚠️ 주식변동 자동완성 조회 실패: {e}")
             return []
 
     @stock_group.command(name="생성", description="[관리자] 신규 주식 종목을 상장합니다.")
     @app_commands.describe(종목="신규 종목으로 등록할 주식 이름 입력", price="상장 기준 가격")
-    async def create_stock(self, interaction: discord.Interaction, 종목: str, price: int):
+    async def create_stock(self, interaction: discord.Interaction,
+                           종목: app_commands.Range[str, 1, MAX_STOCK_NAME], price: int):
         stock_name = 종목.strip()
         if not self._has_admin_permissive(interaction):
             return await interaction.response.send_message("❌ 관리자 또는 상점주인 권한이 필요합니다.", ephemeral=True)
@@ -1032,7 +1042,11 @@ class ChunsikStock(commands.Cog):
             reason = info.get("reason", "정보 없음")
             last_changed = info.get("last_changed_date")
             date_text = f" (`{last_changed}` 변동)" if last_changed else ""
-            embed.add_field(name=f"🔹 {name}", value=f"현재가: `{price:,}` {currency()}\n💡 사유: {reason}{date_text}", inline=False)
+            # ✂️ 상한이 생기기 전에 저장된 종목·찌라시가 있으면 목록이 통째로 안 보이게 돼요.
+            embed.add_field(name=clip(f"🔹 {name}", EMBED_TITLE_LIMIT),
+                            value=clip(f"현재가: `{price:,}` {currency()}\n💡 사유: {reason}{date_text}",
+                                       EMBED_FIELD_LIMIT),
+                            inline=False)
 
         hidden = len(stocks_dict) - self.MAX_STOCKS
         if hidden > 0:
@@ -1067,7 +1081,9 @@ class ChunsikStock(commands.Cog):
     async def stock_graph_autocomplete(self, interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
         try:
             stocks_dict = self._load_stocks().get("stocks", {})
-            return [app_commands.Choice(name=s, value=s) for s in stocks_dict if current.lower() in s.lower()][:25]
+            # ✂️ 100자를 넘는 종목이 하나만 섞여도 자동완성 응답이 통째로 거부돼서
+            #    목록이 아예 안 뜹니다. name_choices가 그런 항목만 빼줘요.
+            return name_choices(stocks_dict, current)
         except Exception:
             return []
 
@@ -1110,10 +1126,10 @@ class ChunsikStock(commands.Cog):
                         status = "➖ `변동 없음`"
 
                     embed.add_field(
-                        name=f"**🔹 {name}**",
-                        value=f"> 현재가: **`{price:,}` {currency()}**\n"
-                              f"> 직전 대비: {status}\n"
-                              f"> 💡 사유: {reason}{date_text}",
+                        name=clip(f"**🔹 {name}**", EMBED_TITLE_LIMIT),
+                        value=clip(f"> 현재가: **`{price:,}` {currency()}**\n"
+                                   f"> 직전 대비: {status}\n"
+                                   f"> 💡 사유: {reason}{date_text}", EMBED_FIELD_LIMIT),
                         inline=False
                     )
                     
@@ -1289,11 +1305,9 @@ class ChunsikStock(commands.Cog):
         try:
             data = safe_json_load(self.STOCKS_FILE, {})
             stocks_data = data.get("stocks", {})
-            return [
-                app_commands.Choice(name=stock, value=stock)
-                for stock in stocks_data.keys()
-                if current.lower() in stock.lower()
-            ][:25]
+            # ✂️ 100자를 넘는 종목이 하나만 섞여도 자동완성 응답이 통째로 거부돼서
+            #    목록이 아예 안 뜹니다. name_choices가 그런 항목만 빼줘요.
+            return name_choices(stocks_data, current)
         except (RuntimeError, AttributeError) as e:
             # RuntimeError: safe_json_load가 파일 손상을 감지한 경우 / AttributeError: 데이터 구조가 dict가 아닌 경우
             print(f"⚠️ 주식지급 자동완성 조회 실패: {e}")
@@ -1304,11 +1318,9 @@ class ChunsikStock(commands.Cog):
         try:
             data = safe_json_load(self.STOCKS_FILE, {})
             stocks_data = data.get("stocks", {})
-            return [
-                app_commands.Choice(name=stock, value=stock)
-                for stock in stocks_data.keys()
-                if current.lower() in stock.lower()
-            ][:25]
+            # ✂️ 100자를 넘는 종목이 하나만 섞여도 자동완성 응답이 통째로 거부돼서
+            #    목록이 아예 안 뜹니다. name_choices가 그런 항목만 빼줘요.
+            return name_choices(stocks_data, current)
         except (RuntimeError, AttributeError) as e:
             print(f"⚠️ 주식회수 자동완성 조회 실패: {e}")
             return []
