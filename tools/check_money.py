@@ -318,12 +318,73 @@ def test_loader_shapes():
             check(f"{name} ({label})", missing, [])
 
 
+def test_birthday_catch_up():
+    print("\n[16] 🎂 자정을 놓쳐도 생일 축하가 사라지면 안 돼요")
+    # 출석([14])·백업과 같은 이유예요. tasks.loop(time=...)은 놓친 회차를 따라잡지
+    # 않아서, 새벽에 PC를 꺼두는 서버는 그날 생일인 사람이 **영영** 축하를 못 받습니다.
+    #
+    # ⚖️ 다만 무한정 거슬러 올라가면 안 돼요. 사흘 전 생일을 이제 와서 축하하면
+    #    오히려 어색합니다. **어제까지만** 따라잡고, 그때는 문구도 달라야 해요.
+    import asyncio, datetime as dt, types
+    import chunsik_config as cfg
+    import cogs.birthday as B
+
+    cog = object.__new__(B.ChunsikBirthday)
+    store = {}
+    cog.load_global_settings = lambda: dict(store)
+
+    real_save, real_gate, real_dt = B.save_settings, B.is_feature_enabled, B.dt
+    B.save_settings = lambda d: (store.clear(), store.update(d))
+    B.is_feature_enabled = lambda key: store.get("_on", True)
+    # 2026-09-09 오전 9시에 켠 것으로 두고 봅니다. (자정은 이미 지났어요)
+    B.dt = types.SimpleNamespace(
+        datetime=types.SimpleNamespace(
+            now=lambda tz=None: dt.datetime(2026, 9, 9, 9, 0, tzinfo=cfg.KST)),
+        date=dt.date, timedelta=dt.timedelta, time=dt.time)
+
+    done = []
+
+    async def spy(target_date, late=False):
+        done.append((target_date.isoformat(), late))
+    cog._announce_for = spy
+
+    def run(last, on=True):
+        done.clear()
+        store.clear()
+        store["_on"] = on
+        if last is not None:
+            store[B.LAST_RUN_KEY] = last
+        asyncio.run(cog.catch_up())
+        return list(done)
+
+    try:
+        check("처음 켜는 서버는 어제까지 안 뒤짐", run(None), [("2026-09-09", False)])
+        check("오늘 이미 했으면 안 함", run("2026-09-09"), [])
+        check("자정만 놓쳤으면 오늘 것만", run("2026-09-08"), [("2026-09-09", False)])
+        check("하루를 건너뛰면 어제 것도 (늦었지만 문구)",
+              run("2026-09-07"), [("2026-09-08", True), ("2026-09-09", False)])
+        check("일주일 꺼져 있어도 어제까지만",
+              run("2026-09-02"), [("2026-09-08", True), ("2026-09-09", False)])
+        check("기록이 깨져 있으면 오늘 것만", run("이상한값"), [("2026-09-09", False)])
+        check("기능이 정지 상태면 아무것도 안 함", run("2026-09-07", on=False), [])
+
+        # 하루에 두 번 켜도 두 번 가면 안 돼요.
+        run("2026-09-07")
+        done.clear()
+        asyncio.run(cog.catch_up())
+        check("같은 날 두 번 켜도 한 번만", done, [])
+        check("마지막 실행 날짜를 적어둠", store.get(B.LAST_RUN_KEY), "2026-09-09")
+    finally:
+        B.save_settings, B.is_feature_enabled, B.dt = real_save, real_gate, real_dt
+
+
 # ============================================================
 if __name__ == "__main__":
     test_storage()
     test_ledger()
     test_wallet()
     test_loader_shapes()
+    test_birthday_catch_up()
     print()
     if _fails:
         print(f"🚨 {len(_fails)}건 실패: {', '.join(_fails)}")
