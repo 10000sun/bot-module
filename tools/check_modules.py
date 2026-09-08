@@ -260,6 +260,21 @@ def _check_ownership(bot) -> list:
     return problems
 
 
+def _calls_report_loop_error(func_node) -> bool:
+    """이 함수가 chunsik_alerts.report_loop_error를 **실제로 부르는지** 봅니다.
+
+    주석·독스트링에 이름이 적혀 있는 것만으로는 통과하지 않아요. 호출 노드를 찾습니다.
+    """
+    for node in ast.walk(func_node):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", None)
+        if name == "report_loop_error":
+            return True
+    return False
+
+
 def _check_loop_guards():
     """모든 백그라운드 루프에 @루프이름.error 핸들러가 붙어 있는지 봅니다.
 
@@ -270,6 +285,12 @@ def _check_loop_guards():
 
     handler에서 chunsik_alerts.report_loop_error를 부르면 관리자에게 알리고 루프를
     되살립니다. 담은 모듈과 무관한 정적 검사라 소스만 읽어요.
+
+    🚨 핸들러가 **있는지**만 보면 모자랍니다. 손으로 `loop.start()`만 부르는 핸들러는
+       검사를 통과하면서도 관리자에게 아무것도 안 알리고, 같은 오류로 계속 죽을 때
+       되살리기를 늦추지도 않아요(chunsik_alerts의 백오프를 안 지나갑니다).
+       실제로 **연결 감시 루프 하나가** 그 상태였습니다 — 봇이 죽은 걸 알려주는 장치가
+       정작 자기가 죽은 건 못 알리고 있었어요. 그래서 부르는지까지 봅니다.
     """
     problems = []
     files = [os.path.join(CHUNSIK, f) for f in sorted(os.listdir(CHUNSIK)) if f.endswith(".py")]
@@ -279,7 +300,7 @@ def _check_loop_guards():
     for path in files:
         with open(path, "r", encoding="utf-8") as f:
             tree = ast.parse(f.read(), filename=path)
-        loops, guarded = [], set()
+        loops, guarded, reports = [], set(), set()
         for node in ast.walk(tree):
             if not isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef)):
                 continue
@@ -288,12 +309,21 @@ def _check_loop_guards():
                 if text.startswith("tasks.loop"):
                     loops.append(node.name)
                 elif re.fullmatch(r"\w+\.error", text):
-                    guarded.add(text.split(".")[0])
+                    owner = text.split(".")[0]
+                    guarded.add(owner)
+                    # 🕳️ 글자로 찾으면 안 됩니다. 핸들러 주석에 "report_loop_error를 안 쓰고
+                    #    있었어요"라고 적어두기만 해도 통과해요 — 실제로 이 검사를 만들면서
+                    #    그 함정에 그대로 걸렸습니다. 진짜 **호출**이 있는지 봅니다.
+                    if _calls_report_loop_error(node):
+                        reports.add(owner)
         rel = os.path.relpath(path, os.path.dirname(HERE))
         for name in loops:
             if name not in guarded:
                 problems.append(f"{rel}: {name} 루프에 @{name}.error 핸들러가 없어요 "
                                 f"(한 번 터지면 그 기능이 조용히 영영 멈춥니다)")
+            elif name not in reports:
+                problems.append(f"{rel}: {name} 루프의 핸들러가 report_loop_error를 안 불러요 "
+                                f"(관리자에게 안 알리고, 같은 오류로 계속 죽어도 안 늦춥니다)")
     return problems
 
 

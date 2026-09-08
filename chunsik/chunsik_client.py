@@ -12,7 +12,7 @@ from discord.ext import commands, tasks
 from chunsik_config import (ALERT_DISCONNECT_SECONDS, ENABLED_SPECS, GUILD_LOCK_ON,
                          HEARTBEAT_FILE, KST, MODULE_WARNINGS, TEST_GUILD_ID,
                          guild_allowed)
-from chunsik_alerts import send_alert
+from chunsik_alerts import report_loop_error, send_alert
 from chunsik_utils import describe_user_error
 from chunsik_names import bot_name, is_configured
 
@@ -182,10 +182,17 @@ class ChunsikBotClient(commands.Bot):
 
     @heartbeat_loop.error
     async def heartbeat_loop_error(self, error: BaseException):
-        # 감시 루프가 예외로 멈춰버리면 "조용히 감시가 꺼진" 최악의 상태가 되므로 다시 살립니다.
-        print(f"❗ 심장박동 루프 오류: {type(error).__name__}: {error}")
-        if not self.heartbeat_loop.is_running():
-            self.heartbeat_loop.start()
+        """감시 루프가 멈추면 '조용히 감시가 꺼진' 최악의 상태가 됩니다.
+
+        🐛 [버그 수정] 여기만 `report_loop_error`를 안 쓰고 손으로 되살리고 있었어요.
+        루프 열한 개 중 열 개가 그 함수를 쓰는데 **하필 감시 루프만** 빠져 있었습니다.
+        그래서 이 루프가 죽으면
+          · 관리자에게 알림이 안 가고 (콘솔 한 줄이 전부 — 아무도 안 봅니다)
+          · 같은 이유로 계속 죽어도 되살리기를 늦추지 않아 헛돌고
+          · 되살리기까지 실패하면 그 사실조차 아무 데도 안 남습니다
+        봇이 죽은 걸 알려주는 장치가 정작 자기가 죽은 건 못 알리는 상태였어요.
+        """
+        await report_loop_error(self.heartbeat_loop, "연결 감시(심장박동)", error)
 
     # ========== 🏠 [신규] 모든 명령어를 서버 전용으로 ==========
 
