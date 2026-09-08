@@ -257,7 +257,12 @@ class ChunsikSetting(commands.Cog):
 
     # 🚧 [신규] 기능 정지/재개. 다른 /설정 명령어들과 다르게 일부러 '채널관리자' 역할로는
     # 못 쓰게 하고, 진짜 서버 관리자 또는 대장(chief_role) 역할만 쓸 수 있게 엄격히 제한했어요.
-    기능제어 = app_commands.Group(name="기능제어", description=f"[관리자] {FEATURE_LIST_TEXT} 기능을 정지·재개합니다. (서버 관리자 또는 대장 전용)", guild_only=True)
+    # 📌 [버그 방지] 설명문에 기능 이름을 **나열하지 않습니다.** 디스코드 설명은 100자 제한인데
+    #    넘으면 그 명령만 빠지는 게 아니라 **동기화 전체가 실패**해서 명령어가 통째로 사라져요.
+    #    기능이 하나 늘 때마다 여기가 길어지는 구조라, 'AI대화'를 넣자 92/100자까지 찼습니다.
+    #    (check_modules가 잡아주긴 하지만, 애초에 늘어나지 않게 두는 게 맞아요 — #19와 같은 판단)
+    #    무엇을 끄고 켤 수 있는지는 `/기능제어 정지`의 선택지와 `/기능제어 상태`가 보여줍니다.
+    기능제어 = app_commands.Group(name="기능제어", description="[관리자] 기능을 하나씩 또는 한 번에 정지·재개합니다. (서버 관리자 또는 대장 전용)", guild_only=True)
 
     FEATURE_CHOICES = [app_commands.Choice(name=label, value=key) for label, key in FEATURE_KEYS.items()]
 
@@ -283,7 +288,7 @@ class ChunsikSetting(commands.Cog):
     # 항상 "…/위키"로 끝나서 받침 없는 '위키' + '를'이 맞았는데, 목록 끝에 '나중에답장'(받침 ㅇ)이
     # 붙으면서 "…/나중에답장를"이 됐습니다. 목록 마지막 글자에 따라 조사가 달라지니, 아예 조사가
     # 목록에 붙지 않게 위 그룹 설명과 똑같이 '기능을'을 사이에 끼웠어요. 이제 뭘 추가해도 안전합니다.
-    @기능제어.command(name="전체정지", description=f"[관리자] {FEATURE_LIST_TEXT} 기능을 전부 한 번에 정지합니다. (서버 관리자 또는 대장 전용)")
+    @기능제어.command(name="전체정지", description="[관리자] 지금 담긴 기능을 전부 한 번에 정지합니다. (서버 관리자 또는 대장 전용)")
     async def stop_all_features(self, interaction: discord.Interaction):
         if not is_super_admin(interaction):
             return await interaction.response.send_message("⛔ 서버 관리자 또는 대장 역할만 사용할 수 있어요.", ephemeral=True)
