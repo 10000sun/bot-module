@@ -717,7 +717,8 @@ def schedule_delete(msg, delay: float):
 # 역할을 하나 담는 순간 아무나 서버를 가져갈 수 있게 됩니다.
 #
 # ⚠️ 코그끼리 직접 import하면 안 돼요. 한쪽만 담아 납품하면 import 단계에서 죽습니다.
-#    (이 봇의 코그 14개는 전부 서로를 모릅니다 — NEXT.md 참고)
+#    (이 봇의 코그들은 **전부 서로를 모릅니다** — 몇 개인지는 기동 로그와
+#     `python tools/check_modules.py`가 보여줘요. 숫자를 여기 적으면 또 낡습니다)
 
 # 🚫 이 권한이 하나라도 붙은 역할은 셀프로 가져가게 두지 않습니다.
 DANGEROUS_ROLE_PERMISSIONS = (
