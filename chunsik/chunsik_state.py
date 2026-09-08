@@ -14,38 +14,63 @@ def load_ids():
 def save_ids(data):
     atomic_json_save_or_raise(IDS_FILE, data, indent=2)
 
+# 🧩 [버그 방지] 로더가 "이런 모양을 돌려준다"고 적어둔 기본값은 **파일이 아예 없을 때만**
+#    쓰입니다. 그런데 `chunsik_storage.init_json_files()`가 봇이 뜰 때 데이터 파일을 전부
+#    빈 `{}` 로 미리 만들어둬요. 그래서 **새로 설치한 환경에서는 그 기본값이 한 번도
+#    안 쓰이고 언제나 `{}` 가 넘어옵니다.**
+#
+#    지금은 부르는 쪽이 전부 `.get()`·`setdefault()`로 조심하고 있어서 안 터져요. 하지만
+#    그건 **주석에도 없는 약속**이라, 나중에 누가 `load_selfroles()["panels"]` 라고 쓰면
+#    개발 PC(파일에 내용이 있음)에서는 멀쩡하고 **새로 납품한 서버에서만** 죽습니다.
+#    실제로 출석 데이터가 그 사고를 냈었어요(cogs/economy.py의 `_load_attendance` 참고).
+#
+#    그래서 로더가 약속한 모양을 **직접 채워서** 돌려줍니다. 이제 기본값이 진짜예요.
+#    (`tools/check_money.py` [15]가 빈 파일로 확인합니다)
+def _shaped(data, shape: dict) -> dict:
+    """읽어온 값을 약속한 모양으로 채워서 돌려줍니다. dict가 아니면 통째로 새로 만들어요."""
+    if not isinstance(data, dict):
+        data = {}
+    for key, default in shape.items():
+        value = data.get(key)
+        if not isinstance(value, type(default)):
+            data[key] = type(default)()
+    return data
+
+
 def load_party():
-    return safe_json_load(PARTY_FILE, {"parties": {}})
+    return _shaped(safe_json_load(PARTY_FILE, {}), {"parties": {}})
 
 def save_party(data):
     atomic_json_save_or_raise(PARTY_FILE, data, indent=2)
 
 def load_scrim():
-    return safe_json_load(SCRIM_FILE, {"matches": {}, "records": {}})
+    return _shaped(safe_json_load(SCRIM_FILE, {}), {"matches": {}, "records": {}})
 
 def save_scrim(data):
     atomic_json_save_or_raise(SCRIM_FILE, data, indent=2)
 
 def load_levels():
-    return safe_json_load(LEVELS_FILE, {"users": {}, "rewards": {}, "config": {}})
+    return _shaped(safe_json_load(LEVELS_FILE, {}), {"users": {}, "rewards": {}, "config": {}})
 
 def save_levels(data):
     atomic_json_save_or_raise(LEVELS_FILE, data, indent=2)
 
 def load_welcome():
-    return safe_json_load(WELCOME_FILE, {"auto_roles": [], "message": ""})
+    return _shaped(safe_json_load(WELCOME_FILE, {}), {"auto_roles": [], "message": ""})
 
 def save_welcome(data):
     atomic_json_save_or_raise(WELCOME_FILE, data, indent=2)
 
 def load_selfroles():
-    return safe_json_load(SELFROLE_FILE, {"panels": {}})
+    return _shaped(safe_json_load(SELFROLE_FILE, {}), {"panels": {}})
 
 def save_selfroles(data):
     atomic_json_save_or_raise(SELFROLE_FILE, data, indent=2)
 
 def load_wiki():
-    return safe_json_load(WIKI_FILE, {})
+    # 📚 위키는 `{"wiki": {...}}` 모양이에요. 부르는 쪽이 전부 `.get("wiki", {})`로 조심하고
+    #    있었지만, 여기서 채워두면 그 조심이 없어도 안전합니다.
+    return _shaped(safe_json_load(WIKI_FILE, {}), {"wiki": {}})
 
 def save_wiki(data):
     atomic_json_save_or_raise(WIKI_FILE, data, indent=2)
@@ -58,11 +83,10 @@ LEDGER_MAX_ENTRIES = 3000  # 파일이 무한정 커지지 않도록 오래된 �
 
 
 def load_ledger() -> dict:
-    data = safe_json_load(LEDGER_FILE, {"entries": []})
-    if not isinstance(data, dict):
-        return {"entries": []}
-    data.setdefault("entries", [])
-    return data
+    # 🧩 `setdefault`만 쓰면 **칸이 있는데 타입이 틀린** 경우를 못 고쳐요.
+    #    (`{"entries": 0}` 이면 그대로 0이 넘어가고, 다음 append에서 터집니다)
+    #    돈 기록이라 특히 조용히 죽으면 안 되는 자리예요. 위 _shaped를 씁니다.
+    return _shaped(safe_json_load(LEDGER_FILE, {}), {"entries": []})
 
 
 def record_ledger(user_id, delta: int, balance_after, kind: str,
