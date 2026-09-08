@@ -28,6 +28,16 @@ class DataSaveError(RuntimeError):
 # 🧾 최근 저장 실패 기록. /테스트 데이터점검에서 확인할 수 있어요.
 SAVE_FAILURES = deque(maxlen=20)
 
+# 🔢 **누적** 실패 수. 위 deque는 20개에서 잘려나가서 "새로 늘었는지"를 셀 수가 없어요.
+#    (감시 루프가 이 값을 보고 새 실패가 생겼을 때만 알립니다 — chunsik_client 참고)
+#    리스트에 담아두는 건 다른 모듈에서 이름을 다시 묶어도 같은 값을 보게 하려는 거예요.
+_SAVE_FAILURE_TOTAL = [0]
+
+
+def save_failure_total() -> int:
+    """봇이 켜진 뒤 저장에 실패한 총 횟수."""
+    return _SAVE_FAILURE_TOTAL[0]
+
 
 # 🔁 [신규] 저장 재시도
 # 저장이 실패하는 실질적 원인은 거의 항상 **일시적인 파일 잠금**이에요. OneDrive 동기화나
@@ -76,6 +86,7 @@ def atomic_json_save(path, data, indent=2):
         "file": os.path.basename(path),
         "error": last_detail,
     })
+    _SAVE_FAILURE_TOTAL[0] += 1
     return False
 
 
