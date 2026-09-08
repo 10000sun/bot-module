@@ -227,10 +227,23 @@ _JOSA_PAIRS = {
 }
 
 # 숫자로 끝나는 이름("코인2")도 소리 나는 대로 판정해요.
-# 영(ㅇ)·일(ㄹ)·삼(ㅁ)·육(ㄱ)·칠(ㄹ)·팔(ㄹ)은 받침이 있고, 이·사·오·구는 없어요.
-_DIGIT_HAS_BATCHIM = {
-    "0": True, "1": True, "2": False, "3": True, "4": False,
-    "5": False, "6": True, "7": True, "8": True, "9": False,
+#
+# 🐛 [버그] 예전엔 받침이 **있다/없다**만 담았어요(`True`/`False`). 그래서 `으로/로`가
+#    틀렸습니다 — 그 짝만은 "받침이 있느냐"가 아니라 "그 받침이 ㄹ이냐"를 봐야 하거든요.
+#    일(ㄹ)·칠(ㄹ)·팔(ㄹ)이 받침 있음으로만 잡혀서 **"코인1으로"**(읽으면 "코인 일으로")가
+#    나왔어요. 맞는 건 "코인1로"입니다. 이제 **어떤 받침인지**를 종성 번호로 담습니다.
+#    (0 없음 · 1 ㄱ · 8 ㄹ · 16 ㅁ · 21 ㅇ — 한글 종성 배열 순서예요)
+_DIGIT_FINAL = {
+    "0": 21,   # 영 → ㅇ
+    "1": 8,    # 일 → ㄹ
+    "2": 0,    # 이
+    "3": 16,   # 삼 → ㅁ
+    "4": 0,    # 사
+    "5": 0,    # 오
+    "6": 1,    # 육 → ㄱ
+    "7": 8,    # 칠 → ㄹ
+    "8": 8,    # 팔 → ㄹ
+    "9": 0,    # 구
 }
 
 
@@ -247,8 +260,8 @@ def _final_jamo(word: str) -> int:
     code = ord(last)
     if 0xAC00 <= code <= 0xD7A3:
         return (code - 0xAC00) % 28
-    if last in _DIGIT_HAS_BATCHIM:
-        return 1 if _DIGIT_HAS_BATCHIM[last] else 0
+    if last in _DIGIT_FINAL:
+        return _DIGIT_FINAL[last]
     return -1
 
 
