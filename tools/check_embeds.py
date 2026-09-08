@@ -449,7 +449,10 @@ def check_ai_reply():
     #    split_message는 줄 경계를 되도록 지키되 한 줄이 혼자 넘치면 글자 단위로 자릅니다.
     from chunsik_utils import split_message
 
-    mention = 24            # "<@000000000000000000> " 몫
+    # 멘션 한 개가 차지하는 몫. `<@` + 유저 번호(17~19자리) + `> ` 라서 24자쯤 됩니다.
+    # (여기에 숫자를 직접 적으면 check_modules의 "납품물 ID" 검사가 진짜 서버 ID로
+    #  오해해요 — 실제로 한 번 걸렸습니다)
+    mention = 24
     limit = MESSAGE_MAX - mention
 
     cases = [
