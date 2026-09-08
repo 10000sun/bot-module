@@ -145,9 +145,20 @@ def _category_order(channel_key: str) -> int:
     return _category_order_by_name(_category_of(channel_key))
 
 
+# ✂️ 접두사 상한. 디스코드 카테고리 이름은 100자인데, 접두사가 그걸 다 먹으면 안 돼요.
+#
+# 🐛 [버그] 예전엔 상한이 없어서 `_prefixed`가 100자로 자르는 게 전부였습니다. 접두사를
+#    100자 넘게 넣으면 **모든 카테고리 이름이 잘린 접두사 하나로 똑같아져요.** 그러면
+#    `discord.utils.get(guild.categories, name=...)`이 전부 같은 카테고리를 찾아내서,
+#    로그·아이디·주식·상점이 **한 카테고리에 다 들어갑니다.** 성격별로 나눠 담는다는
+#    이 기능의 취지가 통째로 사라지는데 오류는 하나도 안 나요.
+MAX_PREFIX_LENGTH = 20
+
+
 def _prefixed(category: str, prefix: str) -> str:
     """카테고리 이름 앞에 접두사를 붙입니다. 디스코드 상한(100자)을 넘지 않게 잘라요."""
-    name = f"{prefix.strip()} {category}" if prefix.strip() else category
+    prefix = (prefix or "").strip()[:MAX_PREFIX_LENGTH]
+    name = f"{prefix} {category}" if prefix else category
     return name[:100]
 
 
@@ -568,7 +579,9 @@ class ChunsikWizard(commands.Cog):
     @설치.command(name="자동생성", description="[관리자] 빠져 있는 채널과 관리자 역할을 만들어서 곧바로 지정해요.")
     @app_commands.describe(접두사="카테고리 이름 앞에 붙일 말 (예: `봇` → `봇 📋 로그`). 생략하면 안 붙여요",
                            역할도="관리자 역할까지 만들지 (기본값: True)")
-    async def auto(self, interaction: discord.Interaction, 접두사: str = "", 역할도: bool = True):
+    async def auto(self, interaction: discord.Interaction,
+                   접두사: app_commands.Range[str, None, MAX_PREFIX_LENGTH] = "",
+                   역할도: bool = True):
         if not interaction.user.guild_permissions.administrator:
             return await interaction.response.send_message("❌ 서버 관리자만 쓸 수 있어요!", ephemeral=True)
 
