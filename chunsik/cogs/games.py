@@ -13,7 +13,7 @@ from chunsik_config import KST
 from chunsik_alerts import report_loop_error
 from chunsik_state import record_ledger
 from chunsik_utils import chunk_lines, mention_lines
-from chunsik_settings import has_admin_or_role, load_settings, save_settings, send_log_embed
+from chunsik_settings import has_admin_or_role, is_feature_enabled, load_settings, save_settings, send_log_embed
 from chunsik_names import bot_name, currency, event_name, josa
 
 # ⏳ 이벤트 창이 열려 있을 수 있는 최대 시간. 12시간이에요.
@@ -134,6 +134,11 @@ class ChunsikGames(commands.Cog):
         """🐛 [버그 수정] 예전엔 60초마다 폴링해서 시(hour)/분(minute)이 맞는지 확인하는 방식이라,
         타이밍에 따라 최대 59초까지 늦게 열릴 수 있었어요. 이제는 discord.py의 time= 스케줄링을 써서
         00:21, 12:21(KST) 정각에 정확하게 실행돼요."""
+        # 🚧 관리자가 `/기능제어`로 정지해뒀으면 창을 아예 열지 않아요. 여기서 막지 않으면
+        #    공지가 나가고 지갑에 돈이 들어갑니다 — 정지의 뜻이 그게 아니에요.
+        if not is_feature_enabled("evashi"):
+            return
+
         # 🛡️ 설정 파일이 손상되면 load_settings()가 예외를 던져요. 그게 밖으로 새면
         # 루프가 영구히 멈춰서 선착순 이벤트가 다시는 안 열립니다. 이번 회차만 포기해요.
         try:
@@ -225,6 +230,10 @@ class ChunsikGames(commands.Cog):
         if self.evashi_window_open_until is None:
             return
         if message.content.strip() != event_name():
+            return
+        # 🚧 창이 열려 있는 **도중에** 정지시킬 수도 있어요. 그때부터는 더 주지 않습니다.
+        #    (이미 받은 사람 것을 되돌리지는 않아요 — 그건 `/회수`가 할 일입니다)
+        if not is_feature_enabled("evashi"):
             return
 
         now = dt.datetime.now(KST)

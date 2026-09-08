@@ -84,7 +84,10 @@ MODULE_SPECS = (
         "games", "미니게임·보상", "cogs.games", "ChunsikGames", requires=("economy",),
         channels=("evashi_announce",),
         roles=("evashi_admin",),
+        features=("evashi",),
         # 🎲 하이로우·선착순 이벤트는 진행 상태를 메모리에만 들고 있어서 데이터 파일이 없어요.
+        # 🚧 기능 키는 **선착순 이벤트만** 가리켜요. 하이로우는 돈을 만지지도, 혼자 돌지도
+        #    않아서 끌 이유가 없습니다.
     ),
     ModuleSpec(
         "gpt", "AI 대화", "cogs.gpt", "ChunsikGPT",
