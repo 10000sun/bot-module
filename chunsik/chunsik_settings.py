@@ -280,6 +280,13 @@ async def send_log_embed(bot: commands.Bot, channel_key: str, description: str,
         return False
 
     me = guild.me if guild else channel.guild.me
+    # 🐛 [버그 수정] `guild.me`는 멤버 캐시에서 자기 자신을 찾는 거라 **None일 수 있어요**
+    #    (기동 직후·재연결 직후). 그러면 아래 `permissions_for(None)`이 AttributeError를
+    #    내는데, 이 함수는 그 예외를 안 감싸고 있어서 **로그를 남기려다 명령 자체가
+    #    터졌습니다.** 로그가 못 나가는 건 감수할 만하지만 거래가 깨지면 안 돼요.
+    if me is None:
+        print(f"⚠️ 로그 전송 건너뜀 ({channel_key}): 봇 자신의 멤버 정보를 아직 못 읽었어요.")
+        return False
     if not channel.permissions_for(me).send_messages:
         return False
 
