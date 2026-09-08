@@ -419,8 +419,29 @@ def check_snooze(snooze_mod):
         dict(row, preview="내일까지 답장", memo="") for row in rows[:3]]))
 
 
+def check_diagnostics(diag_mod, setting_mod):
+    print("\n[10] 🧪 채널점검 결과 — 전부 실패했을 때")
+    # 🚨 하필 **전부 실패했을 때** 결과를 못 보면 제일 나쁩니다. 봇 권한을 아직 안 준
+    #    설치 직후가 딱 그 상태예요. 실패 줄에는 예외 원문까지 붙는데 그건 길이 제한이
+    #    없어서, 예전엔 칸 하나가 1024자를 넘겨 결과 화면이 통째로 거부됐어요.
+    #
+    # 채널 개수는 /설정 표에서 읽어옵니다. 채널이 늘면 이 검사도 자동으로 따라가요.
+    labels = list(setting_mod.ChunsikSetting._CHANNEL_COMMANDS.keys())
+    worst_error = _fill(diag_mod.ERROR_TEXT_LIMIT)
+
+    measure(f"채널점검 (채널 {len(labels)}개 전부 실패 · 오류 원문 최대)",
+            diag_mod.build_channel_report(
+                [], [f"{name} ({worst_error})" for name in labels], []))
+    measure(f"채널점검 (채널 {len(labels)}개 전부 미설정)",
+            diag_mod.build_channel_report([], [], labels))
+    untouched("채널점검 (전부 정상)", diag_mod.build_channel_report(labels, [], []),
+              mark="외 ")
+
+
 def main():
     import cogs.chronicle as chron_mod
+    import cogs.diagnostics as diag_mod
+    import cogs.setting as setting_mod
     import cogs.snooze as snooze_mod
     import cogs.ids as ids_mod
     import cogs.party as party_mod
@@ -444,6 +465,7 @@ def main():
     check_event_announce()
     check_roster(ids_mod)
     check_snooze(snooze_mod)
+    check_diagnostics(diag_mod, setting_mod)
 
     print("\n" + "=" * 62)
     if _fails:
