@@ -731,7 +731,20 @@ DANGEROUS_ROLE_PERMISSIONS = (
     ("kick_members", "멤버 추방"),
     ("moderate_members", "멤버 타임아웃"),
     ("mention_everyone", "@everyone 멘션"),
+    # 🔊 [추가] 음성 채널에서 **사람을 어떻게 하는** 권한들. 위 '멤버 타임아웃'과 같은 부류인데
+    #    빠져 있었어요. 이 봇이 가는 곳은 대개 게임 커뮤니티라 음성 채널이 중심이고,
+    #    셀프 역할 하나로 남을 마이크 끄고 다른 방으로 끌고 갈 수 있으면 안 됩니다.
+    ("mute_members", "음성 마이크 끄기"),
+    ("deafen_members", "음성 헤드셋 끄기"),
+    ("move_members", "음성 채널 이동시키기"),
+    # 🏷️ [추가] 남의 별명을 바꿀 수 있어요. 다른 사람 행세를 할 수 있는 자리라 넣습니다.
+    ("manage_nicknames", "별명 관리"),
 )
+
+# 📌 일부러 **안 넣은** 권한들 — 사람을 어떻게 하는 게 아니라 '내용'을 다루는 쪽이에요.
+#    셀프 역할로 정당하게 줄 수도 있는 것들이라, 필요하면 그때 넣기로 합니다.
+#      manage_events(이벤트 관리) · manage_threads(스레드 관리) ·
+#      manage_emojis_and_stickers(이모지 관리) · view_audit_log(감사 로그 보기)
 
 
 def dangerous_permission(role: discord.Role) -> Optional[str]:

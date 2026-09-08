@@ -584,6 +584,29 @@ _BANMAL_ENDINGS = ("했어", "없어", "됐어", "있어", "줄게", "할게", "
                    "다구", "라구", "거든", "거야", "이야", "줄래", "볼래", "하자")
 
 
+def _check_dangerous_permissions():
+    """`DANGEROUS_ROLE_PERMISSIONS`에 적힌 이름이 **디스코드에 진짜 있는 권한**인지 봅니다.
+
+    🚨 이 목록은 "아무나 가져가는 역할"에 권한이 붙는 걸 막는 마지막 방어선이에요.
+       셀프 역할·입장 자동 역할·레벨 보상·상점 역할 상품이 담을 때와 붙일 때 두 번 봅니다.
+
+       그런데 `getattr(role.permissions, attr, False)` 로 읽기 때문에 **이름에 오타가 있으면
+       언제나 False**입니다. 오류도 안 나고, 그 권한은 영영 안 잡혀요. 목록에 적어뒀으니
+       막고 있다고 믿게 되는 게 제일 나쁩니다.
+       (discord.py가 권한 이름을 바꾸는 경우도 같은 결과예요)
+    """
+    import discord
+    from chunsik_utils import DANGEROUS_ROLE_PERMISSIONS
+
+    valid = set(dict(discord.Permissions.VALID_FLAGS))
+    problems = []
+    for attr, label in DANGEROUS_ROLE_PERMISSIONS:
+        if attr not in valid:
+            problems.append(f"chunsik_utils.DANGEROUS_ROLE_PERMISSIONS: `{attr}`({label})는 "
+                            f"디스코드에 없는 권한 이름이에요 — 그 권한은 영영 안 잡힙니다")
+    return problems
+
+
 def _check_setting_privacy():
     """`/설정 …` 응답이 전부 **비공개(ephemeral)** 인지 봅니다.
 
@@ -1022,6 +1045,13 @@ async def main(label, max_names):
         for problem in catch_up:
             print(f"     - {problem}")
 
+    # 🚫 위험 권한 목록의 이름이 진짜 디스코드 권한인지. (오타면 영영 안 잡혀요)
+    perms = _check_dangerous_permissions()
+    print(f"  위험 권한   : {'✅ 이름 전부 유효' if not perms else f'🚨 {len(perms)}건'}")
+    if perms:
+        for problem in perms:
+            print(f"     - {problem}")
+
     # 🔇 `/설정 …` 응답이 전부 비공개인지. (정적 검사)
     privacy = _check_setting_privacy()
     print(f"  설정 비공개 : {'✅ 전부 비공개' if not privacy else f'🚨 {len(privacy)}건'}")
@@ -1072,7 +1102,8 @@ async def main(label, max_names):
     await bot.close()
 
     failed = bool(bot.failed_modules or too_long or ownership or loop_guards or role_reads
-                  or catch_up or stale or privacy or tone or echoes or backoff or delivery)
+                  or catch_up or stale or perms or privacy or tone or echoes or backoff
+                  or delivery)
 
     # 기본 실행이면 "이름을 상한까지 늘린" 검사도 자동으로 한 번 더 돌립니다.
     # (이름은 import 시점에 설명문으로 굳기 때문에 같은 프로세스에서 두 번 볼 수 없어요)
