@@ -47,7 +47,9 @@ MODULE_SPECS = (
         channels=("role_log",),
         # 👑 chief_role은 아이디 명단의 '대장' 칸에도 쓰이지만, 동시에 /기능제어를 쓸 수 있는
         #    최고 권한이기도 해요. 아이디 모듈을 빼도 이 역할은 있어야 하므로 여기 둡니다.
-        roles=("chief_role",),
+        # 🔧 settings_admin은 `/설정 …`을 쓸 수 있는 역할이에요. 예전엔 이 자리가
+        #    **"채널관리자"라는 역할 이름 문자열**로 걸려 있었습니다(cogs/setting.py 참고).
+        roles=("chief_role", "settings_admin"),
         note="관리자 역할/로그 채널 지정, 기능 킬 스위치, 역할부여. 이게 없으면 다른 모듈의 권한 설정을 못 해요.",
     ),
     ModuleSpec(

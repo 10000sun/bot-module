@@ -9,7 +9,7 @@ from discord.ext import commands
 from chunsik_config import ENABLED_MODULE_KEYS, KST
 from modules import is_active
 from chunsik_utils import ChunsikView
-from chunsik_settings import FEATURE_KEYS, FEATURE_LIST_TEXT, _get_role_ids, is_super_admin, load_settings, save_settings, send_log_embed, set_all_features_enabled, set_feature_enabled
+from chunsik_settings import FEATURE_KEYS, FEATURE_LIST_TEXT, _get_role_ids, has_admin_or_role, is_super_admin, load_settings, save_settings, send_log_embed, set_all_features_enabled, set_feature_enabled
 from chunsik_names import (MAX_NAME_LENGTH, NAME_FIELDS, bot_name, currency, event_name,
                         get_names, josa, save_names, validate_name)
 
@@ -177,6 +177,7 @@ class ChunsikSetting(commands.Cog):
         "내전로그": "scrim_log",
     }
     _ROLE_COMMANDS = {
+        "설정": "settings_admin",
         "아이디": "ids_admin", "상점": "shop_admin", "주식": "stock_admin",
         "이벤트": "evashi_admin", "연대기": "chronicle_admin", "테스트": "test_admin",
         "셀프역할": "selfrole_admin", "입장": "welcome_admin", "레벨": "level_admin",
@@ -290,7 +291,7 @@ class ChunsikSetting(commands.Cog):
 
     @명단.command(name="대장", description="[관리자] 아이디 명단에서 '대장' 칸으로 따로 표시할 역할을 지정합니다.")
     async def set_chief_role(self, interaction: discord.Interaction, 역할: discord.Role):
-        if not self.has_channel_permission(interaction): return await interaction.response.send_message("❌ 관리자 또는 '채널관리자' 역할이 필요해요!", ephemeral=True)
+        if not self.has_channel_permission(interaction): return await interaction.response.send_message("❌ 서버 관리자이거나 **설정 관리자** 역할이 있어야 해요! (`/설정 관리자 설정`으로 지정)", ephemeral=True)
         settings = load_settings()
         if "roles" not in settings: settings["roles"] = {}
         settings["roles"]["chief_role"] = 역할.id
@@ -298,10 +299,26 @@ class ChunsikSetting(commands.Cog):
         await interaction.response.send_message(f"✅ {역할.mention} 역할이 아이디 명단의 **대장** 칸으로 지정됐어요.", ephemeral=True)
 
     def has_channel_permission(self, interaction: discord.Interaction) -> bool:
-        """최고 관리자 권한이 있거나 '채널관리자' 역할을 가지고 있는지 검사하는 헬퍼 함수"""
-        if interaction.user.guild_permissions.administrator:
-            return True
-        return any(role.name == "채널관리자" for role in interaction.user.roles)
+        """`/설정 …`을 쓸 수 있는지. 서버 관리자이거나 **설정 관리자** 역할 보유자면 True.
+
+        🚨 [버그 수정] 예전엔 `role.name == "채널관리자"` — **역할 이름 문자열**로 봤어요.
+        이 봇의 다른 권한은 전부 settings.json에 적힌 역할 **ID**로 보는데 여기만 달랐습니다.
+        원본 서버에 그 이름의 역할이 있어서 그대로 남은 자리예요.
+
+        납품물에서는 이게 세 가지로 나빴습니다.
+          1. `/설치`도, 어떤 명령도 "채널관리자"라는 역할을 만들지 않아요. README·설치
+             안내문에도 없습니다. 즉 **서버 관리자 말고는 아무도 `/설정`을 못 씁니다.**
+             그런데 오류 문구는 "'채널관리자' 역할이 필요해요"라고 안내해요 — 어디서도
+             만들어주지 않는 역할을 요구하는 셈이라 클라이언트가 헤맵니다.
+          2. 역할 이름은 **누구나 지을 수 있어요.** 역할 관리 권한이 있는 사람이 아무 역할
+             이름을 "채널관리자"로 바꾸면 그 순간 봇 설정 전체를 만질 수 있게 됩니다.
+             (셀프 역할·입장 자동 역할에서 권한 상승을 그렇게 막아놓고 정작 여기가 열려 있었어요)
+          3. 이름을 바꾸면 조용히 권한이 사라집니다. 오류도 안 나요.
+
+        이제 `/설정 관리자 설정`으로 지정한 역할 ID를 봅니다. 다른 관리자 역할과 같은 방식이고,
+        modules.py 소유 표에 올라가 있어서 `/설치`가 역할을 만들고 `/테스트 권한확인`도 봐요.
+        """
+        return has_admin_or_role(interaction, "settings_admin")
 
     # 🔄 [개선] 예전엔 역할을 새로 지정하면 이전 역할이 통째로 덮어써져서, 한 기능에
     # 역할을 하나밖에 못 줬어요. 이제는 "추가/제거" 방식으로 바뀌어서, 같은 기능에
@@ -313,7 +330,7 @@ class ChunsikSetting(commands.Cog):
 
     async def _update_admin_role_list(self, interaction: discord.Interaction, role_key: str, label: str, 역할: discord.Role, 동작: Optional[app_commands.Choice[str]]):
         if not self.has_channel_permission(interaction):
-            return await interaction.response.send_message("❌ 관리자 또는 '채널관리자' 역할이 필요해요!", ephemeral=True)
+            return await interaction.response.send_message("❌ 서버 관리자이거나 **설정 관리자** 역할이 있어야 해요! (`/설정 관리자 설정`으로 지정)", ephemeral=True)
 
         settings = load_settings()
         if "roles" not in settings: settings["roles"] = {}
@@ -338,6 +355,14 @@ class ChunsikSetting(commands.Cog):
             current = ", ".join(f"<@&{rid}>" for rid in role_ids)
             msg += f"\n현재 **{label}**: {current}"
         await interaction.response.send_message(msg, ephemeral=True)
+
+    @관리자.command(name="설정", description="[관리자] 설정 관리자(/설정 명령 전체) 역할을 추가/제거합니다. (여러 역할 동시 지정 가능)")
+    @app_commands.describe(역할="추가/제거할 역할", 동작="추가 또는 제거 (기본값: 추가)")
+    @app_commands.choices(동작=ADMIN_ROLE_ACTION_CHOICES)
+    async def set_settings_admin(self, interaction: discord.Interaction, 역할: discord.Role, 동작: Optional[app_commands.Choice[str]] = None):
+        # 🔧 이 역할이 `/설정 …` 전체를 쓸 수 있게 해줘요. 첫 지정은 서버 관리자만 할 수
+        #    있습니다(그게 맞아요 — 아무나 스스로에게 설정 권한을 줄 수 있으면 안 되니까).
+        await self._update_admin_role_list(interaction, "settings_admin", "설정 관리자", 역할, 동작)
 
     @관리자.command(name="아이디", description="[관리자] 아이디 관리자(등록/수정) 역할을 추가/제거합니다. (여러 역할 동시 지정 가능)")
     @app_commands.describe(역할="추가/제거할 역할", 동작="추가 또는 제거 (기본값: 추가)")
@@ -401,7 +426,7 @@ class ChunsikSetting(commands.Cog):
 
     @채널.command(name="출석", description="[관리자] 출석체크가 진행될 채널을 고정합니다.")
     async def set_attendance_ch(self, interaction: discord.Interaction, 채널: discord.TextChannel):
-        if not self.has_channel_permission(interaction): return await interaction.response.send_message("❌ 관리자 또는 '채널관리자' 역할이 필요해요!", ephemeral=True)
+        if not self.has_channel_permission(interaction): return await interaction.response.send_message("❌ 서버 관리자이거나 **설정 관리자** 역할이 있어야 해요! (`/설정 관리자 설정`으로 지정)", ephemeral=True)
         settings = load_settings()
         if "channels" not in settings: settings["channels"] = {}
         settings["channels"]["attendance"] = 채널.id
@@ -410,7 +435,7 @@ class ChunsikSetting(commands.Cog):
 
     @채널.command(name="경제로그", description=f"[관리자] {currency()} 지급/회수 등이 남는 로그 채널이에요.")
     async def set_economy_log_ch(self, interaction: discord.Interaction, 채널: discord.TextChannel):
-        if not self.has_channel_permission(interaction): return await interaction.response.send_message("❌ 관리자 또는 '채널관리자' 역할이 필요해요!", ephemeral=True)
+        if not self.has_channel_permission(interaction): return await interaction.response.send_message("❌ 서버 관리자이거나 **설정 관리자** 역할이 있어야 해요! (`/설정 관리자 설정`으로 지정)", ephemeral=True)
         settings = load_settings()
         if "channels" not in settings: settings["channels"] = {}
         settings["channels"]["economy_log"] = 채널.id
@@ -419,7 +444,7 @@ class ChunsikSetting(commands.Cog):
 
     @채널.command(name="상점", description="[관리자] 기본 상점 매대를 세울 채널이에요. (매대는 `/상점 생성`으로 아무 채널에나 더 만들 수 있어요)")
     async def set_shop_board_ch(self, interaction: discord.Interaction, 채널: discord.TextChannel):
-        if not self.has_channel_permission(interaction): return await interaction.response.send_message("❌ 관리자 또는 '채널관리자' 역할이 필요해요!", ephemeral=True)
+        if not self.has_channel_permission(interaction): return await interaction.response.send_message("❌ 서버 관리자이거나 **설정 관리자** 역할이 있어야 해요! (`/설정 관리자 설정`으로 지정)", ephemeral=True)
         settings = load_settings()
         if "channels" not in settings: settings["channels"] = {}
         settings["channels"]["shop_board"] = 채널.id
@@ -430,7 +455,7 @@ class ChunsikSetting(commands.Cog):
 
     @채널.command(name="상점로그", description="[관리자] 상점 구매 영수증이 남는 로그 채널이에요.")
     async def set_shop_log_ch(self, interaction: discord.Interaction, 채널: discord.TextChannel):
-        if not self.has_channel_permission(interaction): return await interaction.response.send_message("❌ 관리자 또는 '채널관리자' 역할이 필요해요!", ephemeral=True)
+        if not self.has_channel_permission(interaction): return await interaction.response.send_message("❌ 서버 관리자이거나 **설정 관리자** 역할이 있어야 해요! (`/설정 관리자 설정`으로 지정)", ephemeral=True)
         settings = load_settings()
         if "channels" not in settings: settings["channels"] = {}
         settings["channels"]["shop_log"] = 채널.id
@@ -439,7 +464,7 @@ class ChunsikSetting(commands.Cog):
 
     @채널.command(name="주식전광판", description="[관리자] 실시간 주식 전광판 임베드가 고정될 채널이에요.")
     async def set_stock_board_ch(self, interaction: discord.Interaction, 채널: discord.TextChannel):
-        if not self.has_channel_permission(interaction): return await interaction.response.send_message("❌ 관리자 또는 '채널관리자' 역할이 필요해요!", ephemeral=True)
+        if not self.has_channel_permission(interaction): return await interaction.response.send_message("❌ 서버 관리자이거나 **설정 관리자** 역할이 있어야 해요! (`/설정 관리자 설정`으로 지정)", ephemeral=True)
         settings = load_settings()
         if "channels" not in settings: settings["channels"] = {}
         settings["channels"]["stock_board"] = 채널.id
@@ -448,7 +473,7 @@ class ChunsikSetting(commands.Cog):
 
     @채널.command(name="주식로그", description="[관리자] 주식 매수/매도 등의 기록이 남는 로그 채널이에요.")
     async def set_stock_log_ch(self, interaction: discord.Interaction, 채널: discord.TextChannel):
-        if not self.has_channel_permission(interaction): return await interaction.response.send_message("❌ 관리자 또는 '채널관리자' 역할이 필요해요!", ephemeral=True)
+        if not self.has_channel_permission(interaction): return await interaction.response.send_message("❌ 서버 관리자이거나 **설정 관리자** 역할이 있어야 해요! (`/설정 관리자 설정`으로 지정)", ephemeral=True)
         settings = load_settings()
         if "channels" not in settings: settings["channels"] = {}
         settings["channels"]["stock_log"] = 채널.id
@@ -457,7 +482,7 @@ class ChunsikSetting(commands.Cog):
         
     @채널.command(name="종가게시판", description="[관리자] 장마감 후 종가, 주식 목록, 주주 목록이 적힐 채널이에요.")
     async def set_closing_board_ch(self, interaction: discord.Interaction, 채널: discord.TextChannel):
-        if not self.has_channel_permission(interaction): return await interaction.response.send_message("❌ 관리자 또는 '채널관리자' 역할이 필요해요!", ephemeral=True)
+        if not self.has_channel_permission(interaction): return await interaction.response.send_message("❌ 서버 관리자이거나 **설정 관리자** 역할이 있어야 해요! (`/설정 관리자 설정`으로 지정)", ephemeral=True)
         settings = load_settings()
         if "channels" not in settings: settings["channels"] = {}
         settings["channels"]["closing_log"] = 채널.id
@@ -469,7 +494,7 @@ class ChunsikSetting(commands.Cog):
     #    (`python tools/check_modules.py --max-names`로 확인할 수 있습니다)
     @채널.command(name="이벤트", description=f"[관리자] {event_name()} 이벤트의 선착순 마감 안내가 올라갈 채널이에요. (유저가 단어를 치는 채널이 아니라 결과 공지 전용이에요)")
     async def set_evashi_announce_ch(self, interaction: discord.Interaction, 채널: discord.TextChannel):
-        if not self.has_channel_permission(interaction): return await interaction.response.send_message("❌ 관리자 또는 '채널관리자' 역할이 필요해요!", ephemeral=True)
+        if not self.has_channel_permission(interaction): return await interaction.response.send_message("❌ 서버 관리자이거나 **설정 관리자** 역할이 있어야 해요! (`/설정 관리자 설정`으로 지정)", ephemeral=True)
         settings = load_settings()
         if "channels" not in settings: settings["channels"] = {}
         settings["channels"]["evashi_announce"] = 채널.id
@@ -478,7 +503,7 @@ class ChunsikSetting(commands.Cog):
 
     @채널.command(name="아이디로그", description="[관리자] 아이디 등록/수정/삭제 시 로그가 남는 채널이에요.")
     async def set_id_log_ch(self, interaction: discord.Interaction, 채널: discord.TextChannel):
-        if not self.has_channel_permission(interaction): return await interaction.response.send_message("❌ 관리자 또는 '채널관리자' 역할이 필요해요!", ephemeral=True)
+        if not self.has_channel_permission(interaction): return await interaction.response.send_message("❌ 서버 관리자이거나 **설정 관리자** 역할이 있어야 해요! (`/설정 관리자 설정`으로 지정)", ephemeral=True)
         settings = load_settings()
         if "channels" not in settings: settings["channels"] = {}
         settings["channels"]["id_log"] = 채널.id
@@ -487,7 +512,7 @@ class ChunsikSetting(commands.Cog):
 
     @채널.command(name="아이디목록", description="[관리자] 아이디 명단이 자동으로 갱신되어 올라갈 채널이에요.")
     async def set_level_roster_ch(self, interaction: discord.Interaction, 채널: discord.TextChannel):
-        if not self.has_channel_permission(interaction): return await interaction.response.send_message("❌ 관리자 또는 '채널관리자' 역할이 필요해요!", ephemeral=True)
+        if not self.has_channel_permission(interaction): return await interaction.response.send_message("❌ 서버 관리자이거나 **설정 관리자** 역할이 있어야 해요! (`/설정 관리자 설정`으로 지정)", ephemeral=True)
         settings = load_settings()
         if "channels" not in settings: settings["channels"] = {}
         settings["channels"]["level_roster"] = 채널.id
@@ -500,7 +525,7 @@ class ChunsikSetting(commands.Cog):
 
     @채널.command(name="아이디등록", description=f"[관리자] 유저들이 '플랫폼 아이디' 형식으로 올리면 {bot_name()}{josa(bot_name(), '이가')} 자동으로 등록해주는 채널이에요.")
     async def set_id_submit_ch(self, interaction: discord.Interaction, 채널: discord.TextChannel):
-        if not self.has_channel_permission(interaction): return await interaction.response.send_message("❌ 관리자 또는 '채널관리자' 역할이 필요해요!", ephemeral=True)
+        if not self.has_channel_permission(interaction): return await interaction.response.send_message("❌ 서버 관리자이거나 **설정 관리자** 역할이 있어야 해요! (`/설정 관리자 설정`으로 지정)", ephemeral=True)
         settings = load_settings()
         if "channels" not in settings: settings["channels"] = {}
         settings["channels"]["id_submit"] = 채널.id
@@ -514,7 +539,7 @@ class ChunsikSetting(commands.Cog):
 
     @채널.command(name="역할로그", description="[관리자] 역할 부여 내역이 남는 로그 채널이에요.")
     async def set_role_log_ch(self, interaction: discord.Interaction, 채널: discord.TextChannel):
-        if not self.has_channel_permission(interaction): return await interaction.response.send_message("❌ 관리자 또는 '채널관리자' 역할이 필요해요!", ephemeral=True)
+        if not self.has_channel_permission(interaction): return await interaction.response.send_message("❌ 서버 관리자이거나 **설정 관리자** 역할이 있어야 해요! (`/설정 관리자 설정`으로 지정)", ephemeral=True)
         settings = load_settings()
         if "channels" not in settings: settings["channels"] = {}
         settings["channels"]["role_log"] = 채널.id
@@ -523,7 +548,7 @@ class ChunsikSetting(commands.Cog):
         
     @채널.command(name="레벨알림", description="[관리자] 레벨업 축하를 모아 올릴 채널이에요. (`/레벨 설정`에서 '지정 채널'을 골라야 여기로 와요)")
     async def set_level_announce_ch(self, interaction: discord.Interaction, 채널: discord.TextChannel):
-        if not self.has_channel_permission(interaction): return await interaction.response.send_message("❌ 관리자 또는 '채널관리자' 역할이 필요해요!", ephemeral=True)
+        if not self.has_channel_permission(interaction): return await interaction.response.send_message("❌ 서버 관리자이거나 **설정 관리자** 역할이 있어야 해요! (`/설정 관리자 설정`으로 지정)", ephemeral=True)
         settings = load_settings()
         if "channels" not in settings: settings["channels"] = {}
         settings["channels"]["level_announce"] = 채널.id
@@ -532,7 +557,7 @@ class ChunsikSetting(commands.Cog):
 
     @채널.command(name="환영", description="[관리자] 새로 들어온 멤버에게 인사를 올릴 채널이에요.")
     async def set_welcome_ch(self, interaction: discord.Interaction, 채널: discord.TextChannel):
-        if not self.has_channel_permission(interaction): return await interaction.response.send_message("❌ 관리자 또는 '채널관리자' 역할이 필요해요!", ephemeral=True)
+        if not self.has_channel_permission(interaction): return await interaction.response.send_message("❌ 서버 관리자이거나 **설정 관리자** 역할이 있어야 해요! (`/설정 관리자 설정`으로 지정)", ephemeral=True)
         settings = load_settings()
         if "channels" not in settings: settings["channels"] = {}
         settings["channels"]["welcome"] = 채널.id
@@ -541,7 +566,7 @@ class ChunsikSetting(commands.Cog):
 
     @채널.command(name="입퇴장로그", description="[관리자] 멤버가 들어오고 나간 기록이 남는 로그 채널이에요.")
     async def set_member_log_ch(self, interaction: discord.Interaction, 채널: discord.TextChannel):
-        if not self.has_channel_permission(interaction): return await interaction.response.send_message("❌ 관리자 또는 '채널관리자' 역할이 필요해요!", ephemeral=True)
+        if not self.has_channel_permission(interaction): return await interaction.response.send_message("❌ 서버 관리자이거나 **설정 관리자** 역할이 있어야 해요! (`/설정 관리자 설정`으로 지정)", ephemeral=True)
         settings = load_settings()
         if "channels" not in settings: settings["channels"] = {}
         settings["channels"]["member_log"] = 채널.id
@@ -573,7 +598,7 @@ class ChunsikSetting(commands.Cog):
     @app_commands.guild_only()
     async def show_channel_config(self, interaction: discord.Interaction):
         if not self.has_channel_permission(interaction):
-            return await interaction.response.send_message("❌ 관리자 또는 '채널관리자' 역할이 필요해요!", ephemeral=True)
+            return await interaction.response.send_message("❌ 서버 관리자이거나 **설정 관리자** 역할이 있어야 해요! (`/설정 관리자 설정`으로 지정)", ephemeral=True)
 
         settings = load_settings()
         channels = settings.get("channels", {})
@@ -595,6 +620,7 @@ class ChunsikSetting(commands.Cog):
             "level_roster": "📋 아이디 명단",
         }
         role_labels = {
+            "settings_admin": "🔧 설정 관리자",
             "ids_admin": "🆔 아이디 관리자",
             "shop_admin": "🛒 상점 관리자",
             "stock_admin": "📈 주식 관리자",
@@ -679,7 +705,7 @@ class ChunsikSetting(commands.Cog):
     @app_commands.guild_only()
     async def audit_log(self, interaction: discord.Interaction, 개수: int = 20):
         if not self.has_channel_permission(interaction):
-            return await interaction.response.send_message("❌ 관리자 또는 '채널관리자' 역할이 필요해요!", ephemeral=True)
+            return await interaction.response.send_message("❌ 서버 관리자이거나 **설정 관리자** 역할이 있어야 해요! (`/설정 관리자 설정`으로 지정)", ephemeral=True)
         개수 = max(1, min(개수, 50))
         await interaction.response.defer(ephemeral=True)
 
