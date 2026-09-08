@@ -268,6 +268,16 @@ class ChunsikStock(commands.Cog):
 
     def __init__(self, bot):
         self.bot = bot
+        # 🎨 그래프는 한 번에 하나씩만 그립니다.
+        #
+        # 🐛 [버그] 렌더링은 `asyncio.to_thread`로 넘겨서 이벤트 루프를 안 막는데(그건 맞아요),
+        #    그 스레드 풀은 **워커가 여럿**입니다. 그런데 matplotlib의 `pyplot`은
+        #    **전역 상태를 공유하고 스레드 안전하지 않아요** — `plt.rcParams`(폰트),
+        #    `plt.subplots()`, `plt.close()`가 전부 같은 전역 그림 관리자를 건드립니다.
+        #    두 사람이 거의 동시에 `/주식 그래프`를 부르면 서로의 그림에 끼어들어서
+        #    엉뚱한 그래프가 나가거나 그리다 터질 수 있어요.
+        #    그림 한 장은 금방 그려지니, 줄을 세우는 게 제일 싸고 확실한 해결입니다.
+        self._chart_lock = asyncio.Lock()
         self.market_open = True
         self.stocks = {}
         self.STOCKS_FILE = STOCKS_FILE
@@ -1119,9 +1129,11 @@ class ChunsikStock(commands.Cog):
         prices = [h["price"] for h in history]
         trend_color = CHART_UP if prices[-1] >= prices[0] else CHART_DOWN
         # 🖼️ 렌더링은 스레드로 분리 (이벤트 루프 블로킹 방지)
-        buf = await asyncio.to_thread(
-            self._make_line_chart, dates, prices, f"📈 {주식명} 가격 추이", f"가격 ({currency()})", trend_color
-        )
+        async with self._chart_lock:
+            buf = await asyncio.to_thread(
+                self._make_line_chart, dates, prices, f"📈 {주식명} 가격 추이",
+                f"가격 ({currency()})", trend_color
+            )
         await interaction.followup.send(file=discord.File(buf, filename="stock_graph.png"))
 
     @stock_graph.autocomplete('주식명')
