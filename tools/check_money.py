@@ -251,6 +251,36 @@ def test_wallet():
                       ("reward_amount", 200), ("user_stats", {})):
         check(f"{key} 기본값", a[key], want)
 
+    print("\n[14] 🚨 자정 루프를 놓쳐도 다음 날 출석이 막히면 안 돼요")
+    # 오늘 명단을 지우는 건 자정 00:00 루프뿐이었어요. 그 시각에 봇이 꺼져 있으면
+    # (재시작·PC 종료·정전) 그 회차는 그냥 지나가고, tasks.loop은 따라잡지 않습니다.
+    # 그러면 어제 출석한 사람 전원이 하루 종일 "이미 출석하셨어요"를 봅니다.
+    from cogs.economy import roll_attendance_day
+
+    yesterday = {"date": "2026-09-07", "today_count": 3, "today_users": ["1", "2", "3"],
+                 "user_stats": {"1": 10}}
+    rolled = roll_attendance_day(yesterday, "2026-09-08")
+    check("날짜가 지났으면 명단을 비움", (rolled, yesterday["today_users"], yesterday["today_count"]),
+          (True, [], 0))
+    check("누적 기록은 건드리지 않음", yesterday["user_stats"], {"1": 10})
+
+    same = {"date": "2026-09-08", "today_count": 2, "today_users": ["1", "2"]}
+    check("같은 날이면 그대로", (roll_attendance_day(same, "2026-09-08"), same["today_users"]),
+          (False, ["1", "2"]))
+
+    # 📌 날짜 칸이 없는 옛 파일을 비워버리면, 오늘 이미 출석한 사람이 한 번 더 받아요.
+    #    재화가 복사되는 쪽으로는 기울이지 않습니다.
+    legacy = {"today_count": 2, "today_users": ["1", "2"]}
+    check("옛 파일은 비우지 않고 날짜만 박음",
+          (roll_attendance_day(legacy, "2026-09-08"), legacy["today_users"], legacy["date"]),
+          (False, ["1", "2"], "2026-09-08"))
+
+    # 실제 로더도 같은 일을 하는지. (규칙만 맞고 로더가 안 부르면 소용없어요)
+    atomic_json_save(cfg.ATTENDANCE_FILE,
+                     {"date": "2000-01-01", "today_count": 5, "today_users": ["9"],
+                      "reward_amount": 200, "user_stats": {}})
+    check("_load_attendance가 실제로 넘겨줌", eco._load_attendance()["today_users"], [])
+
 
 # ============================================================
 if __name__ == "__main__":

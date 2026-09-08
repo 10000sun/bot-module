@@ -160,6 +160,37 @@ class TransferAmountModal(discord.ui.Modal, title="💸 송금"):
             print(f"❗ [우클릭 송금] 오류 안내 전송 실패: {e}")
 
 
+def roll_attendance_day(data: dict, today: str) -> bool:
+    """날짜가 바뀌었으면 오늘 명단을 비웁니다. 실제로 비웠으면 True.
+
+    🐛 [버그 수정] 오늘 명단을 지우는 건 **자정 00:00 루프뿐**이었어요. 그런데 그 시각에
+    봇이 꺼져 있으면(재시작, PC 종료, 정전) 그 회차는 그냥 지나갑니다. tasks.loop은
+    놓친 회차를 나중에 따라잡지 않아요.
+
+    그러면 `today_users`에 **어제 명단이 그대로 남습니다.** 어제 출석한 사람 전원이
+    하루 종일 "❌ 이미 오늘 출석 체크를 하셨어요"를 보게 돼요. 매일 도는 다른 루프들과
+    달리 이건 **못 받은 사람이 생기는** 쪽이라 문의로 돌아옵니다. 게다가 봇을 껐다 켜는
+    건 납품한 서버에서 가장 흔한 일이에요.
+
+    이제 파일에 날짜를 같이 적고, 읽을 때마다 오늘 것인지 봅니다. 루프는 그대로 두되
+    (자정에 바로 비워지는 게 보기 좋으니까) 루프가 못 돌아도 첫 `/출석`에서 넘어가요.
+
+    📌 날짜 칸이 아예 없는 **옛 파일**은 비우지 않고 날짜만 박습니다. 언제 쓰인 명단인지
+       알 수 없는데 지워버리면, 오늘 이미 출석한 사람이 한 번 더 받을 수 있어요.
+       이 프로젝트는 그런 자리에서 **재화가 복사되지 않는 쪽**으로 기울입니다.
+       (한 번 손해 보는 쪽이 한 번 복사되는 쪽보다 낫습니다)
+    """
+    if "date" not in data:
+        data["date"] = today
+        return False
+    if data["date"] == today:
+        return False
+    data["date"] = today
+    data["today_count"] = 0
+    data["today_users"] = []
+    return True
+
+
 class ChunsikEconomy(commands.Cog):
     """JSON 자동 생성, 상점주인 ID 검증, 매일 자정 리셋이 포함된 경제 및 출석 시스템"""
     
@@ -265,6 +296,7 @@ class ChunsikEconomy(commands.Cog):
         data.setdefault("today_users", [])
         data.setdefault("reward_amount", 200)
         data.setdefault("user_stats", {})
+        roll_attendance_day(data, dt.datetime.now(KST).date().isoformat())
         return data
 
     def _save_attendance(self, data: dict):
@@ -299,6 +331,9 @@ class ChunsikEconomy(commands.Cog):
             data = self._load_attendance()
 
             # 오늘 출석한 인원수와 명단을 초기화 (누적 횟수 및 보상 설정값은 보존)
+            # 📅 날짜도 같이 박습니다. 이게 있어야 이 루프를 놓친 날에도 첫 `/출석`이
+            #    스스로 넘어가요. (roll_attendance_day 설명 참고)
+            data["date"] = dt.datetime.now(KST).date().isoformat()
             data["today_count"] = 0
             data["today_users"] = []
 
