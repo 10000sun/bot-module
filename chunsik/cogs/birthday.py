@@ -210,13 +210,17 @@ class ChunsikBirthday(commands.Cog):
                     
                     # 💌 N번째 생일 계산 로직
                     birth_year = info.get("year")
+                    # 🧵 "스레드에서 축하해 주세요"는 **스레드를 실제로 만든 뒤에만** 맞는 말이에요.
+                    #    그래서 본문과 그 안내를 나눠 둡니다. (아래 create_thread 참고)
+                    thread_invite = "\n모두 아래 마련된 스레드에서 축하 인사를 건네보세요! 🎂✨"
                     if birth_year:
                         nth_birthday = current_year - birth_year
                         title_text = f"🎉 HAPPY {nth_birthday}TH BIRTHDAY! 🎉"
-                        desc_text = f"오늘은 **{member.mention}** 님의 **{nth_birthday}번째** 생일이에요!\n모두 아래 마련된 스레드에서 축하 인사를 건네보세요! 🎂✨"
+                        base_desc = f"오늘은 **{member.mention}** 님의 **{nth_birthday}번째** 생일이에요!"
                     else:
                         title_text = "🎉 HAPPY BIRTHDAY! 🎉"
-                        desc_text = f"오늘은 **{member.mention}** 님의 생일이에요!\n모두 아래 마련된 스레드에서 축하 인사를 건네보세요! 🎂✨"
+                        base_desc = f"오늘은 **{member.mention}** 님의 생일이에요!"
+                    desc_text = base_desc + thread_invite
                     
                     # 생일 알림 임베드 구축
                     embed = discord.Embed(
@@ -253,7 +257,27 @@ class ChunsikBirthday(commands.Cog):
                         
                         # 2. 전송한 메시지 하단에 [자동 스레드 개설]
                         thread_name = f"🎂 {member.display_name}님의 생일을 축하해 주세요!"
-                        await msg.create_thread(name=thread_name, auto_archive_duration=1440)
+                        try:
+                            await msg.create_thread(name=thread_name, auto_archive_duration=1440)
+                        except Exception as thread_err:
+                            # 🐛 [버그 수정] 스레드 개설은 '공개 스레드 만들기' 권한이 있어야 해요.
+                            #    권한이 없으면 예전엔 알림 전체가 실패한 것처럼 콘솔에 찍히고,
+                            #    정작 올라간 축하 메세지는 **"아래 마련된 스레드에서 축하해 주세요"**
+                            #    라고 안내한 채 남았습니다. 스레드가 없는데요.
+                            #    매년·매 생일마다 반복되고 관리자는 콘솔 한 줄로만 알 수 있어요.
+                            #    안내를 지우고 무엇이 모자란지 그 자리에 적습니다.
+                            print(f"⚠️ [생일 알림] 스레드를 못 만들었어요 ({guild.name}): "
+                                  f"{type(thread_err).__name__}: {thread_err}")
+                            embed.description = base_desc
+                            embed.add_field(
+                                name="🧵 스레드는 못 만들었어요",
+                                value="봇에게 이 채널의 **공개 스레드 만들기** 권한을 주면 "
+                                      "다음부터 축하 스레드가 같이 열려요.",
+                                inline=False)
+                            try:
+                                await msg.edit(embed=embed)
+                            except Exception:
+                                pass
                         
                     except Exception as e:
                         print(f"생일 알림 발송 에러 ({guild.name}): {e}")
