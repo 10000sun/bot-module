@@ -1,4 +1,11 @@
-"""ChunsikWiki — 멤버 위키(소개/취미/MBTI 등) 등록·조회."""
+"""ChunsikWiki — 멤버 위키(소개/취미/MBTI 등) 등록·조회.
+
+🗣️ [말투] 이 코그만 **반말**로 말하고 있었어요("등록됐어!", "위키 정보가 없어!").
+   나머지 스무 개 코그는 전부 존댓말(~어요/~해요)이라, 같은 봇인데 위키를 쓸 때만
+   갑자기 말투가 바뀌었습니다. 원본 봇에서 옮겨오며 남은 자리예요.
+   납품물이라 더 눈에 띕니다 — 클라이언트 입장에선 고장이나 미완성으로 보여요.
+   문구 일곱 개를 존댓말로 맞췄고, `check_modules`의 '말투' 검사가 지킵니다.
+"""
 
 import datetime as dt
 
@@ -132,7 +139,7 @@ class ChunsikWiki(commands.Cog):
         long_fields = [k for k in ("논란", "TMI") if len(data["wiki"][user_id][k]) > FIELD_LIMIT]
         note = (f"\n⚠️ `{'`·`'.join(long_fields)}` 항목이 {FIELD_LIMIT}자를 넘어서, 조회할 땐 뒷부분이 생략돼요."
                 if long_fields else "")
-        await interaction.followup.send(f"📚 `{member.display_name}` 위키가 등록됐어!{note}")
+        await interaction.followup.send(f"📚 `{member.display_name}` 님의 위키를 등록했어요!{note}")
 
     @wiki_group.command(name="조회", description="멤버의 위키 정보를 조회해요")
     @app_commands.describe(member="조회할 멤버")
@@ -141,7 +148,7 @@ class ChunsikWiki(commands.Cog):
         data = load_wiki()
         wiki = data.get("wiki", {})
         if user_id not in wiki:
-            await interaction.response.send_message("❌ 위키 정보가 없어!", ephemeral=True)
+            await interaction.response.send_message("❌ 아직 등록된 위키가 없어요.", ephemeral=True)
             return
 
         entry = wiki[user_id]
@@ -188,7 +195,7 @@ class ChunsikWiki(commands.Cog):
         user_id = str(member.id)
         data = load_wiki()
         if user_id not in data.get("wiki", {}):
-            await interaction.followup.send("❌ 대상 위키가 없어!", ephemeral=True)
+            await interaction.followup.send("❌ 그 멤버의 위키가 없어요. 먼저 `/위키 등록`을 해주세요.", ephemeral=True)
             return
 
         field_name = 항목.value
@@ -198,7 +205,7 @@ class ChunsikWiki(commands.Cog):
         save_wiki(data)
         note = (f"\n⚠️ {FIELD_LIMIT}자를 넘어서 조회할 땐 뒷부분이 생략돼요."
                 if len(new_value) > FIELD_LIMIT else "")
-        await interaction.followup.send(f"✅ `{member.display_name}` 의 `{field_name}` 항목이 수정됐어!{note}", ephemeral=True)
+        await interaction.followup.send(f"✅ `{member.display_name}` 님의 `{field_name}` 항목을 수정했어요!{note}", ephemeral=True)
 
     @wiki_group.command(name="삭제", description="[관리자] 해당 ID의 위키를 삭제해요")
     @app_commands.describe(user_id="삭제할 대상의 Discord ID")
@@ -214,12 +221,12 @@ class ChunsikWiki(commands.Cog):
         await interaction.response.defer()
         data = load_wiki()
         if user_id not in data.get("wiki", {}):
-            await interaction.followup.send("❌ 해당 ID의 위키가 없어!", ephemeral=True)
+            await interaction.followup.send("❌ 그 아이디로 등록된 위키가 없어요.", ephemeral=True)
             return
 
         del data["wiki"][user_id]
         save_wiki(data)
-        await interaction.followup.send(f"🗑️ `{clip(user_id, INPUT_ECHO_LIMIT)}` 의 위키가 삭제됐어!")
+        await interaction.followup.send(f"🗑️ `{clip(user_id, INPUT_ECHO_LIMIT)}` 의 위키를 지웠어요.")
 
     @wiki_group.command(name="목록", description="등록된 모든 위키 항목을 보여줘요")
     @app_commands.guild_only()
@@ -228,7 +235,7 @@ class ChunsikWiki(commands.Cog):
         data = load_wiki()
         wiki = data.get("wiki", {})
         if not wiki:
-            await interaction.followup.send("❌ 등록된 위키가 없어!", ephemeral=True)
+            await interaction.followup.send("❌ 아직 등록된 위키가 하나도 없어요.", ephemeral=True)
             return
 
         rows = []
