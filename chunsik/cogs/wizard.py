@@ -705,8 +705,16 @@ class ChunsikWizard(commands.Cog):
 
         # 💾 만든 것부터 먼저 저장합니다. 여기서 실패하면 채널은 생겼는데 지정이 안 된
         #    상태라, 그때는 `/설정 채널 …`로 손으로 이어 붙일 수 있게 그대로 알려줘요.
+        #
+        # 🔒 위에서 읽어둔 settings는 **낡았어요.** 카테고리·채널·역할을 만드느라 수십 번
+        #    네트워크를 오갔습니다(서버가 크면 몇 초씩 걸려요). 그동안 다른 관리자가
+        #    `/설정 …`이나 `/기능제어`를 썼다면 옛 snapshot을 덮어쓰면서 **그 변경이 조용히
+        #    되돌아갑니다.** 우리가 정한 칸만 지금 파일에 얹어요.
         try:
-            save_settings(settings)
+            fresh = load_settings()
+            fresh.setdefault("channels", {}).update(settings["channels"])
+            fresh.setdefault("roles", {}).update(settings["roles"])
+            save_settings(fresh)
             saved = True
         except Exception as e:
             saved = False

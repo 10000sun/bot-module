@@ -361,6 +361,118 @@ def _check_loop_guards():
     return problems
 
 
+def _check_stale_settings_write():
+    """`load_settings()` → **네트워크 왕복** → `save_settings()` 를 찾습니다.
+
+    🚨 settings.json은 "읽고 → 고치고 → 저장"이에요. 그 사이에 `await`이 끼면 왕복이
+       수백 ms~몇 초씩 걸리는데, 그동안 다른 관리자가 `/설정 …`이나 `/기능제어`를 쓰면
+       **낡은 snapshot을 덮어쓰면서 그 변경이 조용히 되돌아갑니다.**
+
+       `settings_lock`이 있긴 하지만 쓰는 곳이 두 곳뿐이고 나머지 스물몇 곳은 락 없이
+       그냥 저장해요. 그래서 락에 기대면 안 되고, **네트워크 뒤에는 다시 읽어서 우리가
+       바꾼 칸만 얹어야** 합니다. (파티 버튼·상점 매대·입장 규칙 패널이 전부 그 규칙을
+       주석으로 적어두고 지키고 있어요)
+
+    🌿 **갈래를 따라갑니다.** 줄 번호만 보고 "읽기와 저장 사이에 await이 있나"를 세면,
+       `if 삭제: 저장하고 답장 / else: 저장` 같은 모양에서 서로 다른 갈래의 await과
+       저장을 짝지어 헛짚어요. (실제로 `/아이디 공지`가 그 모양입니다)
+       `return`으로 빠져나가는 갈래는 저장까지 가지 않으므로 세지 않고, if/try처럼
+       갈라졌다 합쳐지는 자리는 **한 갈래에서라도 await이 있었으면** 있었던 것으로 봅니다.
+    """
+    problems = []
+    files = [os.path.join(CHUNSIK, f) for f in sorted(os.listdir(CHUNSIK)) if f.endswith(".py")]
+    cogs_dir = os.path.join(CHUNSIK, "cogs")
+    files += [os.path.join(cogs_dir, f) for f in sorted(os.listdir(cogs_dir)) if f.endswith(".py")]
+
+    def call_lines(nodes, name):
+        out = []
+        for node in nodes:
+            for n in ast.walk(node):
+                if isinstance(n, ast.Call) and getattr(n.func, "id", None) == name:
+                    out.append(n.lineno)
+        return sorted(out)
+
+    def await_lines(nodes):
+        out = []
+        for node in nodes:
+            for n in ast.walk(node):
+                if isinstance(n, ast.Await):
+                    out.append(n.lineno)
+        return sorted(out)
+
+    def sub_blocks(stmt):
+        """이 문장이 데리고 있는 하위 블록들과, 문장 자신의 '머리' 표현식."""
+        if isinstance(stmt, ast.If):
+            return [stmt.body, stmt.orelse], [stmt.test]
+        if isinstance(stmt, ast.Try):
+            blocks = [stmt.body] + [h.body for h in stmt.handlers] + [stmt.orelse, stmt.finalbody]
+            return blocks, []
+        if isinstance(stmt, (ast.For, ast.AsyncFor)):
+            return [stmt.body, stmt.orelse], [stmt.iter]
+        if isinstance(stmt, ast.While):
+            return [stmt.body, stmt.orelse], [stmt.test]
+        if isinstance(stmt, (ast.With, ast.AsyncWith)):
+            return [stmt.body], [item.context_expr for item in stmt.items]
+        return [], []
+
+    def walk_block(stmts, state, report):
+        """→ (블록을 지난 뒤의 상태, 이 갈래가 끝났는가)
+
+        state = (마지막으로 읽은 줄 or None, 그 뒤에 만난 await 줄 or None)
+        """
+        for stmt in stmts:
+            if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                continue    # 안쪽 함수는 따로 봅니다
+            blocks, head = sub_blocks(stmt)
+            scanned = head if blocks else [stmt]
+
+            for line in call_lines(scanned, "save_settings"):
+                loaded, awaited = state
+                if loaded is not None and awaited is not None:
+                    report(loaded, awaited, line)
+            for line in call_lines(scanned, "load_settings"):
+                state = (line, None)
+            waits = await_lines(scanned)
+            if waits and state[0] is not None and state[1] is None:
+                state = (state[0], waits[0])
+
+            if blocks:
+                after, alive = [], False
+                for block in blocks:
+                    if not block:
+                        continue
+                    ended_state, dead = walk_block(block, state, report)
+                    if not dead:
+                        after.append(ended_state)
+                        alive = True
+                if alive:
+                    # 갈래가 합쳐지는 자리 — 한 갈래에서라도 await이 있었으면 있었던 것으로.
+                    loaded = max((st[0] for st in after if st[0] is not None), default=state[0])
+                    awaited = min((st[1] for st in after if st[1] is not None), default=None)
+                    state = (loaded, awaited)
+
+            if isinstance(stmt, ast.Return):
+                return state, True
+        return state, False
+
+    for path in files:
+        rel = os.path.relpath(path, os.path.dirname(HERE))
+        with open(path, "r", encoding="utf-8") as f:
+            tree = ast.parse(f.read(), filename=path)
+        for fn_node in ast.walk(tree):
+            if not isinstance(fn_node, ast.AsyncFunctionDef):
+                continue
+
+            def report(loaded, awaited, save, _name=fn_node.name, _rel=rel):
+                problems.append(
+                    f"{_rel}:{_name}(): load_settings({loaded}줄) 뒤에 await({awaited}줄)이 끼고 "
+                    f"save_settings({save}줄) — 그 사이 다른 설정 변경이 되돌아갑니다. "
+                    f"저장 직전에 다시 읽어서 바꾼 칸만 얹으세요")
+
+            walk_block(fn_node.body, (None, None), report)
+    return problems
+
+
 def _check_backup_catch_up(bot):
     """새벽 3시를 놓친 날 백업이 스스로 따라잡는지 봅니다.
 
@@ -730,6 +842,13 @@ async def main(label, max_names):
         for problem in loop_guards:
             print(f"     - {problem}")
 
+    # 🔒 설정을 읽고 네트워크를 오간 뒤 낡은 내용으로 덮어쓰는 자리가 없는지. (정적 검사)
+    stale = _check_stale_settings_write()
+    print(f"  설정 덮어쓰기: {'✅ 낡은 채로 저장하는 곳 없음' if not stale else f'🚨 {len(stale)}건'}")
+    if stale:
+        for problem in stale:
+            print(f"     - {problem}")
+
     # 💾 새벽 3시를 놓친 날 백업이 스스로 따라잡는지. (진짜 함수를 불러봐요)
     catch_up = _check_backup_catch_up(bot)
     print(f"  백업 따라잡기: {'✅ 놓친 날 스스로 돌아요' if not catch_up else f'🚨 {len(catch_up)}건'}")
@@ -773,7 +892,7 @@ async def main(label, max_names):
     await bot.close()
 
     failed = bool(bot.failed_modules or too_long or ownership or loop_guards or role_reads
-                  or catch_up or echoes or backoff or delivery)
+                  or catch_up or stale or echoes or backoff or delivery)
 
     # 기본 실행이면 "이름을 상한까지 늘린" 검사도 자동으로 한 번 더 돌립니다.
     # (이름은 import 시점에 설명문으로 굳기 때문에 같은 프로세스에서 두 번 볼 수 없어요)

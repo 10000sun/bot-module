@@ -516,6 +516,13 @@ class ChunsikIds(commands.Cog):
                 else:
                     new_ids = [m.id for m in old_messages]
 
+                # 🔒 위에서 읽어둔 settings는 이제 **낡았어요.** 그 사이에 메세지를 열댓 번
+                #    가져오고·고치고·지우고·올렸습니다(수백 ms씩). 그동안 관리자가
+                #    `/설정 채널 …`이나 `/기능제어`를 썼다면, 옛 snapshot을 그대로 저장하는
+                #    순간 그 변경이 **조용히 되돌아갑니다.** settings_lock은 여기와 `/아이디 공지`
+                #    두 곳만 쓰고, 나머지 스물몇 곳은 락 없이 그냥 저장하거든요.
+                #    다시 읽어서 우리가 바꾼 칸만 얹습니다. (welcome의 규칙 패널과 같은 처리)
+                settings = load_settings()
                 settings["level_roster_message_ids"] = new_ids
                 save_settings(settings)
         except Exception as e:
