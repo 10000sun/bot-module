@@ -8,7 +8,7 @@ from discord.ext import commands
 
 from chunsik_config import ENABLED_MODULE_KEYS, KST
 from modules import is_active
-from chunsik_utils import ChunsikView
+from chunsik_utils import ChunsikView, add_lines_field, fit_embed
 from chunsik_settings import FEATURE_KEYS, FEATURE_LIST_TEXT, _get_role_ids, has_admin_or_role, is_super_admin, load_settings, save_settings, send_log_embed, set_all_features_enabled, set_feature_enabled
 from chunsik_names import (MAX_NAME_LENGTH, NAME_FIELDS, bot_name, currency, event_name,
                         get_names, josa, save_names, validate_name)
@@ -154,6 +154,26 @@ def _feature_choices(**params):
     if not any(params.values()):
         return lambda func: func
     return app_commands.choices(**params)
+
+
+# 🎨 `/설정 채널지정내역` 이름표 앞에 붙일 그림글자.
+#
+# ⚠️ 이건 **꾸미개일 뿐**이라 여기 없는 키가 있어도 괜찮아요. 칸 자체는
+#    `_CHANNEL_COMMANDS`/`_ROLE_COMMANDS`에서 만들어지므로 빠지지 않습니다.
+#    (예전엔 이름표 표가 곧 칸 목록이라, 새 채널을 여기 안 적으면 화면에서 사라졌어요)
+_ICONS = {
+    "attendance": "📅", "economy_log": "💰",
+    "shop_log": "🛒", "shop_board": "🛍️",
+    "stock_board": "📈", "stock_log": "📊", "closing_log": "🔔",
+    "id_log": "🆔", "id_submit": "🆔", "level_roster": "📋",
+    "role_log": "👥", "member_log": "🚪", "welcome": "👋",
+    "birthday_announce": "🎂", "birthday_log": "🎉",
+    "evashi_announce": "🎉", "scrim_log": "⚔️", "level_announce": "🎚️",
+    "settings_admin": "🔧", "ids_admin": "🆔", "shop_admin": "🛒",
+    "stock_admin": "📈", "evashi_admin": "🎉", "chronicle_admin": "📜",
+    "test_admin": "🧪", "selfrole_admin": "🎚️", "welcome_admin": "🚪",
+    "level_admin": "📊", "party_admin": "🎯", "scrim_admin": "⚔️",
+}
 
 
 class ChunsikSetting(commands.Cog):
@@ -604,31 +624,28 @@ class ChunsikSetting(commands.Cog):
         channels = settings.get("channels", {})
         roles = settings.get("roles", {})
 
-        channel_labels = {
-            "attendance": "📅 출석체크",
-            "economy_log": "💰 경제 로그",
-            "shop_log": "🛒 상점 로그",
-            "stock_board": "📈 주식 전광판",
-            "stock_log": "📊 주식 로그",
-            "closing_log": "🔔 종가 게시판",
-            "id_log": "🆔 아이디 로그",
-            "role_log": "👥 역할 로그",
-            "birthday_announce": "🎂 생일 알림",
-            "birthday_log": "🎉 생일 로그",
-            "evashi_announce": f"🎉 {event_name()} 안내",
-            "id_submit": "🆔 아이디 자동등록",
-            "level_roster": "📋 아이디 명단",
-        }
-        role_labels = {
-            "settings_admin": "🔧 설정 관리자",
-            "ids_admin": "🆔 아이디 관리자",
-            "shop_admin": "🛒 상점 관리자",
-            "stock_admin": "📈 주식 관리자",
-            "evashi_admin": f"🎉 {event_name()} 관리자",
-            "chronicle_admin": "📜 연대기 관리자",
-            "chief_role": "👑 대장 (아이디 명단용)",
-            "test_admin": "🧪 테스트 관리자",
-        }
+        # 🐛 [버그 수정] 여기엔 **손으로 적은 표**가 따로 있었어요. 그 뒤에 채널·역할이
+        #    늘면서 표는 안 따라갔고, 지정할 수 있는 채널 18개 중 5개, 역할 13개 중 6개가
+        #    **이 화면에서 통째로 빠져 있었습니다.**
+        #      · 채널: 상점 전광판 · 환영 · 입퇴장 로그 · 내전 로그 · 레벨 알림
+        #      · 역할: 셀프역할 · 입장 · 레벨 · 파티 · 내전 · 테스트(일부)
+        #    지정은 되는데 "지금 어떻게 돼 있나"를 보는 창에서만 안 보이니, 관리자는
+        #    지정해둔 걸 다시 지정하거나 빠뜨린 걸 못 찾아요. 조용히 어긋나는 종류입니다.
+        #
+        #    ⚠️ `/테스트 채널점검`도 똑같이 낡은 표를 갖고 있다가 고쳤는데(그때 "표를 두 벌
+        #    두지 않고 `/설정` 표를 빌려 쓴다"로 정리), **정작 빌려주는 쪽인 여기가** 그대로
+        #    남아 있었어요. 이제 여기도 `_CHANNEL_COMMANDS`/`_ROLE_COMMANDS`에서 만듭니다.
+        #    → 채널·역할을 새로 만들면 `/설정`에 하위 명령을 다는 순간 이 화면에도 들어와요.
+        #
+        # 🎨 이름표 앞의 그림글자만 따로 둡니다. 여기 없는 키는 하위 명령 이름을 그대로
+        #    써요 — 그림글자를 빠뜨려도 **칸이 사라지지는 않습니다.** (그게 핵심)
+        channel_labels = {key: f"{_ICONS.get(key, '•')} {name}"
+                          for name, key in self._CHANNEL_COMMANDS.items()}
+        role_labels = {key: f"{_ICONS.get(key, '•')} {name} 관리자"
+                       for name, key in self._ROLE_COMMANDS.items()}
+        # 👑 대장은 `/설정 명단 대장`으로 따로 지정하는 자리라 표에 없어요. 손으로 붙입니다.
+        #    (`/테스트 권한확인`이 같은 이유로 같은 줄을 갖고 있습니다)
+        role_labels["chief_role"] = "👑 대장 (아이디 명단용)"
 
         # 🧩 담지 않은 기능의 칸은 아예 빼요. 안 그러면 상점만 주문한 서버의 관리자가
         #    "📈 주식 전광판: ❌ 미설정"을 열 줄씩 보게 됩니다. 주문하지 않은 기능을
@@ -657,7 +674,9 @@ class ChunsikSetting(commands.Cog):
             ch_lines.append(f"{label}: {value}")
         # ⚠️ 임베드 필드는 value가 비면 디스코드가 거부해요(400). 지금 구성으로는 코어가
         #    항상 한 칸씩 데려오지만, 나중에 코어가 줄면 조용히 터지므로 막아둡니다.
-        embed.add_field(name="📁 채널 설정", value="\n".join(ch_lines) or "지정할 채널이 없어요.", inline=False)
+        # 🧮 칸 하나는 1024자예요. 채널 18줄이면 아직 여유가 있지만, 채널이 더 늘거나
+        #    "채널을 찾을 수 없음" 줄이 섞이면 넘칠 수 있어요. add_lines_field가 나눠 담습니다.
+        add_lines_field(embed, "📁 채널 설정", ch_lines, empty="지정할 채널이 없어요.")
 
         role_lines = []
         for key, label in role_labels.items():
@@ -675,10 +694,13 @@ class ChunsikSetting(commands.Cog):
             else:
                 value = "❌ 미설정"
             role_lines.append(f"{label}: {value}")
-        embed.add_field(name="🛡️ 관리자 역할 설정", value="\n".join(role_lines) or "지정할 역할이 없어요.", inline=False)
+        # 🧮 역할은 한 칸에 **여러 개**를 지정할 수 있어요. 한 기능에 역할을 여럿 달아둔
+        #    서버에서는 이 줄이 길어집니다. (채널과 달리 위쪽이 열려 있는 자리예요)
+        add_lines_field(embed, "🛡️ 관리자 역할 설정", role_lines, empty="지정할 역할이 없어요.")
 
         embed.set_footer(text="지정/변경은 /설정 채널, /설정 관리자 명령어로 가능합니다.")
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        # 칸을 각각 맞춰도 둘이 쌓이면 전체 6000자를 넘을 수 있어요.
+        await interaction.response.send_message(embed=fit_embed(embed), ephemeral=True)
 
     # ========== 🏷️ [신규] 첫 기동 이름 설정 ==========
     # 서버마다 다른 이름(재화·봇·이벤트·서버)을 관리자에게 직접 받습니다.
