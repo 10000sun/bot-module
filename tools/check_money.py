@@ -35,6 +35,7 @@ import io
 import os
 import sys
 import tempfile
+import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CHUNSIK = os.path.join(os.path.dirname(HERE), "chunsik")
@@ -107,6 +108,34 @@ def test_storage():
     check_raises("깨진 파일은 RuntimeError", lambda: safe_json_load(p, {}), RuntimeError)
     backups = [f for f in os.listdir(os.path.dirname(p)) if ".corrupt_" in f]
     check("원본을 .corrupt_ 로 백업해둠", len(backups), 1)
+
+    # 🚨 손상은 저절로 낫지 않아요. 그 파일을 읽는 모든 길(1분 tick·명령·다시 그리기)이
+    #    계속 여기로 옵니다. 읽을 때마다 사본이 새로 생기면 하루에 수백 개가 쌓여서
+    #    데이터 폴더가 파묻히고 어느 게 원본인지 알아보기 어려워져요.
+    # 이름을 "지금 시각"으로 만들면 초가 바뀌는 순간부터 사본이 계속 늘어나요.
+    # 그래서 1초 이상 벌려서도 읽어봅니다. (같은 초 안에서만 재보면 옛 코드도 통과해요)
+    for _ in range(20):
+        try:
+            safe_json_load(p, {})
+        except RuntimeError:
+            pass
+    time.sleep(1.1)
+    try:
+        safe_json_load(p, {})
+    except RuntimeError:
+        pass
+    backups = [f for f in os.listdir(os.path.dirname(p)) if ".corrupt_" in f]
+    check("여러 번, 시간을 벌려서 읽어도 사본은 그대로 1개", len(backups), 1)
+
+    # 파일이 **또 바뀌어서** 다시 깨진 건 새 사고예요. 그건 따로 남아야 합니다.
+    time.sleep(1.1)     # 수정 시각이 실제로 달라지도록 (초 단위 이름이라)
+    io.open(p, "w", encoding="utf-8").write("{또 깨진 내용")
+    try:
+        safe_json_load(p, {})
+    except RuntimeError:
+        pass
+    backups = [f for f in os.listdir(os.path.dirname(p)) if ".corrupt_" in f]
+    check("파일이 또 깨지면 그건 따로 남김", len(backups), 2)
 
     print("\n[4] 🚨 저장이 실패하면 예외를 던져야 해요")
     # 폴더 경로에 저장을 시도하면 실패합니다. (조용히 넘어가면 "성공 메세지 + 잔액 그대로")
