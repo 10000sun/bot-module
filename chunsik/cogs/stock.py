@@ -5,6 +5,7 @@ import os
 import io
 import math
 import datetime as dt
+import traceback
 from typing import Optional
 import holidays
 import discord
@@ -529,7 +530,8 @@ class ChunsikStock(commands.Cog):
                         break
 
                 if not found_stock or "price" not in stocks_dict[found_stock]:
-                    error_message = f"❌ 상장되지 않았거나 주가 정보가 없는 종목이에요: {stock_name}"
+                    error_message = ("❌ 상장되지 않았거나 주가 정보가 없는 종목이에요: "
+                                     f"{clip(stock_name, INPUT_ECHO_LIMIT)}")
                 else:
                     stock_name = found_stock
                     current_price = int(stocks_dict[stock_name]["price"])
@@ -586,8 +588,14 @@ class ChunsikStock(commands.Cog):
                                           "주식 매수", f"{stock_name} {amount}주 @{current_price:,}")
                             result = (stock_name, current_price, total_cost, economy_data[user_id])
         except Exception as e:
-            print(f"매수 중 내부 예외 발생: {e}")
-            err_text = f"❗ 매수 처리 도중 내부 오류가 터졌어요: {type(e).__name__} - {e}"
+            # 🚨 [버그 수정] 예전엔 예외 **원문**을 그대로 실어 보냈어요. `/주식 매수`는
+            #    아무나 쓰는 명령이라, 저장이 실패하면 납품 서버의 유저 화면에
+            #    `'E:\\폴더\\...\\chunsik_stocks.json'` 같은 개발 PC 폴더 구조가 그대로 뜹니다.
+            #    `/주식 포트폴리오`에서 같은 걸 고치면서 여기 형제 명령 둘은 빠졌어요.
+            #    원문은 콘솔로만 보내고, 화면에는 공용 오류 문구를 씁니다.
+            print(f"❗ 매수 중 내부 예외 발생: {type(e).__name__}: {e}")
+            traceback.print_exception(type(e), e, e.__traceback__)
+            err_text = describe_user_error(e)
             if interaction.response.is_done():
                 await interaction.followup.send(err_text, ephemeral=True)
             else:
@@ -654,7 +662,7 @@ class ChunsikStock(commands.Cog):
                         break
 
                 if not found_stock:
-                    error_message = f"❌ 상장되지 않은 종목이에요: {stock_name}"
+                    error_message = f"❌ 상장되지 않은 종목이에요: {clip(stock_name, INPUT_ECHO_LIMIT)}"
                 else:
                     stock_name = found_stock
                     user_id = str(interaction.user.id)
@@ -709,8 +717,14 @@ class ChunsikStock(commands.Cog):
                                           "주식 매도", f"{stock_name} {amount}주 @{current_price:,}")
                             result = (stock_name, current_price, total_earning, economy_data[user_id])
         except Exception as e:
-            print(f"매도 중 내부 예외 발생: {e}")
-            err_text = f"❗ 매도 처리 도중 내부 오류가 터졌어요: {type(e).__name__} - {e}"
+            # 🚨 [버그 수정] 예전엔 예외 **원문**을 그대로 실어 보냈어요. `/주식 매도`는
+            #    아무나 쓰는 명령이라, 저장이 실패하면 납품 서버의 유저 화면에
+            #    `'E:\\폴더\\...\\chunsik_stocks.json'` 같은 개발 PC 폴더 구조가 그대로 뜹니다.
+            #    `/주식 포트폴리오`에서 같은 걸 고치면서 여기 형제 명령 둘은 빠졌어요.
+            #    원문은 콘솔로만 보내고, 화면에는 공용 오류 문구를 씁니다.
+            print(f"❗ 매도 중 내부 예외 발생: {type(e).__name__}: {e}")
+            traceback.print_exception(type(e), e, e.__traceback__)
+            err_text = describe_user_error(e)
             if interaction.response.is_done():
                 await interaction.followup.send(err_text, ephemeral=True)
             else:
@@ -1003,10 +1017,14 @@ class ChunsikStock(commands.Cog):
         del stock_data["stocks"][stock_name]
         self._save_stocks(stock_data)
         
-        await interaction.response.send_message(f"🔥 **{stock_name}** 종목이 전면 상장 폐지(삭제)됐어요.", ephemeral=True)
-        
+        # ✂️ `종목`은 찾는 값이라 상한을 안 겁니다(상한이 생기기 전에 등록된 긴 이름을
+        #    지울 수 있어야 하니까요). 그런데 삭제는 이미 저장된 뒤라, 이 안내가 본문
+        #    한도를 넘으면 "예상치 못한 오류"만 뜨고 다시 해보면 "존재하지 않는 종목"이 떠요.
+        shown = clip(stock_name, INPUT_ECHO_LIMIT)
+        await interaction.response.send_message(f"🔥 **{shown}** 종목이 전면 상장 폐지(삭제)됐어요.", ephemeral=True)
+
         # 상장 폐지 로그 연동
-        await self._log_to_channel(text=f"💥 **{interaction.user.mention}** 관리자가 **[{stock_name}]** 종목을 전면 상장 폐지(삭제) 처리함.")
+        await self._log_to_channel(text=f"💥 **{interaction.user.mention}** 관리자가 **[{shown}]** 종목을 전면 상장 폐지(삭제) 처리함.")
             
         await self.update_stock_board_smart()
 
