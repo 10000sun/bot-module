@@ -732,7 +732,7 @@ class ChunsikEconomy(commands.Cog):
         # 타인 지갑 무단 조회 방어선 (상점주인이나 본인만 가능)
         if target.id != interaction.user.id and not self._is_shop_owner(interaction):
             await interaction.response.send_message(
-                "🙅‍♀️ 떽! 다른 사람의 지갑은 상점주인이나 관리자만 열어볼 수 있다구!", 
+                "🙅‍♀️ 다른 사람의 지갑은 상점주인이나 관리자만 열어볼 수 있어요.",
                 ephemeral=True
             )
             return
