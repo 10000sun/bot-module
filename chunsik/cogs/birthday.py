@@ -1,5 +1,6 @@
 """ChunsikBirthday — 생일 등록과 자정 축하 알림."""
 
+import calendar
 import datetime as dt
 import discord
 from discord import app_commands
@@ -10,6 +11,28 @@ from chunsik_alerts import report_loop_error
 from chunsik_storage import atomic_json_save_or_raise, safe_json_load
 from chunsik_settings import feature_gate, is_feature_enabled, load_settings, send_log_embed
 from chunsik_names import bot_name
+
+def birthday_matches_today(info: dict, today: dt.date) -> bool:
+    """오늘 이 사람의 생일을 축하해야 하는지 봅니다.
+
+    🐛 [버그 수정] 예전엔 `월 == 오늘의 월 and 일 == 오늘의 일`로만 봤어요. 그래서
+    **2월 29일생은 평년에 축하가 아예 안 나갔습니다.** 등록도 되고(달력에 있는 날짜라
+    `_invalid_date_message`도 통과해요) 화면에도 잘 뜨는데, 축하만 4년에 한 번 옵니다.
+    본인도 관리자도 원인을 모르는 조용한 실패라, 등록 자체를 막았던 2월 30일 부류보다
+    오히려 알아채기 어려웠어요.
+    이제 평년에는 **2월 28일**에 축하합니다. (민법의 나이 계산이 같은 날을 씁니다)
+
+    🔎 모듈 바깥에 둔 이유: 명령 안쪽 함수로 두면 검사 도구가 이 규칙을 베껴 써야 하고,
+       그러면 진짜 코드가 바뀌어도 검사는 옛 규칙을 계속 통과시킵니다.
+    """
+    month, day = info.get("month"), info.get("day")
+    if month == today.month and day == today.day:
+        return True
+    # 평년의 2월 28일 — 2월 29일생을 이 날 함께 축하해요. (윤년이면 29일에 제대로 나가요)
+    if (month, day) == (2, 29) and (today.month, today.day) == (2, 28):
+        return not calendar.isleap(today.year)
+    return False
+
 
 class ChunsikBirthday(commands.Cog):
     """봇 생일 알림 및 유저 데이터 관리 시스템 (설정 기능 분리 버전)"""
@@ -159,8 +182,6 @@ class ChunsikBirthday(commands.Cog):
 
         now = dt.datetime.now(KST)
         current_year = now.year
-        current_month = now.month
-        current_day = now.day
 
         # 🛡️ 설정/생일 파일 읽기는 손상 시 예외를 던져요. 여기서 새어나가면 루프가 영구히
         # 멈춰서 다음 해까지 생일 축하가 안 나가므로, 이번 회차만 포기하고 루프는 살려둡니다.
@@ -183,7 +204,7 @@ class ChunsikBirthday(commands.Cog):
                 if not isinstance(info, dict) or "month" not in info or "day" not in info:
                     print(f"⚠️ [생일 알림] 형식이 이상한 항목을 건너뛰었어요: {user_id} -> {info!r}")
                     continue
-                if info["month"] == current_month and info["day"] == current_day:
+                if birthday_matches_today(info, now.date()):
                     member = guild.get_member(int(user_id))
                     if not member: continue
                     
@@ -206,8 +227,15 @@ class ChunsikBirthday(commands.Cog):
                     embed.set_thumbnail(url=member.display_avatar.url)
                     embed.add_field(name="오늘의 주인공", value=f"{member.mention} ({member.display_name})", inline=True)
                     
-                    date_str = f"`{birth_year}년 {current_month}월 {current_day}일`" if birth_year else f"`{current_month}월 {current_day}일`"
+                    # 📅 오늘 날짜가 아니라 **본인이 등록한 생일**을 적어요. 2월 29일생을 평년에
+                    #    2월 28일에 축하할 때, 오늘 날짜를 쓰면 남의 생일처럼 보입니다.
+                    born_month, born_day = info["month"], info["day"]
+                    date_str = f"`{birth_year}년 {born_month}월 {born_day}일`" if birth_year else f"`{born_month}월 {born_day}일`"
                     embed.add_field(name="날짜", value=date_str, inline=True)
+                    # 평년에 2월 29일생을 하루 앞당겨 축하하는 회차예요. 안 적으면 날짜 칸과
+                    # "오늘은 …생일이에요"가 어긋나 보여서, 보는 사람이 오타로 읽습니다.
+                    if (born_month, born_day) == (2, 29) and (now.month, now.day) == (2, 28):
+                        embed.add_field(name="참고", value="올해는 2월 29일이 없어서 오늘 함께 축하해요! 🗓️", inline=False)
                     embed.set_footer(text=f"{bot_name()} 생일 알림 시스템", icon_url=self.bot.user.display_avatar.url)
                     
                     try:
