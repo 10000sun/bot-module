@@ -15,7 +15,7 @@ from chunsik_config import DATA_DIR, ID_PENDING_FILE, KST, RANKS, json_data_file
 from chunsik_storage import atomic_json_save_or_raise, safe_json_load
 from chunsik_settings import _get_role_ids, feature_gate, is_feature_enabled, load_settings, member_has_admin_or_role, save_settings, send_log_embed
 from chunsik_state import state
-from chunsik_utils import EMBED_DESC_LIMIT, EMBED_FIELD_LIMIT, INPUT_ECHO_LIMIT, KNOWN_PLATFORMS, ChunsikView, add_lines_field, clip, fit_embed, _looks_like_id_entry, _split_platform_and_id, extract_id_from_mention, find_guild_member_by_name, get_platform_candidates, next_misc_name, next_platform_name, normalize_platform, notify_log, parse_legacy_id_document, respond_modify
+from chunsik_utils import EMBED_DESC_LIMIT, EMBED_FIELD_LIMIT, INPUT_ECHO_LIMIT, KNOWN_PLATFORMS, ChunsikView, add_lines_field, clip, fit_embed, schedule_delete, split_message, _looks_like_id_entry, _split_platform_and_id, extract_id_from_mention, find_guild_member_by_name, get_platform_candidates, next_misc_name, next_platform_name, normalize_platform, notify_log, parse_legacy_id_document, respond_modify
 from chunsik_names import bot_name, josa
 
 
@@ -1268,24 +1268,56 @@ class ChunsikIds(commands.Cog):
         if allowed:
             self._save_id_pending(pending_data)
 
-        # 📨 처리 결과를 본인에게 DM으로 짧게 알려드려요 (실패해도 조용히 넘어감)
-        try:
-            lines = []
-            if registered:
-                lines.append("✅ **바로 등록됐어요**\n" + "\n".join(registered))
-            if allowed:
-                lines.append(f"🔍 플랫폼/형식이 불명확한 항목 {allowed}개는 관리자 확인 후 등록될 예정이에요.")
-            # 🙇 잘라낸 게 있으면 반드시 알려요. 조용히 버리면 "올렸는데 왜 없지"가 됩니다.
-            if skipped_segments or dropped_pending:
-                lines.append(
-                    f"⚠️ 한 번에 처리할 수 있는 양을 넘어서 **{skipped_segments + dropped_pending}개는 건너뛰었어요.**\n"
-                    f"└ 한 메세지에 {MAX_SEGMENTS_PER_MESSAGE}줄까지, 확인이 필요한 항목은 "
-                    f"{MAX_PENDING_PER_MESSAGE}개까지만 받아요. 나눠서 다시 올려주세요.\n"
-                    f"└ 예전 목록을 통째로 옮기는 거라면 관리자에게 `/아이디 가져오기`를 부탁하세요.")
-            if lines:
-                await message.author.send(f"({message.guild.name}) 아이디 등록 처리 결과예요.\n\n" + "\n\n".join(lines))
-        except Exception:
-            pass
+        # 📨 처리 결과를 본인에게 알려드려요.
+        #
+        # 🐛 [버그] 예전엔 DM만 보내고 실패하면 **조용히 넘어갔어요.** 그런데 바로 아래에서
+        #    원본 메세지를 지웁니다. DM을 막아둔 사람에겐(서버 멤버 DM 차단은 흔한 설정이에요)
+        #    "아이디를 적었더니 글이 사라지고 아무 일도 안 일어났다"가 됩니다. 등록이 됐는지도
+        #    모르고, 건너뛴 항목이 있었다는 안내까지 같이 사라져요.
+        #
+        # ✂️ 그리고 한 메세지로 MAX_SEGMENTS_PER_MESSAGE 줄까지 받으니, 아이디가 길면 결과
+        #    문구가 본문 한도(2,000자)를 넘길 수 있어요. 그러면 DM을 열어둔 사람도 전송이
+        #    거부돼서 아무것도 못 받습니다. 그래서 나눠 보냅니다.
+        lines = []
+        if registered:
+            lines.append("✅ **바로 등록됐어요**\n" + "\n".join(registered))
+        if allowed:
+            lines.append(f"🔍 플랫폼/형식이 불명확한 항목 {allowed}개는 관리자 확인 후 등록될 예정이에요.")
+        # 🙇 잘라낸 게 있으면 반드시 알려요. 조용히 버리면 "올렸는데 왜 없지"가 됩니다.
+        if skipped_segments or dropped_pending:
+            lines.append(
+                f"⚠️ 한 번에 처리할 수 있는 양을 넘어서 **{skipped_segments + dropped_pending}개는 건너뛰었어요.**\n"
+                f"└ 한 메세지에 {MAX_SEGMENTS_PER_MESSAGE}줄까지, 확인이 필요한 항목은 "
+                f"{MAX_PENDING_PER_MESSAGE}개까지만 받아요. 나눠서 다시 올려주세요.\n"
+                f"└ 예전 목록을 통째로 옮기는 거라면 관리자에게 `/아이디 가져오기`를 부탁하세요.")
+
+        if lines:
+            body = f"({message.guild.name}) 아이디 등록 처리 결과예요.\n\n" + "\n\n".join(lines)
+            dm_ok = True
+            try:
+                for part in split_message(body):
+                    await message.author.send(part)
+            except Exception as e:
+                dm_ok = False
+                print(f"⚠️ [아이디] 결과 DM 전송 실패 (유저 {message.author.id}): "
+                      f"{type(e).__name__}: {e}")
+            if not dm_ok:
+                # 📢 DM이 막혀 있으면 채널에 짧게 남깁니다. 개수만 알려요 — 아이디를 그대로
+                #    다시 적으면 방금 지운 원본을 되살리는 꼴이니까요. 자동등록 채널은 깨끗하게
+                #    두는 자리라 잠시 뒤 사라지게 합니다.
+                counts = [f"등록 {len(registered)}건"]
+                if allowed:
+                    counts.append(f"관리자 확인 대기 {allowed}건")
+                if skipped_segments or dropped_pending:
+                    counts.append(f"**건너뜀 {skipped_segments + dropped_pending}건**")
+                try:
+                    schedule_delete(await message.channel.send(
+                        f"📬 {message.author.mention} DM이 막혀 있어서 여기로 알려드려요 — "
+                        f"{' · '.join(counts)}.\n"
+                        f"└ 자세한 내역은 `/아이디 조회`로 확인하실 수 있어요. "
+                        f"(이 안내는 잠시 뒤 사라져요)"), 60)
+                except Exception as e:
+                    print(f"⚠️ [아이디] 결과 채널 안내도 실패: {type(e).__name__}: {e}")
 
         # 🧹 원본 메세지는 처리 후 삭제 (채널을 깔끔하게 유지)
         try:
