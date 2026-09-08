@@ -16,6 +16,22 @@ from chunsik_utils import chunk_lines, mention_lines
 from chunsik_settings import has_admin_or_role, load_settings, save_settings, send_log_embed
 from chunsik_names import bot_name, currency, event_name, josa
 
+# ⏳ 이벤트 창이 열려 있을 수 있는 최대 시간. 12시간이에요.
+#
+# 🐛 [버그 수정] 예전엔 `지속시간초 <= 0`만 막고 위쪽은 아무 상한이 없었어요.
+#    큰 숫자를 넣으면 `now + dt.timedelta(seconds=값)`이 **OverflowError**를 냅니다.
+#    그 계산이 하필 **하루 두 번 도는 루프 안**이라, 그때부터 이벤트가 열릴 때마다
+#    루프가 죽어요 — 즉 **그 뒤로 이벤트가 영영 안 열립니다.**
+#    (스누즈·주가 변동값에서 겪은 것과 같은 부류 — 큰 숫자가 안내 대신 예외로 샙니다)
+#
+# 12시간인 이유: 이벤트는 00:21과 12:21에 열려요. 그보다 길게 잡으면 창이 다음 회차와
+# 겹쳐서, 앞 회차를 닫는 예약이 뒤 회차의 참가자까지 같이 마감해 버립니다.
+#
+# 📌 클래스 속성이 아니라 **모듈 수준**에 두는 이유: 슬래시 명령의 `Range`는 데코레이터라
+#    클래스 본문이 만들어지는 시점에 읽히는데, 그때는 클래스 속성을 못 봅니다.
+MAX_WINDOW_SECONDS = 12 * 60 * 60
+
+
 class ChunsikGames(commands.Cog):
     """하이로우 등 미니게임 시스템"""
 
@@ -56,6 +72,13 @@ class ChunsikGames(commands.Cog):
         evashi = settings.get("evashi", {})
         for k, v in defaults.items():
             evashi.setdefault(k, v)
+        # 🛡️ 상한이 생기기 전에 저장된 값(또는 손으로 고친 값) 대비. 읽는 자리에서 조입니다.
+        #    여기서 막지 않으면 루프가 매 회차 죽어요.
+        try:
+            seconds = int(evashi["window_seconds"])
+        except (TypeError, ValueError):
+            seconds = defaults["window_seconds"]
+        evashi["window_seconds"] = max(1, min(seconds, MAX_WINDOW_SECONDS))
         return evashi
 
     def _save_evashi_settings(self, evashi: dict):
@@ -251,7 +274,7 @@ class ChunsikGames(commands.Cog):
         선착순인원: Optional[int] = None,
         선착순금액: Optional[int] = None,
         나머지금액: Optional[int] = None,
-        지속시간초: Optional[int] = None,
+        지속시간초: Optional[app_commands.Range[int, 1, MAX_WINDOW_SECONDS]] = None,
     ):
         if not self._is_evashi_admin(interaction):
             return await interaction.response.send_message(f"⛔ 권한이 없어요. {event_name()} 관리자만 설정할 수 있어요.", ephemeral=True)
@@ -282,7 +305,10 @@ class ChunsikGames(commands.Cog):
             evashi["rest_amount"] = 나머지금액
             logs.append(f"나머지 금액: {나머지금액:,} {currency()}")
         if 지속시간초 is not None:
-            if 지속시간초 <= 0: return await interaction.response.send_message("❌ 지속시간초는 1 이상이어야 해요.", ephemeral=True)
+            # Range가 입력창에서 이미 막지만, 옛 클라이언트·마이그레이션 대비로 한 번 더 봅니다.
+            if not (1 <= 지속시간초 <= MAX_WINDOW_SECONDS):
+                return await interaction.response.send_message(
+                    f"❌ 지속시간초는 1 ~ {MAX_WINDOW_SECONDS:,}초(12시간) 사이여야 해요.", ephemeral=True)
             evashi["window_seconds"] = 지속시간초
             logs.append(f"지속시간: {지속시간초}초")
 
