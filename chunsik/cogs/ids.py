@@ -15,7 +15,7 @@ from chunsik_config import DATA_DIR, ID_PENDING_FILE, KST, RANKS, json_data_file
 from chunsik_storage import atomic_json_save_or_raise, safe_json_load
 from chunsik_settings import _get_role_ids, feature_gate, is_feature_enabled, load_settings, member_has_admin_or_role, save_settings, send_log_embed
 from chunsik_state import state
-from chunsik_utils import EMBED_DESC_LIMIT, EMBED_FIELD_LIMIT, INPUT_ECHO_LIMIT, KNOWN_PLATFORMS, ChunsikView, clip, _looks_like_id_entry, _split_platform_and_id, extract_id_from_mention, find_guild_member_by_name, get_platform_candidates, next_misc_name, next_platform_name, normalize_platform, notify_log, parse_legacy_id_document, respond_modify
+from chunsik_utils import EMBED_DESC_LIMIT, EMBED_FIELD_LIMIT, INPUT_ECHO_LIMIT, KNOWN_PLATFORMS, ChunsikView, add_lines_field, clip, fit_embed, _looks_like_id_entry, _split_platform_and_id, extract_id_from_mention, find_guild_member_by_name, get_platform_candidates, next_misc_name, next_platform_name, normalize_platform, notify_log, parse_legacy_id_document, respond_modify
 from chunsik_names import bot_name, josa
 
 
@@ -244,6 +244,62 @@ class UnmatchedResolveView(ChunsikView):
             desc += f"\n\n여전히 연결 안 된 {len(self.still_unmatched)}명: {names}"
         embed = discord.Embed(title="📦 아이디 목록 일괄 가져오기 (연결 완료)", description=desc[:4000], color=discord.Color.orange())
         await interaction.response.edit_message(embed=embed, view=confirm_view)
+
+class DuplicateCleanConfirmView(ChunsikView):
+    """`/아이디 중복정리` — 실제로 지우기 전에 대상을 보여주고 한 번 더 확인받는 버튼.
+
+    아이디 삭제는 되돌릴 방법이 백업 복원밖에 없어요. `/지갑청소`가 같은 이유로 이미
+    이렇게 하고 있는데 여기만 빠져 있었습니다. (economy의 `WalletCleanConfirmView`와
+    같은 모양이에요 — 코그끼리 import하지 않는 규칙이라 각자 들고 있습니다)
+    """
+
+    def __init__(self, cog, plan: dict, author_id: int):
+        super().__init__(timeout=120)
+        self.cog = cog
+        self.plan = plan            # {유저ID: [지울 키, ...]}
+        self.author_id = author_id
+        self.processing = False
+        self.message = None
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.author_id:
+            await interaction.response.send_message(
+                "🙅‍♀️ 이 버튼은 명령을 실행한 관리자만 사용할 수 있어요.", ephemeral=True)
+            return False
+        return True
+
+    async def on_timeout(self):
+        # ⌛ 확인하지 않고 방치된 삭제 버튼이 한참 뒤에 눌리는 일이 없도록 잠가둬요.
+        if self.processing or not self.message:
+            return
+        for child in self.children:
+            child.disabled = True
+        try:
+            await self.message.edit(
+                content="⌛ 시간이 지나 중복정리를 취소했어요. 아무것도 지우지 않았어요.",
+                embed=None, view=self)
+        except Exception:
+            pass
+
+    @discord.ui.button(label="🧹 확인했어요, 삭제할게요", style=discord.ButtonStyle.danger)
+    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.processing:
+            return await interaction.response.send_message("⏳ 이미 처리 중이에요!", ephemeral=True)
+        self.processing = True
+        for child in self.children:
+            child.disabled = True
+        await interaction.response.edit_message(view=self)
+        self.stop()
+        await self.cog.apply_duplicate_clean(interaction, self.plan)
+
+    @discord.ui.button(label="취소", style=discord.ButtonStyle.secondary)
+    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.processing:
+            return await interaction.response.send_message("⏳ 이미 처리 중이라 취소할 수 없어요.", ephemeral=True)
+        self.stop()
+        await interaction.response.edit_message(
+            content="🚫 중복정리를 취소했어요. 아무것도 지우지 않았어요.", embed=None, view=None)
+
 
 class ChunsikIds(commands.Cog):
     """아이디 검색, 로깅 등 봇의 핵심 유틸리티 기능"""
@@ -638,23 +694,21 @@ class ChunsikIds(commands.Cog):
             ephemeral=True
         )
 
-    @id_group.command(name="중복정리", description="[관리자] 같은 아이디가 실수로 중복 등록된 걸 한 번에 정리해요.")
-    @app_commands.guild_only()
-    async def cleanup_duplicate_ids(self, interaction: discord.Interaction):
-        member = interaction.guild.get_member(interaction.user.id)
-        if not member or not self.has_permission(member):
-            return await interaction.response.send_message("❌ 권한이 없어요! 관리자에게 역할을 받아주세요.", ephemeral=True)
+    @staticmethod
+    def find_duplicate_ids(guild_data: dict) -> dict:
+        """중복으로 볼 항목을 **찾기만** 합니다. → `{유저ID: [지울 키, ...]}`
 
-        await interaction.response.defer(ephemeral=True)
-        gid = str(interaction.guild.id)
-        guild_data = state.user_ids.get(gid, {})
+        🚨 [버그 수정] 예전엔 찾자마자 그 자리에서 지웠어요. 되돌릴 방법은 백업 복원뿐인데
+        **뭘 지우는지 보여주지도, 물어보지도 않았습니다.** 끝난 뒤에 "N건 삭제했어요"만 떠요.
+        `/지갑청소`는 같은 무게라고 보고 미리보기 + 확인 버튼을 두고 있는데 여기만 없었습니다.
 
-        removed_count = 0
-        affected_people = 0
+        게다가 아래 '기타N' 규칙은 **추측**이에요. 값 문자열이 서로 달라서 단순 비교로는
+        못 잡는 옛 형식을 모양으로 알아보는 건데, 모양이 우연히 맞으면 멀쩡한 항목도 걸립니다.
+        추측으로 지우는 것일수록 먼저 보여줘야 해요.
 
-        # 🐛 [대폭 강화] 예전엔 "같은 플랫폼 계열(Riot, Riot2...)"일 때만 중복으로 봤는데,
-        # 그거보다 훨씬 많은 중복이 있었어요. 이제는 플랫폼 이름이 무엇이든 상관없이,
-        # 같은 사람 안에서 "값(아이디)이 완전히 똑같으면" 전부 중복으로 간주하고 정리해요.
+        찾기와 지우기를 나눠두면 검사 도구가 규칙만 따로 확인할 수도 있습니다.
+        """
+        plan = {}
         for uid, platforms in guild_data.items():
             seen_values = {}  # 정리된 값(공백 제거) -> 맨 처음 등록된 키
             to_delete = []
@@ -666,8 +720,8 @@ class ChunsikIds(commands.Cog):
                 else:
                     seen_values[norm_val] = key
 
-            # 🗑️ [신규] "기타N": "라벨 : 값" 형태로 예전 방식으로 저장된 항목이, 나중에
-            # 같은 정보가 "라벨": "값"으로 깔끔하게 따로 등록되면서 남긴 레거시 중복도 정리해요.
+            # 🗑️ "기타N": "라벨 : 값" 형태로 예전 방식으로 저장된 항목이, 나중에 같은 정보가
+            # "라벨": "값"으로 깔끔하게 따로 등록되면서 남긴 레거시 중복도 정리해요.
             # (값 문자열 자체는 서로 달라서("라벨 : 값" vs "값") 위 검사로는 못 잡혀요)
             for key in list(platforms.keys()):
                 if not key.startswith("기타"):
@@ -675,31 +729,93 @@ class ChunsikIds(commands.Cog):
                 val = platforms.get(key)
                 if not isinstance(val, str) or " : " not in val:
                     continue
-                embedded_label, _, embedded_value = val.partition(" : ")
+                _label, _, embedded_value = val.partition(" : ")
                 embedded_value = embedded_value.strip()
+                if not embedded_value:
+                    continue
                 for other_key, other_val in platforms.items():
                     if other_key == key:
                         continue
-                    if isinstance(other_val, str) and other_val.strip() == embedded_value and embedded_value:
+                    if isinstance(other_val, str) and other_val.strip() == embedded_value:
                         if key not in to_delete:
                             to_delete.append(key)
                         break
 
-            for key in to_delete:
-                del platforms[key]
-                removed_count += 1
             if to_delete:
+                plan[uid] = to_delete
+        return plan
+
+    @id_group.command(name="중복정리", description="[관리자] 같은 아이디가 실수로 중복 등록된 걸 한 번에 정리해요.")
+    @app_commands.guild_only()
+    async def cleanup_duplicate_ids(self, interaction: discord.Interaction):
+        member = interaction.guild.get_member(interaction.user.id)
+        if not member or not self.has_permission(member):
+            return await interaction.response.send_message("❌ 권한이 없어요! 관리자에게 역할을 받아주세요.", ephemeral=True)
+
+        await interaction.response.defer(ephemeral=True)
+        gid = str(interaction.guild.id)
+        guild_data = state.user_ids.get(gid, {})
+
+        plan = self.find_duplicate_ids(guild_data)
+        if not plan:
+            return await interaction.followup.send("✨ 중복된 항목이 없었어요!", ephemeral=True)
+
+        removed_count = sum(len(keys) for keys in plan.values())
+        lines = []
+        for uid, keys in plan.items():
+            for key in keys:
+                value = clip(str(guild_data.get(uid, {}).get(key, "")), INPUT_ECHO_LIMIT)
+                lines.append(f"• <@{uid}> — `{key}`: `{value}`")
+
+        embed = discord.Embed(
+            title="🧹 아이디 중복정리 — 정말 지울까요?",
+            description=(f"**{len(plan)}명**에게서 중복 항목 **{removed_count}건**을 지웁니다.\n\n"
+                         "⚠️ 한 번 지우면 **백업 복원 말고는 되돌릴 방법이 없어요.**\n"
+                         "└ `기타N` 항목은 **모양으로 알아본 추측**이라 특히 한 번 봐주세요."),
+            color=0xE67E22,
+        )
+        add_lines_field(embed, "지울 항목", lines, empty="없음")
+        embed.set_footer(text="2분 안에 선택하지 않으면 자동으로 취소돼요.")
+
+        view = DuplicateCleanConfirmView(self, plan, interaction.user.id)
+        view.message = await interaction.followup.send(embed=fit_embed(embed), view=view,
+                                                       ephemeral=True, wait=True)
+
+    async def apply_duplicate_clean(self, interaction: discord.Interaction, plan: dict):
+        """확인 버튼을 누른 뒤 실제로 지웁니다.
+
+        미리보기와 확인 사이에 등록이 더 있었을 수 있어요. **그때 찾아둔 키만** 지우고,
+        그 사이에 값이 바뀐 항목은 건드리지 않습니다.
+        """
+        gid = str(interaction.guild.id)
+        guild_data = state.user_ids.get(gid, {})
+
+        removed_count = 0
+        affected_people = 0
+
+        for uid, keys in plan.items():
+            platforms = guild_data.get(uid)
+            if not platforms:
+                continue        # 그 사이에 그 사람 기록이 통째로 사라졌어요
+            gone = 0
+            for key in keys:
+                if key in platforms:
+                    del platforms[key]
+                    gone += 1
+            removed_count += gone
+            if gone:
                 affected_people += 1
 
-        if removed_count:
-            state.save()
-            await self._refresh_id_roster(interaction.guild)
-            await interaction.followup.send(
-                f"🧹 중복 정리 완료! **{affected_people}명**에게서 중복 항목 **{removed_count}건**을 삭제했어요. 명단도 갱신했어요.",
-                ephemeral=True
-            )
-        else:
-            await interaction.followup.send("✨ 중복된 항목이 없었어요!", ephemeral=True)
+        if not removed_count:
+            return await interaction.followup.send(
+                "ℹ️ 그 사이에 이미 정리됐는지, 지울 게 남아 있지 않았어요.", ephemeral=True)
+
+        state.save()
+        await self._refresh_id_roster(interaction.guild)
+        await interaction.followup.send(
+            f"🧹 중복 정리 완료! **{affected_people}명**에게서 중복 항목 **{removed_count}건**을 삭제했어요. 명단도 갱신했어요.",
+            ephemeral=True
+        )
 
     # ========== 📦 [신규] 기존 아이디 목록 문서 일괄 가져오기 ==========
     @id_group.command(name="가져오기", description="[관리자] 예전에 쓰던 아이디 목록 게시글을 .txt 파일로 올리면 한 번에 등록해요.")
