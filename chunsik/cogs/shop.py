@@ -13,7 +13,8 @@ from chunsik_settings import feature_gate, has_admin_or_role, send_log_embed
 from chunsik_state import record_ledger
 from chunsik_utils import (EMBED_DESC_LIMIT, EMBED_FIELD_LIMIT, EMBED_TITLE_LIMIT,
                           INPUT_ECHO_LIMIT, ChunsikView,
-                          clip, dangerous_permission, fit_embed, name_choices,
+                          add_lines_field, clip, dangerous_permission, fit_embed,
+                          name_choices,
                           report_broken_transaction, role_reject_reason, schedule_delete)
 from chunsik_names import currency, josa
 
@@ -1833,15 +1834,15 @@ class ChunsikShop(commands.Cog):
         embed.add_field(name="♻️ 총 되팔기 환급", value=f"{sell_total:,} {currency()}", inline=True)
         embed.add_field(name="✅ 순 정산액", value=f"**{net_total:,} {currency()}**", inline=True)
 
-        if per_board:
-            lines = []
-            for ch_id, stat in per_board.items():
-                net = stat["buy"] - stat["sell"]
-                lines.append(f"<#{ch_id}> · 구매 {stat['buy']:,} / 되팔기 {stat['sell']:,} / 순액 {net:,} {currency()}")
-            embed.add_field(name="🏪 매대별 상세", value="\n".join(lines), inline=False)
-        else:
-            embed.add_field(name="🏪 매대별 상세", value="해당 월 거래 내역이 없어요.", inline=False)
+        lines = []
+        for ch_id, stat in per_board.items():
+            net = stat["buy"] - stat["sell"]
+            lines.append(f"<#{ch_id}> · 구매 {stat['buy']:,} / 되팔기 {stat['sell']:,} / 순액 {net:,} {currency()}")
+        # 🧮 매대는 **채널마다 하나씩** 만들 수 있어서 개수에 상한이 없어요. 한 줄이 70자쯤이라
+        #    매대가 15개만 넘어가도 칸 하나(1024자)를 넘겨 **정산 화면이 통째로 안 뜹니다.**
+        #    상품 개수(MAX_BOARD_ITEMS)는 막았는데 매대 개수 쪽은 열려 있는 자리예요.
+        add_lines_field(embed, "🏪 매대별 상세", lines, empty="해당 월 거래 내역이 없어요.")
 
         # 👀 매출 숫자가 아무 채널에나 공개로 남지 않도록, 조회한 관리자에게만 보여줍니다.
         # (매대 채널 밖에서도 편하게 조회할 수 있게 하려는 거예요)
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await interaction.response.send_message(embed=fit_embed(embed), ephemeral=True)

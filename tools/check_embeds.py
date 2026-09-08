@@ -66,7 +66,7 @@ os.environ["CHUNSIK_DATA_DIR"] = tempfile.mkdtemp()
 import discord  # noqa: E402
 from chunsik_config import KST  # noqa: E402
 from chunsik_names import currency  # noqa: E402
-from chunsik_utils import chunk_lines, fit_embed, mention_lines  # noqa: E402
+from chunsik_utils import add_lines_field, chunk_lines, fit_embed, mention_lines  # noqa: E402
 
 # 📏 디스코드 임베드 한도. chunsik_utils에도 같은 값이 있지만, 검사 도구가 검사 대상의
 #    상수를 그대로 가져다 쓰면 그 값이 틀렸을 때 둘 다 같이 틀려서 아무것도 못 잡아요.
@@ -438,6 +438,25 @@ def check_diagnostics(diag_mod, setting_mod):
               mark="외 ")
 
 
+def check_settlement(shop_mod):
+    print("\n[12] 📊 상점 정산 — 매대가 여러 개일 때")
+    # 🚨 매대는 **채널마다 하나씩** 만들 수 있어서 개수에 상한이 없어요. 한 줄이 70자쯤이라
+    #    매대가 15개만 넘어가도 칸 하나(1024자)를 넘겨 정산 화면이 통째로 안 뜹니다.
+    #    (상품 개수는 MAX_BOARD_ITEMS로 막았는데 매대 개수 쪽은 열려 있어요)
+    def build(board_count):
+        embed = discord.Embed(title=_fill(30), description=_fill(80), color=0x5ce6b4)
+        embed.add_field(name="💰 총 구매 매출", value="1,000,000", inline=True)
+        embed.add_field(name="♻️ 총 되팔기 환급", value="500,000", inline=True)
+        embed.add_field(name="✅ 순 정산액", value="**500,000**", inline=True)
+        lines = [f"<#{800000000000000000 + i}> · 구매 1,234,567 / 되팔기 890,123 / 순액 344,444 원"
+                 for i in range(board_count)]
+        add_lines_field(embed, "🏪 매대별 상세", lines, empty="해당 월 거래 내역이 없어요.")
+        return fit_embed(embed)
+
+    for count in (0, 5, 30, 100):
+        measure(f"상점 정산 (매대 {count}개)", build(count))
+
+
 def check_log_embeds():
     print("\n[11] 🧾 로그 임베드 — 길이를 알 수 없는 값이 들어올 때")
     # 🚨 로그는 마흔 몇 곳에서 부르고, 이름·아이디·명단처럼 **길이를 알 수 없는 값**이
@@ -494,6 +513,7 @@ def main():
     check_roster(ids_mod)
     check_snooze(snooze_mod)
     check_diagnostics(diag_mod, setting_mod)
+    check_settlement(shop_mod)
     check_log_embeds()
 
     print("\n" + "=" * 62)
