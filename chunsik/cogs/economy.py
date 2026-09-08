@@ -191,6 +191,36 @@ def roll_attendance_day(data: dict, today: str) -> bool:
     return True
 
 
+# 🧊 멤버 목록이 충분히 채워졌다고 볼 최소 비율.
+#    디스코드는 서버 멤버를 기동할 때 통째로 받아오는데(chunking), 그게 끝나기 전이나
+#    재연결 직후에는 캐시가 덜 찬 상태일 수 있어요.
+MEMBER_CACHE_READY_RATIO = 0.9
+
+
+def member_cache_incomplete(guild) -> bool:
+    """멤버 목록이 아직 덜 불러와진 것 같으면 True.
+
+    🚨 [왜 필요한가] `/지갑청소`는 **`guild.get_member(id)`가 None이면 "서버를 나간 사람"**
+    으로 보고 그 지갑을 지웁니다. 그런데 그 판단의 근거가 **캐시**예요. 캐시가 덜 찬
+    순간에 이 명령을 쓰면 **멀쩡히 서버에 있는 사람들의 지갑이 통째로 지워집니다.**
+    되돌릴 방법은 백업 복원뿐이고요.
+
+    실제로 밟기 쉬운 길은 아니에요(멤버 인텐트가 켜져 있으면 기동할 때 한 번에 받아옵니다).
+    다만 **틀렸을 때 치르는 대가가 너무 큰** 자리라, 싸게 막을 수 있으면 막습니다.
+    `member_count`(서버가 알려주는 진짜 인원)와 캐시에 들어온 수를 비교해요.
+    """
+    total = getattr(guild, "member_count", None)
+    if not total:
+        return False        # 서버가 인원을 안 알려주면 판단할 근거가 없어요. 막지 않습니다.
+    return len(guild.members) < total * MEMBER_CACHE_READY_RATIO
+
+
+CACHE_WARNING = (
+    "❌ 서버 멤버 목록이 아직 다 안 불러와졌어요. 지금 지우면 **서버에 있는 사람의 지갑까지**"
+    " 지워질 수 있어서 멈췄습니다.\n└ 잠시 뒤(보통 1분 안에) 다시 시도해 주세요."
+)
+
+
 class ChunsikEconomy(commands.Cog):
     """JSON 자동 생성, 상점주인 ID 검증, 매일 자정 리셋이 포함된 경제 및 출석 시스템"""
     
@@ -1095,6 +1125,10 @@ class ChunsikEconomy(commands.Cog):
 
         await interaction.response.defer(ephemeral=False)
 
+        # 🧊 "나간 사람"을 캐시로 판단하기 때문에, 캐시가 덜 찼으면 아예 시작하지 않아요.
+        if member_cache_incomplete(interaction.guild):
+            return await interaction.followup.send(CACHE_WARNING)
+
         # 1️⃣ 미리보기 단계 — 여기서는 파일을 절대 건드리지 않고 대상만 추립니다.
         # 지갑 삭제는 되돌릴 방법이 백업 복원밖에 없어서, 뭘 지우는지 먼저 보여줘야 해요.
         try:
@@ -1145,6 +1179,10 @@ class ChunsikEconomy(commands.Cog):
         미리보기와 확인 사이에는 시간이 있어요. 그 사이에 서버로 돌아온 사람이 있을 수 있어서,
         지우기 직전에 멤버 여부를 한 번 더 확인하고 파일도 새로 읽습니다.
         """
+        # 🧊 미리보기와 확인 사이에 재연결이 있었을 수도 있어요. 지우기 직전에 한 번 더 봅니다.
+        if member_cache_incomplete(interaction.guild):
+            return await interaction.followup.send(CACHE_WARNING, ephemeral=True)
+
         target_ids = {uid for uid, _ in targets}
         cleaned_count = 0
         recovered_eva = 0
