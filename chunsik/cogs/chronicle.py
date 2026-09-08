@@ -25,7 +25,8 @@ from discord.ext import commands
 from chunsik_config import CHRONICLE_FILE, KST
 from chunsik_settings import member_has_admin_or_role
 from chunsik_storage import atomic_json_save_or_raise, safe_json_load
-from chunsik_utils import (EMBED_DESC_LIMIT, EMBED_FIELD_LIMIT, EMBED_TITLE_LIMIT, ChunsikView,
+from chunsik_utils import (EMBED_DESC_LIMIT, EMBED_FIELD_LIMIT, EMBED_TITLE_LIMIT,
+                          INPUT_ECHO_LIMIT, ChunsikView,
                           clip, fit_embed)
 from chunsik_names import server_name
 
@@ -513,7 +514,8 @@ class ChunsikChronicle(commands.Cog):
                 "❌ 바꿀 내용을 하나 이상 넣어주세요. (제목·내용·날짜·분류)", ephemeral=True
             )
 
-        target = 번호.strip().lstrip("#")
+        # ✂️ 번호는 짧은 숫자예요. 여기서 한 번 자르면 아래 안내 문구가 전부 안전해집니다.
+        target = clip(번호.strip().lstrip("#"), INPUT_ECHO_LIMIT)
         data = self._load()
         entry = next((e for e in data["entries"] if e.get("id") == target), None)
         if entry is None:
@@ -554,7 +556,7 @@ class ChunsikChronicle(commands.Cog):
         if not self._is_chronicle_admin(interaction.user):
             return await interaction.response.send_message(self._deny_message(), ephemeral=True)
 
-        target = 번호.strip().lstrip("#")
+        target = clip(번호.strip().lstrip("#"), INPUT_ECHO_LIMIT)
         data = self._load()
         remaining = [e for e in data["entries"] if e.get("id") != target]
 

@@ -30,7 +30,7 @@ from chunsik_config import KST, SNOOZE_FILE
 from chunsik_alerts import report_loop_error
 from chunsik_settings import feature_gate, is_feature_enabled
 from chunsik_storage import atomic_json_save_or_raise, safe_json_load
-from chunsik_utils import parse_datetime_text, stored_start
+from chunsik_utils import INPUT_ECHO_LIMIT, clip, parse_datetime_text, stored_start
 from chunsik_utils import ChunsikView
 
 # 🕘 "내일 아침" 같은 말이 실제로 몇 시인지. 하루 중 그 시각이 이미 지났으면 다음 날로 넘어가요.
@@ -585,7 +585,8 @@ class ChunsikSnooze(commands.Cog):
     @스누즈.command(name="취소", description="미뤄둔 메시지 알림을 취소합니다. (번호는 /스누즈 목록의 #숫자)")
     @app_commands.describe(번호="취소할 예약 번호 (예: 7 또는 #7)")
     async def cancel(self, interaction: discord.Interaction, 번호: str):
-        target = 번호.strip().lstrip("#")
+        # ✂️ 번호는 짧은 숫자예요. 여기서 한 번 자르면 아래 안내 문구가 전부 안전해집니다.
+        target = clip(번호.strip().lstrip("#"), INPUT_ECHO_LIMIT)
         data = self._load()
 
         # 🔒 남의 예약은 건드릴 수 없어요. 번호만 알면 지워지면 안 되니까 소유자까지 확인합니다.
