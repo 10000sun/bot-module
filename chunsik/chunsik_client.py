@@ -50,6 +50,8 @@ class ChunsikBotClient(commands.Bot):
 
         # 💓 [신규] 다운 알림용 상태값
         self._startup_alert_sent = False      # 기동 알림은 재연결 때마다가 아니라 딱 한 번만
+        # 🔒 허가되지 않은 서버 알림도 같은 이유로 한 번만. (아래 _report_unlicensed_guilds)
+        self._reported_unlicensed = None      # 마지막으로 알린 서버 ID 묶음
         self._disconnected_since = None       # 게이트웨이가 끊긴 시각(UTC)
         self._alerted_disconnect = False      # 이번 끊김에 대해 이미 알렸는지
 
@@ -117,7 +119,19 @@ class ChunsikBotClient(commands.Bot):
             return
         strangers = [g for g in self.guilds if not guild_allowed(g.id)]
         if not strangers:
+            self._reported_unlicensed = frozenset()
             return
+
+        # 🔁 [버그 수정] `on_ready`는 **재연결할 때마다** 다시 불립니다. 네트워크가 한 번
+        #    끊겼다 붙을 때마다 같은 알림이 또 나갔어요. 기동 알림은 `_startup_alert_sent`로
+        #    한 번만 보내면서 정작 이건 안 막혀 있었습니다.
+        #    허가되지 않은 서버에 들어가 있다는 건 사람이 설정을 고치기 전에는 안 변하는
+        #    사실이라, 같은 얘기를 반복해봐야 정작 봐야 할 다른 알림만 파묻혀요.
+        #    **묶음이 달라졌을 때만** 다시 알립니다. (새 서버가 늘면 그건 알려야 하니까요)
+        current = frozenset(g.id for g in strangers)
+        if current == self._reported_unlicensed:
+            return
+        self._reported_unlicensed = current
 
         listed = "\n".join(f"· **{g.name}** (`{g.id}`)" for g in strangers[:10])
         print(f"🔒 허가되지 않은 서버 {len(strangers)}곳에 들어가 있어요 (명령은 전부 막습니다):")
