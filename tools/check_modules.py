@@ -297,6 +297,104 @@ def _check_loop_guards():
     return problems
 
 
+async def _check_loop_backoff():
+    """같은 오류로 계속 죽는 루프가 알림을 도배하지 않는지 **실제로 돌려서** 봅니다.
+
+    🚨 report_loop_error는 루프를 곧바로 되살립니다. 원인이 남아 있는 것이면(파일 손상,
+       깨진 start 값) 되살아난 루프가 다음 회차에 똑같이 죽어요. gpt 루프는 10초라
+       그대로 두면 **하루 8,640통**이 나갑니다. 정작 봐야 할 다른 사고가 파묻혀요.
+
+    정적 검사로는 볼 수 없는 부류라 진짜 함수를 불러서 셉니다. 웹훅과 대기는 가짜로
+    바꿔 끼워요 — 이 도구는 네트워크에 나가지 않고, 30분씩 기다리지도 않습니다.
+    """
+    import contextlib
+    import io as _io
+
+    import chunsik_alerts as alerts
+
+    problems = []
+
+    # ⏱️ 가짜 시계·가짜 알림·가짜 대기. 모듈 전역을 바꿔 끼우면 report_loop_error가
+    #    그대로 그것들을 씁니다. (끝나고 되돌려요)
+    class _Clock:
+        def __init__(self):
+            self.t = 0.0
+
+        def monotonic(self):
+            return self.t
+
+    class _FakeAsyncio:
+        CancelledError = asyncio.CancelledError
+
+        def __init__(self):
+            self.slept = 0.0
+
+        async def sleep(self, seconds):
+            self.slept += seconds
+
+    class _FakeLoop:
+        def __init__(self):
+            self.starts = 0
+
+        def is_running(self):
+            return False
+
+        def start(self):
+            self.starts += 1
+
+    clock, fake_asyncio, fake_loop = _Clock(), _FakeAsyncio(), _FakeLoop()
+    sent = []
+
+    async def _fake_send_alert(title, description, color=0):
+        sent.append(title)
+
+    real = (alerts.time, alerts.asyncio, alerts.send_alert, dict(alerts._loop_failures))
+    alerts.time, alerts.asyncio, alerts.send_alert = clock, fake_asyncio, _fake_send_alert
+    alerts._loop_failures.clear()
+    try:
+        # 🔇 report_loop_error는 죽을 때마다 트레이스백을 찍어요. 2,160번이면 검사 보고서가
+        #    파묻히니, 이 구간의 출력만 통째로 삼킵니다. (문제는 아래 problems로 보고돼요)
+        with contextlib.redirect_stdout(_io.StringIO()):
+            # 10초 루프가 6시간 동안 같은 오류로 죽는 상황. 손대기 전이면 2,160통이 나갑니다.
+            error = RuntimeError("levels.json 파일이 손상되어 읽을 수 없어요")
+            for _ in range(2160):
+                await alerts.report_loop_error(fake_loop, "테스트 루프", error)
+                clock.t += 10
+            if len(sent) > 15:
+                problems.append(f"같은 오류 2,160회에 알림이 {len(sent)}통 나갔어요 "
+                                f"(간격 {alerts.LOOP_ALERT_COOLDOWN}초면 15통 안쪽이어야 해요)")
+            if fake_asyncio.slept <= 0:
+                problems.append("같은 오류가 이어지는데도 되살리기를 전혀 늦추지 않았어요 "
+                                "(10초마다 같은 예외를 다시 만드는 헛돌기가 됩니다)")
+
+            # 오류가 **달라지면** 새 사고예요. 그건 곧바로 알려야 합니다.
+            before = len(sent)
+            await alerts.report_loop_error(fake_loop, "테스트 루프", ValueError("전혀 다른 오류"))
+            if len(sent) == before:
+                problems.append("오류 내용이 바뀌었는데 알림이 안 나갔어요 (새 사고가 묻힙니다)")
+
+            # 한동안 조용했으면 회복한 걸로 봅니다. 다음 실패는 다시 첫 번째예요.
+            clock.t += alerts.LOOP_FAILURE_RESET + 1
+            before = len(sent)
+            await alerts.report_loop_error(fake_loop, "테스트 루프", error)
+            if len(sent) == before:
+                problems.append(f"{alerts.LOOP_FAILURE_RESET}초 넘게 조용했는데도 알림을 눌러 참았어요 "
+                                "(회복한 뒤 다시 죽은 건 알려야 합니다)")
+            if alerts.loop_restart_delay(alerts._loop_failures["테스트 루프"]["count"]) != 0:
+                problems.append("회복 뒤 첫 실패인데 되살리기를 늦췄어요")
+
+            # 되살리기는 계속 해야 해요. 늦추는 것이지 포기하는 게 아닙니다.
+            if fake_loop.starts < 2160:
+                problems.append(f"루프를 되살린 횟수가 {fake_loop.starts}회뿐이에요 "
+                                "(부른 만큼 되살려야 해요)")
+    finally:
+        alerts.time, alerts.asyncio, alerts.send_alert = real[0], real[1], real[2]
+        alerts._loop_failures.clear()
+        alerts._loop_failures.update(real[3])
+
+    return problems
+
+
 # 🔢 코드·문서에 적어도 되는 자리표시자 ID.
 #
 # 안내문에 "이렇게 생긴 숫자를 넣으세요"를 보여주려면 예시가 하나는 있어야 해요.
@@ -402,6 +500,13 @@ async def main(label, max_names):
         for problem in loop_guards:
             print(f"     - {problem}")
 
+    # 🔁 같은 오류로 계속 죽는 루프가 알림을 도배하지 않는지. (진짜 함수를 돌려봐요)
+    backoff = await _check_loop_backoff()
+    print(f"  루프 되살림 : {'✅ 알림 도배·헛돌기 없음' if not backoff else f'🚨 {len(backoff)}건'}")
+    if backoff:
+        for problem in backoff:
+            print(f"     - {problem}")
+
     # 🚚 납품물에 원본 서버의 진짜 ID가 섞여 있지 않은지. (이것도 정적 검사예요)
     delivery = _check_delivery_ids()
     print(f"  납품물 ID   : {'✅ 자리표시자만 있음' if not delivery else f'🚨 {len(delivery)}건 남음'}")
@@ -416,7 +521,7 @@ async def main(label, max_names):
 
     await bot.close()
 
-    failed = bool(bot.failed_modules or too_long or ownership or loop_guards or delivery)
+    failed = bool(bot.failed_modules or too_long or ownership or loop_guards or backoff or delivery)
 
     # 기본 실행이면 "이름을 상한까지 늘린" 검사도 자동으로 한 번 더 돌립니다.
     # (이름은 import 시점에 설명문으로 굳기 때문에 같은 프로세스에서 두 번 볼 수 없어요)
