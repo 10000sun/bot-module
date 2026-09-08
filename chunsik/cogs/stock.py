@@ -21,7 +21,8 @@ from chunsik_config import CHART_BG, CHART_DOWN, CHART_GRID, CHART_INK, CHART_IN
 from chunsik_storage import atomic_json_save, atomic_json_save_or_raise, safe_json_load
 from chunsik_settings import LOG_STYLES, build_log_embed, feature_gate, has_admin_or_role, load_settings
 from chunsik_state import record_ledger
-from chunsik_utils import (EMBED_FIELD_LIMIT, EMBED_TITLE_LIMIT, INPUT_ECHO_LIMIT,
+from chunsik_utils import (EMBED_DESC_LIMIT, EMBED_FIELD_LIMIT, EMBED_TITLE_LIMIT,
+                          INPUT_ECHO_LIMIT,
                           ChunsikView, chunk_lines,
                           clip, describe_user_error, fit_embed, holding_avg_price,
                           holding_shares, name_choices,
@@ -822,7 +823,10 @@ class ChunsikStock(commands.Cog):
                     )
                 
                 if table_lines:
-                    embed.description = "\n\n".join(table_lines)
+                    # ✂️ 종목 이름 상한(MAX_STOCK_NAME)이 생기기 전에 등록된 긴 이름이 남아
+                    #    있으면 설명이 4096자를 넘겨 **포트폴리오가 통째로 안 뜹니다.**
+                    #    아무나 쓰는 명령이라 그 사람은 자기 주식을 영영 못 봐요.
+                    embed.description = clip("\n\n".join(table_lines), EMBED_DESC_LIMIT)
                 else:
                     embed.description = "현재 보유 중인 주식이 없어요."
                 
@@ -839,8 +843,9 @@ class ChunsikStock(commands.Cog):
                         inline=False
                     )
 
-            await interaction.followup.send(embed=embed)
-            
+            # 🧮 설명을 맞춰도 요약 칸까지 쌓이면 전체 6000자를 넘을 수 있어요.
+            await interaction.followup.send(embed=fit_embed(embed))
+
         except Exception as e:
             print(f"❌ [포폴 명령어 오류] {e}")
             # 🔒 예외 원문을 그대로 보여주면 파일 경로가 딸려 나갑니다. 파일이 깨졌을 때
