@@ -283,10 +283,47 @@ def test_wallet():
 
 
 # ============================================================
+def test_loader_shapes():
+    """데이터 로더가 **빈 파일에서도 약속한 모양**을 돌려주는지."""
+    import chunsik_config as cfg
+    import chunsik_state as st
+    from chunsik_storage import atomic_json_save
+
+    print("\n[15] 🚨 빈 파일에서도 약속한 모양이 나와야 해요")
+    # 로더에 적어둔 기본값은 **파일이 아예 없을 때만** 쓰입니다. 그런데 init_json_files가
+    # 봇이 뜰 때 데이터 파일을 전부 빈 {} 로 미리 만들어둬요. 그래서 새로 설치한 환경에서는
+    # 그 기본값이 한 번도 안 쓰이고 언제나 {} 가 넘어옵니다.
+    #
+    # 지금 부르는 쪽이 .get()으로 조심하고 있어도, 나중에 누가 load_selfroles()["panels"]
+    # 라고 쓰면 **개발 PC에서는 멀쩡하고 새로 납품한 서버에서만** 죽어요.
+    # (출석 데이터가 실제로 그 사고를 냈습니다)
+    cases = [
+        (cfg.PARTY_FILE, st.load_party, {"parties": dict}),
+        (cfg.SCRIM_FILE, st.load_scrim, {"matches": dict, "records": dict}),
+        (cfg.LEVELS_FILE, st.load_levels, {"users": dict, "rewards": dict, "config": dict}),
+        (cfg.WELCOME_FILE, st.load_welcome, {"auto_roles": list, "message": str}),
+        (cfg.SELFROLE_FILE, st.load_selfroles, {"panels": dict}),
+        (cfg.WIKI_FILE, st.load_wiki, {"wiki": dict}),
+        (cfg.LEDGER_FILE, st.load_ledger, {"entries": list}),
+    ]
+    for path, loader, shape in cases:
+        name = os.path.basename(path)
+        for label, written in (("빈 파일", {}), ("칸 타입이 어긋남", {k: 0 for k in shape})):
+            atomic_json_save(path, written)
+            try:
+                data = loader()
+                missing = [k for k, t in shape.items() if not isinstance(data.get(k), t)]
+            except Exception as e:
+                missing = [f"{type(e).__name__}: {e}"]
+            check(f"{name} ({label})", missing, [])
+
+
+# ============================================================
 if __name__ == "__main__":
     test_storage()
     test_ledger()
     test_wallet()
+    test_loader_shapes()
     print()
     if _fails:
         print(f"🚨 {len(_fails)}건 실패: {', '.join(_fails)}")
