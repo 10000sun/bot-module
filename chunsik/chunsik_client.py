@@ -13,6 +13,7 @@ from chunsik_config import (ALERT_DISCONNECT_SECONDS, ENABLED_SPECS, GUILD_LOCK_
                          HEARTBEAT_FILE, KST, MODULE_WARNINGS, TEST_GUILD_ID,
                          guild_allowed)
 from chunsik_alerts import report_loop_error, send_alert
+from chunsik_storage import SAVE_FAILURES, save_failure_total
 from chunsik_storage import DataSaveError
 from chunsik_utils import describe_user_error
 from chunsik_names import bot_name, is_configured
@@ -24,6 +25,11 @@ from chunsik_names import bot_name, is_configured
 # 이제 modules.py의 목록을 보고 importlib으로 하나씩 불러와요. 덕분에
 #   ① 담을 기능을 guild.json에서 고를 수 있고,
 #   ② 한 모듈이 터져도 나머지는 정상적으로 뜹니다. (무엇이 실패했는지는 크게 알려요)
+
+# 💾 같은 저장 사고로 알림이 도배되지 않게 두는 간격(초). 감시 루프는 30초마다 도는데,
+#    폴더가 잠기면 매 회차마다 새 실패가 쌓여요.
+SAVE_ALERT_COOLDOWN = 600
+
 
 # ========== 🤖 봇 클라이언트 정의 ==========
 class ChunsikBotClient(commands.Bot):
@@ -52,6 +58,9 @@ class ChunsikBotClient(commands.Bot):
         self._startup_alert_sent = False      # 기동 알림은 재연결 때마다가 아니라 딱 한 번만
         # 🔒 허가되지 않은 서버 알림도 같은 이유로 한 번만. (아래 _report_unlicensed_guilds)
         self._reported_unlicensed = None      # 마지막으로 알린 서버 ID 묶음
+        # 💾 저장 실패 알림용. (아래 heartbeat_loop 참고)
+        self._seen_save_failures = 0          # 마지막으로 알린 시점의 누적 실패 수
+        self._save_alert_at = None            # 마지막으로 알린 시각 (도배 방지)
         self._disconnected_since = None       # 게이트웨이가 끊긴 시각(UTC)
         self._alerted_disconnect = False      # 이번 끊김에 대해 이미 알렸는지
 
@@ -215,6 +224,45 @@ class ChunsikBotClient(commands.Bot):
                     "네트워크 문제이거나 디스코드 장애일 수 있어요. 자동 재연결을 계속 시도 중입니다.",
                     color=0xF39C12,
                 )
+
+        # 3) 저장이 실패하고 있는지
+        await self._alert_new_save_failures()
+
+    async def _alert_new_save_failures(self):
+        """저장 실패가 **새로 생겼으면** 관리자에게 알립니다.
+
+        🚨 [버그 수정] 저장 실패는 이 봇에서 제일 위험한 사고예요 — "명령은 처리됐는데
+        파일에는 안 남은" 상태니까요. 그래서 `DataSaveError`를 만들고 화면에도 띄우게
+        해뒀는데, **원장·채팅 로그·통계처럼 예외를 안 던지기로 한 저장**은 실패해도
+        콘솔 한 줄이 전부였습니다. OneDrive나 백신이 데이터 폴더를 붙잡으면 **모든 저장이
+        계속 실패하는데 알림은 한 통도 안 가요.** `/테스트 데이터점검`을 열어봐야 압니다.
+
+        📌 알림은 여기(감시 루프)에서 보냅니다. 저장 함수는 **동기**라 그 자리에서 웹훅을
+           부르면 이벤트 루프가 멈추고, 대개 `economy_lock`을 쥔 채라 서버 전체가 같이 섭니다.
+
+        🔁 같은 사고가 이어질 때 도배하지 않도록 간격을 둬요. (루프 알림과 같은 판단)
+        """
+        total = save_failure_total()
+        if total <= self._seen_save_failures:
+            return
+        now = dt.datetime.now(dt.timezone.utc)
+        if self._save_alert_at and (now - self._save_alert_at).total_seconds() < SAVE_ALERT_COOLDOWN:
+            return
+
+        new_count = total - self._seen_save_failures
+        self._seen_save_failures = total
+        self._save_alert_at = now
+
+        recent = list(SAVE_FAILURES)[-5:]
+        lines = "\n".join(f"· `{f['time']}` **{f['file']}** — {f['error'][:120]}" for f in recent)
+        await send_alert(
+            "🔴 데이터가 저장되지 않고 있어요",
+            f"방금 **{new_count}건**이 더 실패했어요. (봇을 켠 뒤 모두 {total}건)\n\n"
+            f"{lines}\n\n"
+            "**명령은 처리됐는데 파일에 안 남은** 상태예요. 다른 프로그램(백신·클라우드 동기화)이 "
+            "데이터 폴더를 붙잡고 있는지 확인해 주세요.\n"
+            "└ `/테스트 데이터점검`에서 전체 목록을 볼 수 있어요.",
+        )
 
     @heartbeat_loop.error
     async def heartbeat_loop_error(self, error: BaseException):
