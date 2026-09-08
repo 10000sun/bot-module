@@ -27,6 +27,19 @@ from chunsik_names import bot_name, josa
 
 bot = ChunsikBotClient(command_prefix="/", intents=intents)
 
+# 🔢 [종료 코드] 사람이 고치기 전에는 다시 켜봐야 소용없는 실패는 **2번**으로 끝냅니다.
+#    (설정 파일이 깨짐 · 토큰이 없음 · 토큰이 무효 · 아이디 데이터가 깨짐)
+#
+# 왜 0이 아니냐 — systemd·도커는 0을 "할 일을 마치고 정상 종료"로 읽어요. 서비스가
+# `active (exited)` 로 보이고 실패 표시도, 재시작도 없습니다. 켰는데 아무 일도 안
+# 일어나고 아무 데도 빨간 불이 안 들어오는 게 제일 나쁜 상태예요.
+#
+# 왜 1도 아니냐 — 1은 "예상 못한 사고"라 다시 켜보는 게 맞지만, 위 넷은 그대로 켜면
+# 똑같이 죽습니다. `Restart=always`면 100ms마다 되살아나며 알림만 쌓여요.
+# systemd 유닛에 `RestartPreventExitStatus=2` 한 줄을 넣으면 그 자리에서 멈춥니다.
+# (README 11번에 적어뒀어요. 그 줄이 없어도 지금까지와 똑같이 동작하니 안전합니다)
+EXIT_NEEDS_FIXING = 2
+
 # ========== 🚀 봇 구동부 ==========
 async def main():
     # 🚨 서버 설정이 있는데 못 읽었으면 아예 시작하지 않아요.
@@ -47,7 +60,7 @@ async def main():
             f"```\n{GUILD_CONFIG_FATAL}\n```",
         )
         # ⚙️ 0이 아닌 코드로 끝내야 systemd/도커가 "실패"로 인식해요.
-        sys.exit(1)
+        sys.exit(EXIT_NEEDS_FIXING)
 
     # 🔐 [변경] 토큰은 더 이상 코드에 없어요. 같은 폴더의 .env 파일에서 읽어옵니다.
     if not DISCORD_TOKEN:
@@ -59,7 +72,7 @@ async def main():
         #    그냥 return하면 systemd·도커가 "할 일을 마치고 정상 종료했다"로 읽어서
         #    재시작도, 실패 표시도 안 해요. 토큰을 안 넣은 채 서비스로 올린 첫 배포에서
         #    "켰는데 아무 일도 안 일어난다"가 되는 게 이 경로입니다.
-        sys.exit(1)
+        sys.exit(EXIT_NEEDS_FIXING)
 
     # 🗃️ 아이디 DB를 메모리로 읽어옵니다.
     # 예전엔 chunsik_state를 import하는 순간 자동으로 읽혔어요. 그런데 ids.json이 손상되면
@@ -75,7 +88,7 @@ async def main():
         )
         # ⚙️ 여기도 마찬가지예요. 알림 웹훅은 나가지만 프로세스가 0으로 끝나면
         #    자동 재시작이 안 걸려서, 파일을 고쳐도 사람이 직접 켜줘야 합니다.
-        sys.exit(1)
+        sys.exit(EXIT_NEEDS_FIXING)
 
     try:
         await bot.start(DISCORD_TOKEN)
@@ -86,6 +99,13 @@ async def main():
             f"❌ {bot_name()}봇 로그인 실패",
             "봇 토큰이 유효하지 않아요. 토큰이 재발급됐는지 확인하고 .env를 갱신해 주세요.",
         )
+        # 🐛 [버그 수정] 여기만 종료 코드를 안 붙여서 **0(정상 종료)으로 끝났어요.**
+        #    바로 위 세 형제(설정 깨짐·토큰 없음·아이디 데이터 깨짐)는 전부 0이 아닌 코드로
+        #    끝내는데, 정작 **가장 흔한 기동 실패 원인**만 성공처럼 보였습니다.
+        #    서비스는 `active (exited)`, 도커는 exit 0, 감시 도구에는 아무것도 안 뜹니다.
+        #    README 11번이 "예상 못한 종료 시 0이 아닌 코드로 끝난다"고 약속하는데
+        #    그 약속이 깨져 있던 자리예요.
+        sys.exit(EXIT_NEEDS_FIXING)
     except Exception as e:
         print(f"❗예외 발생! {bot_name()}{josa(bot_name(), '이가')} 깜짝 놀랐어요:", e)
         traceback.print_exc()
