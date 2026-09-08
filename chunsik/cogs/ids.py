@@ -15,7 +15,7 @@ from chunsik_config import DATA_DIR, ID_PENDING_FILE, KST, RANKS, json_data_file
 from chunsik_storage import atomic_json_save_or_raise, safe_json_load
 from chunsik_settings import _get_role_ids, feature_gate, is_feature_enabled, load_settings, member_has_admin_or_role, save_settings, send_log_embed
 from chunsik_state import state
-from chunsik_utils import EMBED_FIELD_LIMIT, INPUT_ECHO_LIMIT, KNOWN_PLATFORMS, ChunsikView, clip, _looks_like_id_entry, _split_platform_and_id, extract_id_from_mention, find_guild_member_by_name, get_platform_candidates, next_misc_name, next_platform_name, normalize_platform, notify_log, parse_legacy_id_document, respond_modify
+from chunsik_utils import EMBED_DESC_LIMIT, EMBED_FIELD_LIMIT, INPUT_ECHO_LIMIT, KNOWN_PLATFORMS, ChunsikView, clip, _looks_like_id_entry, _split_platform_and_id, extract_id_from_mention, find_guild_member_by_name, get_platform_candidates, next_misc_name, next_platform_name, normalize_platform, notify_log, parse_legacy_id_document, respond_modify
 from chunsik_names import bot_name, josa
 
 
@@ -1205,7 +1205,14 @@ class ChunsikIds(commands.Cog):
                 await interaction.followup.send(f"❌ {user.mention}님은 등록된 아이디가 없어요!", ephemeral=True)
                 return
             lines = [f"• {k}: {state.user_ids[gid][uid][k]}" for k in sorted(keys)]
-            embed = discord.Embed(title="🔧 수정 가능한 항목", description="\n".join(lines) + "\n\n수정할 플랫폼명을 다시 입력해 주세요.", color=discord.Color.orange())
+            # ✂️ 한 사람이 등록할 수 있는 플랫폼 개수에는 상한이 없어요(아이디 길이만 막습니다).
+            #    많이 등록해둔 사람에게 이 화면을 열면 설명이 4096자를 넘겨 **무엇을 고칠 수
+            #    있는지 보여주는 화면 자체가 안 뜹니다.**
+            guide = "\n\n수정할 플랫폼명을 다시 입력해 주세요."
+            embed = discord.Embed(
+                title="🔧 수정 가능한 항목",
+                description=clip("\n".join(lines), EMBED_DESC_LIMIT - len(guide)) + guide,
+                color=discord.Color.orange())
             await interaction.followup.send(embed=embed, ephemeral=True)
             return
 
