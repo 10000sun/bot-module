@@ -555,6 +555,15 @@ class ChunsikScrim(commands.Cog):
             for sid in closed:
                 data["matches"].pop(sid, None)
             self._save(data)
+        # 🧾 [신규] 지난 기록을 지우는 명령인데 흔적이 없었어요.
+        #    내전은 이미 결과 로그 채널이 있어서 새로 만들지 않고 거기 얹습니다.
+        if closed:
+            await send_log_embed(
+                self.bot, "scrim_log", "끝난 내전 기록을 정리했어요.",
+                fields=[("지운 건수", f"{len(closed)}건", True),
+                        ("처리 관리자", interaction.user.mention, True)],
+                guild=interaction.guild,
+            )
         await interaction.response.send_message(
             f"🧹 끝난 내전 {len(closed)}건을 지웠어요.\n"
             "**전적과 순위는 그대로예요.** 올라간 메시지도 남아 있습니다.", ephemeral=True)

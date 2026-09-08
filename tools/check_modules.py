@@ -27,6 +27,7 @@
 import ast
 import asyncio
 import json
+import io
 import os
 import re
 import subprocess
@@ -940,6 +941,39 @@ PLACEHOLDER_IDS = {
 _ID_RE = re.compile(r"\b\d{17,20}\b")
 
 
+def _check_cog_bot_attr(bot):
+    """코그가 `self.bot`을 쓰는데 **정작 갖고 있지 않은지** 봅니다.
+
+    🐛 코그에 `__init__`이 없으면 discord.py가 인자 없이 만들어요. 그래서 `self.bot`이
+       아예 없는 코그가 있습니다(실제로 위키가 그랬어요). 그 코그에 나중에
+       `send_log_embed(self.bot, ...)` 한 줄을 보태면 **그 명령을 실제로 쓸 때까지**
+       아무도 모릅니다 — import도 되고 동기화도 되고 검사도 통과해요.
+       그 명령을 부른 사람만 "예상치 못한 오류"를 봅니다.
+
+    💡 그런 코그에서는 `interaction.client`를 쓰면 돼요. 상태를 안 늘려도 됩니다.
+    """
+    problems = []
+    for name, cog in bot.cogs.items():
+        module = sys.modules.get(type(cog).__module__)
+        path = getattr(module, "__file__", None)
+        if not path:
+            continue
+        try:
+            tree = ast.parse(io.open(path, encoding="utf-8").read())
+        except Exception:
+            continue
+        # ⚠️ 글자로 "self.bot"을 찾으면 **바로 이 검사를 설명하는 주석**에도 걸려요.
+        #    (루프 검사에서 똑같이 한 번 당했습니다 — 실제 코드만 보게 노드로 찾습니다)
+        uses = any(isinstance(node, ast.Attribute) and node.attr == "bot"
+                   and isinstance(node.value, ast.Name) and node.value.id == "self"
+                   for node in ast.walk(tree))
+        if uses and not hasattr(cog, "bot"):
+            problems.append(f"{name}({os.path.basename(path)})가 self.bot을 쓰는데 "
+                            f"__init__에서 담아두질 않아요 — 부르는 순간 터집니다 "
+                            f"(interaction.client를 쓰세요)")
+    return problems
+
+
 def _check_setting_tables(bot):
     """`/설정`의 **표**와 **실제 하위 명령**이 서로 맞는지.
 
@@ -1202,6 +1236,12 @@ async def main(label, max_names):
     for problem in josa_problems:
         print(f"     - {problem}")
 
+    # 🤖 코그가 self.bot을 쓰는데 정작 갖고 있지 않은지.
+    bot_attr = _check_cog_bot_attr(bot)
+    print(f"  코그 self.bot: {'✅ 쓰는 코그가 전부 갖고 있음' if not bot_attr else f'🚨 {len(bot_attr)}건'}")
+    for problem in bot_attr:
+        print(f"     - {problem}")
+
     # 🧾 `/설정`의 손으로 쓴 표와 실제 하위 명령이 어긋나지 않았는지. (트리가 필요해요)
     setting_tables = _check_setting_tables(bot)
     print(f"  설정 표 짝   : {'✅ 표와 명령이 일치' if not setting_tables else f'🚨 {len(setting_tables)}건'}")
@@ -1223,7 +1263,7 @@ async def main(label, max_names):
 
     failed = bool(bot.failed_modules or too_long or ownership or loop_guards or role_reads
                   or catch_up or stale or perms or privacy or tone or echoes or backoff
-                  or delivery or setting_tables or josa_problems)
+                  or delivery or setting_tables or josa_problems or bot_attr)
 
     # 기본 실행이면 "이름을 상한까지 늘린" 검사도 자동으로 한 번 더 돌립니다.
     # (이름은 import 시점에 설명문으로 굳기 때문에 같은 프로세스에서 두 번 볼 수 없어요)

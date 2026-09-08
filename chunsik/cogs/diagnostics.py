@@ -48,7 +48,8 @@ def build_channel_report(ok: list, failed: list, missing: list) -> discord.Embed
     embed = discord.Embed(title="🧪 채널점검 결과", color=discord.Color.blurple())
     add_lines_field(embed, f"✅ 정상 ({len(ok)})", ok, empty="없음")
     # 실패 줄은 하나도 빠뜨리면 안 돼요 — 그게 고칠 목록이니까요. 기본 예산(2048자)으로는
-    # 채널 18개가 전부 실패하면 뒷줄이 "…외 N줄"로 잘립니다. 넉넉히 잡고 총량은 fit_embed에 맡겨요.
+    # 채널이 전부 실패하면 뒷줄이 "…외 N줄"로 잘립니다. 넉넉히 잡고 총량은 fit_embed에 맡겨요.
+    # (개수를 숫자로 적어두면 채널이 늘 때마다 어긋나요 — 실제로 18개라고 적힌 채 21개가 됐습니다)
     add_lines_field(embed, f"❌ 실패 ({len(failed)})", failed, empty="없음",
                     budget=EMBED_FIELD_LIMIT * 4)
     add_lines_field(embed, f"⚠️ 미설정 ({len(missing)})", missing, empty="없음")
@@ -184,8 +185,8 @@ class ChunsikTest(commands.Cog):
                 failed.append(f"{label} ({clip(str(e), ERROR_TEXT_LIMIT)})")
 
         # 🧹 전부 보낸 **뒤에** 한 번만 쉬고 한꺼번에 지웁니다.
-        #    예전엔 채널마다 5초씩 기다리고 지웠어요. 채널이 13개일 땐 65초였는데
-        #    이제 18개라 90초가 됩니다. 그동안 명령을 부른 사람은 아무 답도 못 받고,
+        #    예전엔 채널마다 5초씩 기다리고 지웠어요. 채널 하나에 5초라 개수가 늘수록
+        #    그대로 길어집니다(13개면 65초, 21개면 105초). 그동안 명령을 부른 사람은 아무 답도 못 받고,
         #    테스트 메세지는 채널마다 5초씩 차례로 남아 있어요.
         #    한 번에 지우면 "5초쯤 떴다가 사라진다"는 성질은 그대로면서 전체가 5초에 끝납니다.
         if sent:

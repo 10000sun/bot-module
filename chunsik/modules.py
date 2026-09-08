@@ -77,8 +77,11 @@ MODULE_SPECS = (
     ),
     ModuleSpec(
         "wiki", "멤버 위키", "cogs.wiki", "ChunsikWiki",
+        channels=("wiki_log",),
         features=("wiki",),
         data_files=("WIKI_FILE",),
+        # 📖 wiki_log는 없어도 동작해요. 남의 프로필을 고치고 지우는 명령이라
+        #    "누가 뭘 지웠나"에 답할 수 있어야 해서 뒀습니다.
     ),
     ModuleSpec(
         "games", "미니게임·보상", "cogs.games", "ChunsikGames", requires=("economy",),
@@ -138,6 +141,7 @@ MODULE_SPECS = (
     ),
     ModuleSpec(
         "party", "파티 모집", "cogs.party", "ChunsikParty",
+        channels=("party_log",),
         roles=("party_admin",),
         features=("party",),
         data_files=("PARTY_FILE",),
@@ -158,7 +162,7 @@ MODULE_SPECS = (
     ),
     ModuleSpec(
         "levels", "활동 레벨", "cogs.levels", "ChunsikLevels",
-        channels=("level_announce",),
+        channels=("level_announce", "level_log"),
         roles=("level_admin",),
         features=("level",),
         data_files=("LEVELS_FILE",),

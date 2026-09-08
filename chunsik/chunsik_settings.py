@@ -218,6 +218,9 @@ LOG_STYLES = {
     #     빠뜨리면 check_modules.py의 소유 표 검사가 잡아줍니다)
     "member_log":   {"color": discord.Color.teal(),     "emoji": "🚪", "title": "입퇴장 로그"},
     "scrim_log":    {"color": discord.Color.dark_red(), "emoji": "⚔️", "title": "내전 로그"},
+    "party_log":    {"color": discord.Color.magenta(),  "emoji": "🎯", "title": "파티 로그"},
+    "level_log":    {"color": discord.Color.blurple(),  "emoji": "🎚️", "title": "레벨 로그"},
+    "wiki_log":     {"color": discord.Color.dark_teal(), "emoji": "📖", "title": "위키 로그"},
 }
 
 # 📏 한 로그에 담을 수 있는 칸 수. 디스코드 한도는 25개인데, 넘으면 그 로그가 통째로 거부돼요.
