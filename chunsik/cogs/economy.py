@@ -11,7 +11,7 @@ from chunsik_alerts import report_loop_error
 from chunsik_storage import atomic_json_save_or_raise, safe_json_load
 from chunsik_settings import feature_gate, has_admin_or_role, load_settings, send_log_embed
 from chunsik_state import LEDGER_MAX_ENTRIES, load_ledger, record_ledger, record_ledger_many
-from chunsik_utils import ChunsikView, chunk_lines, describe_user_error, portfolio_value
+from chunsik_utils import MAX_AMOUNT, ChunsikView, chunk_lines, describe_user_error, portfolio_value
 from chunsik_names import currency, josa
 
 # 🧩 [정리] 예전엔 여기 `from cogs.shop import WalletGiftView`가 있었어요. /지갑에 붙는
@@ -953,7 +953,8 @@ class ChunsikEconomy(commands.Cog):
 
     @app_commands.command(name="송금", description=f"다른 사람에게 {currency()}{josa(currency(), '을를')} 송금해요!")
     @app_commands.describe(member="돈을 받을 멤버 선택", amount=f"보낼 {currency()} 수량")
-    async def transfer_money_slash(self, interaction: discord.Interaction, member: discord.Member, amount: int):
+    async def transfer_money_slash(self, interaction: discord.Interaction, member: discord.Member,
+                                   amount: app_commands.Range[int, 1, MAX_AMOUNT]):
         if await feature_gate(interaction, "transfer", "송금"):
             return
         await self.perform_transfer(interaction, member, amount)
@@ -1024,7 +1025,7 @@ class ChunsikEconomy(commands.Cog):
 
     @app_commands.command(name="지급", description=f"[관리자] 특정 유저 또는 특정 역할을 가진 모든 유저에게 {currency()}{josa(currency(), '을를')} 지급합니다.")
     @app_commands.guild_only()
-    async def give_money(self, interaction: discord.Interaction, 금액: int, 유저: Optional[discord.Member] = None, 역할: Optional[discord.Role] = None):
+    async def give_money(self, interaction: discord.Interaction, 금액: app_commands.Range[int, 1, MAX_AMOUNT], 유저: Optional[discord.Member] = None, 역할: Optional[discord.Role] = None):
         # 1. 관리자 권한 확인 (/지갑청소·/랭킹 등과 같은 기준을 쓰도록 공용 헬퍼에 위임)
         if not self._is_shop_owner(interaction):
             return await interaction.response.send_message("❌ 권한이 없어요.", ephemeral=True)
@@ -1091,7 +1092,7 @@ class ChunsikEconomy(commands.Cog):
 
     @app_commands.command(name="회수", description=f"[관리자] 특정 유저 또는 특정 역할을 가진 모든 유저에게서 {currency()}{josa(currency(), '을를')} 회수합니다.")
     @app_commands.guild_only()
-    async def take_money(self, interaction: discord.Interaction, 금액: int, 유저: Optional[discord.Member] = None, 역할: Optional[discord.Role] = None):
+    async def take_money(self, interaction: discord.Interaction, 금액: app_commands.Range[int, 1, MAX_AMOUNT], 유저: Optional[discord.Member] = None, 역할: Optional[discord.Role] = None):
         # 1. 관리자 권한 확인 (/지갑청소·/랭킹 등과 같은 기준을 쓰도록 공용 헬퍼에 위임)
         if not self._is_shop_owner(interaction):
             return await interaction.response.send_message("❌ 권한이 없어요.", ephemeral=True)
@@ -1283,7 +1284,7 @@ class ChunsikEconomy(commands.Cog):
     @app_commands.command(name="출석보상설정", description=f"[관리자] 하루 출석체크 시 지급할 기본 {currency()} 보상 액수를 조정합니다.")
     @app_commands.describe(amount=f"새로 지정할 출석 {currency()} 보상 액수")
     @app_commands.guild_only()
-    async def set_attendance_reward_slash(self, interaction: discord.Interaction, amount: int):
+    async def set_attendance_reward_slash(self, interaction: discord.Interaction, amount: app_commands.Range[int, 0, MAX_AMOUNT]):
         if not self._is_shop_owner(interaction):
             await interaction.response.send_message("🙅‍♀️ 출석 보상을 수정할 수 있는 권한이 없어요!", ephemeral=True)
             return

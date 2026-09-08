@@ -21,7 +21,7 @@ from chunsik_config import CHART_BG, CHART_DOWN, CHART_GRID, CHART_INK, CHART_IN
 from chunsik_storage import atomic_json_save, atomic_json_save_or_raise, safe_json_load
 from chunsik_settings import LOG_STYLES, build_log_embed, feature_gate, has_admin_or_role, load_settings
 from chunsik_state import record_ledger
-from chunsik_utils import (EMBED_DESC_LIMIT, EMBED_FIELD_LIMIT, EMBED_TITLE_LIMIT,
+from chunsik_utils import (MAX_AMOUNT, EMBED_DESC_LIMIT, EMBED_FIELD_LIMIT, EMBED_TITLE_LIMIT,
                           INPUT_ECHO_LIMIT,
                           ChunsikView, chunk_lines,
                           clip, describe_user_error, fit_embed, holding_avg_price,
@@ -505,7 +505,8 @@ class ChunsikStock(commands.Cog):
     @stock_group.command(name="매수", description="현재가로 주식을 매수합니다.")
     @app_commands.describe(stock="매수할 주식 선택", amount="매수할 주 수")
     @app_commands.autocomplete(stock=stock_autocomplete)
-    async def buy_stock(self, interaction: discord.Interaction, stock: str, amount: int):
+    async def buy_stock(self, interaction: discord.Interaction, stock: str,
+                        amount: app_commands.Range[int, 1, MAX_AMOUNT]):
         if await feature_gate(interaction, "stock", "주식"):
             return
         # ⏱️ 3초 응답 제한 방지: 락 대기/파일 IO 전에 선제적으로 defer
@@ -640,7 +641,8 @@ class ChunsikStock(commands.Cog):
     @stock_group.command(name="매도", description="현재가로 주식을 매도합니다. (거래채널 전용)")
     @app_commands.describe(stock="매도할 주식 선택", amount="매도할 주 수")
     @app_commands.autocomplete(stock=stock_autocomplete)
-    async def sell_stock(self, interaction: discord.Interaction, stock: str, amount: int):
+    async def sell_stock(self, interaction: discord.Interaction, stock: str,
+                         amount: app_commands.Range[int, 1, MAX_AMOUNT]):
         if await feature_gate(interaction, "stock", "주식"):
             return
         # ⏱️ 3초 응답 제한 방지: 락 대기/파일 IO 전에 선제적으로 defer
@@ -983,7 +985,8 @@ class ChunsikStock(commands.Cog):
     @stock_group.command(name="생성", description="[관리자] 신규 주식 종목을 상장합니다.")
     @app_commands.describe(종목="신규 종목으로 등록할 주식 이름 입력", price="상장 기준 가격")
     async def create_stock(self, interaction: discord.Interaction,
-                           종목: app_commands.Range[str, 1, MAX_STOCK_NAME], price: int):
+                           종목: app_commands.Range[str, 1, MAX_STOCK_NAME],
+                           price: app_commands.Range[int, 0, MAX_AMOUNT]):
         stock_name = 종목.strip()
         if not self._has_admin_permissive(interaction):
             return await interaction.response.send_message("❌ 관리자 또는 상점주인 권한이 필요합니다.", ephemeral=True)
@@ -1234,7 +1237,8 @@ class ChunsikStock(commands.Cog):
 
     @stock_group.command(name="지급", description="[관리자] 특정 멤버에게 주식을 지급합니다.")
     @app_commands.describe(멤버="주식을 지급할 대상 유저", 주식명="지급할 주식 종목 이름", 갯수="지급할 주식 수량 (기본값: 1)")
-    async def stock_give(self, interaction: discord.Interaction, 멤버: discord.Member, 주식명: str, 갯수: Optional[int] = 1):
+    async def stock_give(self, interaction: discord.Interaction, 멤버: discord.Member, 주식명: str,
+                         갯수: Optional[app_commands.Range[int, 1, MAX_AMOUNT]] = 1):
         # 🐛 [버그 수정] 여기만 shop_admin(상점 관리자)을 보고 있었어요. 짝인 /주식 회수는 물론
         # /주식 변동·생성·삭제까지 전부 stock_admin(주식 관리자) 기준이라, 주식 관리자는 회수만
         # 되고 지급은 안 되는 반쪽 권한이었습니다. 같은 그룹의 대칭 명령어끼리 기준을 맞춰요.
@@ -1302,7 +1306,8 @@ class ChunsikStock(commands.Cog):
 
     @stock_group.command(name="회수", description="[관리자] 특정 멤버의 주식을 회수합니다.")
     @app_commands.describe(멤버="주식을 회수할 대상 유저", 주식명="회수할 주식 종목 이름", 갯수="회수할 주식 수량 (기본값: 1)")
-    async def stock_take(self, interaction: discord.Interaction, 멤버: discord.Member, 주식명: str, 갯수: Optional[int] = 1):
+    async def stock_take(self, interaction: discord.Interaction, 멤버: discord.Member, 주식명: str,
+                         갯수: Optional[app_commands.Range[int, 1, MAX_AMOUNT]] = 1):
         if not self._has_admin_permissive(interaction):
             return await interaction.response.send_message("⛔ 권한이 없어요.", ephemeral=True)
             

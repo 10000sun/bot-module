@@ -11,7 +11,7 @@ from chunsik_alerts import report_loop_error
 from chunsik_storage import atomic_json_save_or_raise, safe_json_load
 from chunsik_settings import feature_gate, has_admin_or_role, send_log_embed
 from chunsik_state import record_ledger
-from chunsik_utils import (EMBED_DESC_LIMIT, EMBED_FIELD_LIMIT, EMBED_TITLE_LIMIT,
+from chunsik_utils import (MAX_AMOUNT, EMBED_DESC_LIMIT, EMBED_FIELD_LIMIT, EMBED_TITLE_LIMIT,
                           INPUT_ECHO_LIMIT, MESSAGE_LIMIT, ChunsikView,
                           add_lines_field, clip, dangerous_permission, fit_embed,
                           name_choices,
@@ -1440,7 +1440,8 @@ class ChunsikShop(commands.Cog):
     @app_commands.guild_only()
     @app_commands.describe(되팔기퍼센트="되팔기 시 원가의 몇 %를 돌려줄지 (0~100, 판매가능일 때만 사용, 생략 시 0)")
     async def add_item(self, interaction: discord.Interaction,
-                       이름: app_commands.Range[str, 1, MAX_ITEM_NAME], 가격: int,
+                       이름: app_commands.Range[str, 1, MAX_ITEM_NAME],
+                       가격: app_commands.Range[int, 0, MAX_AMOUNT],
                        설명: app_commands.Range[str, 1, MAX_ITEM_DESC],
                        구매가능: bool, 판매가능: bool, 역할지급: Optional[discord.Role] = None,
                        되팔기퍼센트: Optional[int] = None):
@@ -1536,7 +1537,8 @@ class ChunsikShop(commands.Cog):
     #    상품을 지우거나 고칠 길이 막히거든요. 새로 저장되는 값에만 겁니다.
     async def edit_item(self, interaction: discord.Interaction, 이름: str,
                         새이름: Optional[app_commands.Range[str, 1, MAX_ITEM_NAME]] = None,
-                        새가격: Optional[int] = None, 퍼센트변동: Optional[float] = None,
+                        새가격: Optional[app_commands.Range[int, 0, MAX_AMOUNT]] = None,
+                        퍼센트변동: Optional[float] = None,
                         설명: Optional[app_commands.Range[str, 1, MAX_ITEM_DESC]] = None,
                         구매가능: Optional[bool] = None, 판매가능: Optional[bool] = None,
                         되팔기퍼센트: Optional[int] = None):
