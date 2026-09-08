@@ -316,7 +316,22 @@ class ChunsikSetting(commands.Cog):
 
     @명단.command(name="대장", description="[관리자] 아이디 명단에서 '대장' 칸으로 따로 표시할 역할을 지정합니다.")
     async def set_chief_role(self, interaction: discord.Interaction, 역할: discord.Role):
-        if not self.has_channel_permission(interaction): return await interaction.response.send_message("❌ 서버 관리자이거나 **설정 관리자** 역할이 있어야 해요! (`/설정 관리자 설정`으로 지정)", ephemeral=True)
+        # 🔐 [권한 상승 차단] 이 명령만 `/설정`의 다른 명령보다 **엄격합니다.**
+        #
+        # 대장(chief_role)은 명단의 한 칸 이름이기도 하지만, 동시에 **`/기능제어`를 쓸 수 있는
+        # 유일한 역할**이에요(`is_super_admin`). `/기능제어`는 "다른 /설정 명령과 다르게
+        # 일부러 엄격하게" 막아둔 자리인데, 정작 **대장을 정하는 명령이 설정 관리자에게
+        # 열려 있으면** 그 사람이 자기가 가진 역할을 대장으로 지정해서 곧바로 `/기능제어`를
+        # 손에 넣습니다. 막아둔 문 옆에 열린 창을 두는 셈이라 경계가 이야기로만 남아요.
+        #
+        # 그래서 여기는 **서버 관리자이거나 지금 대장인 사람**만 바꿀 수 있게 합니다.
+        # (`/기능제어`를 쓸 수 있는 사람과 같은 조건 — 권한을 넘겨주는 문은 그 권한을
+        #  이미 가진 사람만 열 수 있어야 해요)
+        if not is_super_admin(interaction):
+            return await interaction.response.send_message(
+                "⛔ 대장은 **서버 관리자이거나 지금 대장인 분**만 지정할 수 있어요.\n"
+                "└ 대장 역할은 `/기능제어`(기능 정지·재개)를 쓸 수 있는 역할이라 더 엄격하게 둡니다.",
+                ephemeral=True)
         settings = load_settings()
         if "roles" not in settings: settings["roles"] = {}
         settings["roles"]["chief_role"] = 역할.id
