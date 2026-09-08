@@ -10,7 +10,7 @@ from chunsik_config import ATTENDANCE_FILE, ECONOMY_FILE, KST, LEDGER_FILE, SHOP
 from chunsik_alerts import report_loop_error
 from chunsik_storage import atomic_json_save_or_raise, safe_json_load
 from chunsik_settings import feature_gate, has_admin_or_role, load_settings, send_log_embed
-from chunsik_state import load_ledger, record_ledger, record_ledger_many
+from chunsik_state import LEDGER_MAX_ENTRIES, load_ledger, record_ledger, record_ledger_many
 from chunsik_utils import ChunsikView, chunk_lines, describe_user_error, portfolio_value
 from chunsik_names import currency, josa
 
@@ -33,7 +33,14 @@ class UndoGiveSelect(discord.ui.Select):
             when = b["ts"][5:16].replace("T", " ")
             icon = "📤" if b["kind"] == "관리자 지급" else "📥"
             label = f"{icon} {when} · {total:,} {currency()}"
-            desc = f"{b['kind']} · 대상 {len(b['rows'])}명 · {b['detail'][:50]}"
+            # ✂️ 원장이 잘려 앞부분이 사라진 묶음이면 **되돌려도 반쪽**이에요.
+            #    고르기 전에 알려야 합니다. (고른 뒤엔 이미 늦어요)
+            lost = b["size"] - len(b["rows"]) if b.get("size") else 0
+            if lost > 0:
+                desc = (f"⚠️ {b['size']}명 중 {len(b['rows'])}명만 되돌릴 수 있어요 "
+                        f"(기록 {lost}줄이 잘림) · {b['kind']}")
+            else:
+                desc = f"{b['kind']} · 대상 {len(b['rows'])}명 · {b['detail'][:50]}"
             options.append(discord.SelectOption(label=label[:100], description=desc[:100], value=b["id"]))
 
         super().__init__(placeholder="되돌릴 기록을 선택하세요", options=options, min_values=1, max_values=1)
@@ -470,8 +477,13 @@ class ChunsikEconomy(commands.Cog):
             b = batches.setdefault(bid, {
                 "id": bid, "kind": e["kind"], "detail": e.get("detail", ""),
                 "ts": e["ts"], "actor": e.get("actor"), "rows": [], "reverted": False,
+                "size": None,
             })
             b["rows"].append(e)
+            # 🧮 이 묶음의 **원래 인원**. 원장이 잘려서 앞부분이 사라졌으면
+            #    지금 남은 줄 수보다 큽니다. (예전 기록에는 없어요 → None = 모름)
+            if b["size"] is None and e.get("batch_size"):
+                b["size"] = int(e["batch_size"])
             if e.get("reverted"):
                 b["reverted"] = True
         return sorted(batches.values(), key=lambda b: b["ts"], reverse=True)[:limit]
@@ -551,15 +563,27 @@ class ChunsikEconomy(commands.Cog):
                            actor_id=interaction.user.id)
 
         total = sum(abs(e["delta"]) for e in rows)
+        # ⚠️ 원장이 잘려서 **일부만** 되돌린 건지 봅니다. "되돌렸어요"만 보면
+        #    다 원복된 줄 알고 넘어가요. (예전 기록엔 batch_size가 없어요 → 모름)
+        size = next((int(e["batch_size"]) for e in rows if e.get("batch_size")), None)
+        lost = size - len(rows) if size else 0
         await send_log_embed(
             self.bot, "economy_log", "지급/회수 되돌리기가 실행됐어요.",
             fields=[
                 ("원래 처리", f"{kind} · {rows[0].get('detail','')}", False),
-                ("대상 인원", f"{len(rows)}명", True),
+                ("대상 인원", (f"{len(rows)}명"
+                              + (f" ⚠️ (원래 {size}명 — 기록이 잘려 {size - len(rows)}명은 못 되돌림)"
+                                 if size and size > len(rows) else "")), True),
                 ("되돌린 총액", f"{total:,} {currency()}", True),
                 ("처리 관리자", interaction.user.mention, True),
             ],
         )
+        if lost > 0:
+            return await interaction.followup.send(
+                f"⚠️ `{kind}` 건을 **일부만** 되돌렸어요.\n"
+                f"└ {size}명 중 **{len(rows)}명**만 되돌아갔습니다. (총 {total:,} {currency()})\n"
+                f"└ 오래된 기록 {lost}줄이 원장 상한({LEDGER_MAX_ENTRIES:,}건)에 밀려 잘려나갔어요. "
+                f"나머지 {lost}명은 `/회수`로 직접 맞춰주세요.", ephemeral=True)
         await interaction.followup.send(
             f"✅ `{kind}` 건을 되돌렸어요. (대상 {len(rows)}명 · 총 {total:,} {currency()})", ephemeral=True
         )

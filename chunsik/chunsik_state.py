@@ -128,11 +128,19 @@ def record_ledger_many(rows: list, kind: str, detail: str = "", actor_id=None) -
 
     rows: [(user_id, delta, balance_after), ...]
     되돌리기는 이 batch 단위로 이뤄져요.
+
+    🧮 줄마다 `batch_size`(이 묶음의 **원래 인원**)를 같이 적습니다.
+       원장은 LEDGER_MAX_ENTRIES에서 오래된 것부터 잘리는데, 500명짜리 `/지급` 한 건은
+       500줄이에요. 그 뒤로 거래가 쌓이면 묶음의 **앞부분만 잘려나갑니다.** 그러면
+       `/지급취소`가 살아남은 사람만 되돌리는데, 화면에는 "대상 N명"이라고만 떠서
+       관리자는 **반쪽인 줄을 모릅니다.** 원래 인원을 적어두면 그걸 알릴 수 있어요.
+       (예전 기록에는 이 값이 없어요 — 없으면 "모름"으로 보고 아무 말도 안 합니다)
     """
     batch_id = uuid.uuid4().hex[:10]
     try:
         data = load_ledger()
         now = dt.datetime.now(KST).isoformat(timespec="seconds")
+        batch_size = len(rows)
         for user_id, delta, balance_after in rows:
             data["entries"].append({
                 "id": uuid.uuid4().hex[:10],
@@ -144,6 +152,7 @@ def record_ledger_many(rows: list, kind: str, detail: str = "", actor_id=None) -
                 "detail": detail,
                 "actor": str(actor_id) if actor_id else None,
                 "batch": batch_id,
+                "batch_size": batch_size,
                 "reverted": False,
             })
         if len(data["entries"]) > LEDGER_MAX_ENTRIES:
