@@ -88,6 +88,7 @@ MODULE_SPECS = (
     ),
     ModuleSpec(
         "gpt", "AI 대화", "cogs.gpt", "ChunsikGPT",
+        features=("gpt",),
         data_files=("CHAT_MEMORY_FILE", "CHAT_LOG_FILE", "CHUNSIK_USER_MEMORY_FILE",
                     "CHAT_STATS_FILE", "LIMIT_FILE"),
         note="GEMINI_API_KEY가 없으면 대화 기능만 조용히 꺼집니다. 지갑·주식 조회 도구는 "

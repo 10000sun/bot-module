@@ -12,6 +12,7 @@ from discord.ext import commands, tasks
 
 from chunsik_config import CHAT_LOG_FILE, CHAT_MEMORY_FILE, CHAT_STATS_FILE, GEMINI_API_KEY, KST, LIMIT_FILE, CHUNSIK_CALL_ROLE_ID, CHUNSIK_USER_MEMORY_FILE, get_pacific_date_str
 from chunsik_alerts import report_loop_error
+from chunsik_settings import is_feature_enabled
 from chunsik_storage import atomic_json_save, safe_json_load
 from chunsik_state import load_wiki, state
 from chunsik_utils import find_guild_member_by_name, holding_avg_price, holding_shares
@@ -456,6 +457,14 @@ class ChunsikGPT(commands.Cog):
         is_role_mentioned = any(role.id == CHUNSIK_CALL_ROLE_ID for role in message.role_mentions)
 
         if is_bot_mentioned or is_role_mentioned:
+            # 🚧 관리자가 `/기능제어 정지 AI대화`로 꺼둔 상태. 조용히 무시하지 않고 한 줄
+            #    알려줘요 — 불렀는데 아무 반응이 없으면 고장 난 걸로 보고 계속 부릅니다.
+            #    (레벨·이벤트는 조용히 넘어가도 되지만, 이건 사람이 **말을 건** 자리예요)
+            if not is_feature_enabled("gpt"):
+                await message.channel.send(
+                    f"{message.author.mention} 🚧 AI 대화가 지금 잠시 꺼져 있어요. 관리자에게 물어봐 주세요.")
+                return
+
             # 🔐 [신규] API 키가 없거나 초기화에 실패하면 AI 대화만 조용히 건너뜁니다.
             if self.client is None:
                 await message.channel.send(
