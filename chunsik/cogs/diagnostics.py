@@ -8,7 +8,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from chunsik_config import DATA_DIR, KST, json_data_files, module_active
+from chunsik_config import BACKUP_DIR, DATA_DIR, KST, json_data_files, module_active
 from chunsik_storage import SAVE_FAILURES, safe_json_load
 from chunsik_settings import _get_role_ids, has_admin_or_role, load_settings
 from chunsik_state import state
@@ -365,7 +365,27 @@ class ChunsikTest(commands.Cog):
         else:
             report.append("✅ 최근 저장 실패: 없음")
 
-        # ⑤ [신규] 데이터 폴더가 클라우드 동기화 폴더 안에 있는지 확인
+        # ⑤ 마지막 백업이 언제였는지.
+        # 백업은 새벽 3시에만 도는데, 그 시각에 봇이 꺼져 있으면 그 회차는 그냥 지나가요.
+        # 낮에만 켜두는 서버라면 한 번도 안 만들어질 수 있는데 **아무도 그걸 모릅니다.**
+        # (기동할 때 따라잡게 해뒀지만, 눈으로 확인할 창구도 있어야 해요)
+        backup_cog = self.bot.get_cog("ChunsikBackup")
+        if backup_cog is not None:
+            import cogs.backup as backup_mod
+            try:
+                names = os.listdir(BACKUP_DIR) if os.path.exists(BACKUP_DIR) else []
+            except Exception:
+                names = []
+            latest = backup_mod.latest_backup_day(names)
+            today = dt.datetime.now(KST).date()
+            if latest is None:
+                report.append("❌ 마지막 백업: **없음** — `/테스트 백업실행`으로 지금 한 번 돌려주세요")
+            else:
+                days = (today - latest).days
+                mark = "✅" if days <= 1 else "⚠️"
+                report.append(f"{mark} 마지막 백업: {latest} ({days}일 전 · 보관 {backup_cog.RETENTION_DAYS}일)")
+
+        # ⑥ [신규] 데이터 폴더가 클라우드 동기화 폴더 안에 있는지 확인
         # OneDrive 안에서는 저장(os.replace)이 거부되거나 충돌 사본이 생길 수 있어요.
         # 📁 [수정] 데이터가 data/ 폴더로 분리됐으므로, 코드 위치(BASE_DIR)가 아니라
         # 실제 저장이 일어나는 DATA_DIR을 검사해야 맞아요.

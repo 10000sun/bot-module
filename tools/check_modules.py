@@ -361,6 +361,73 @@ def _check_loop_guards():
     return problems
 
 
+def _check_backup_catch_up(bot):
+    """새벽 3시를 놓친 날 백업이 스스로 따라잡는지 봅니다.
+
+    🚨 백업은 매일 새벽 3시에만 돕니다. 그 시각에 봇이 꺼져 있으면 그 회차는 그냥
+       지나가요 — tasks.loop은 놓친 회차를 따라잡지 않습니다. 납품하는 서버가 늘
+       24시간 켜져 있는 건 아니라, 낮에만 켜두는 집 PC라면 **백업이 단 한 번도
+       안 만들어집니다.** 그런데 아무도 모릅니다 — 실패 알림은 "돌다가 실패했을 때"만
+       나가고, 아예 안 돈 건 조용하거든요. 정작 알게 되는 건 데이터가 날아가서
+       되돌리려는 순간이에요.
+
+    폴더 이름에서 날짜를 읽는 규칙이라 정적으로는 못 봐요. 진짜 함수를 부릅니다.
+    """
+    import datetime as _dt
+
+    cog = bot.get_cog("ChunsikBackup")
+    if cog is None:
+        return []          # 백업을 안 담은 구성 — 볼 것이 없어요
+    backup = sys.modules[type(cog).__module__]
+
+    problems = []
+    today = _dt.date(2026, 9, 8)
+
+    def want(label, got, expected):
+        if got != expected:
+            problems.append(f"{label} — 기대 {expected!r}, 실제 {got!r}")
+
+    want("오늘 폴더 이름을 날짜로 못 읽음", backup.backup_day("2026-09-08"), today)
+    # 반쪽 백업도 그날 한 번 돌긴 돈 거예요. 그것 때문에 또 돌리면 안 됩니다.
+    want("`.partial`을 같은 날로 안 봄", backup.backup_day("2026-09-08.partial"), today)
+    for junk in ("backups", "2026-13-40", "", "2026-09-08.corrupt_1"):
+        want(f"날짜가 아닌 이름({junk!r})을 날짜로 읽음", backup.backup_day(junk), None)
+
+    want("제일 최근 날짜를 못 고름",
+         backup.latest_backup_day(["2026-09-01", "엉뚱한폴더", "2026-09-05.partial", "2026-09-03"]),
+         _dt.date(2026, 9, 5))
+    want("백업이 하나도 없을 때", backup.latest_backup_day([]), None)
+
+    want("한 번도 백업이 없는데 따라잡지 않음", backup.needs_catch_up(None, today), True)
+    want("어제가 마지막인데 따라잡지 않음",
+         backup.needs_catch_up(_dt.date(2026, 9, 7), today), True)
+    # 같은 날 여러 번 재시작해도 다시 돌면 안 돼요. (매번 파일을 통째로 복사합니다)
+    want("오늘 것이 있는데 또 돌림", backup.needs_catch_up(today, today), False)
+
+    # 기동 경로에 실제로 걸려 있는지. 규칙만 맞고 아무도 안 부르면 소용없어요.
+    # 🕳️ 이름이 파일 어딘가에 있는지로 보면 안 됩니다 — 함수 **정의**가 그대로 남아 있으면
+    #    호출을 지워도 통과해요. before_loop 안에 진짜 호출이 있는지 봅니다.
+    #    (루프 안전망 검사에서 주석 글자에 속았던 것과 같은 함정이에요)
+    with open(backup.__file__, "r", encoding="utf-8") as f:
+        tree = ast.parse(f.read())
+    called = False
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef)):
+            continue
+        if not any(ast.unparse(d).endswith(".before_loop") for d in node.decorator_list):
+            continue
+        for call in ast.walk(node):
+            if isinstance(call, ast.Call):
+                func = call.func
+                name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", None)
+                if name == "_catch_up_if_missed":
+                    called = True
+    if not called:
+        problems.append("따라잡기를 기동 경로(@daily_backup_loop.before_loop)에서 부르지 않아요 "
+                        "— 놓친 날이 그대로 지나갑니다")
+    return problems
+
+
 def _check_role_reads():
     """설정의 역할 ID를 **직접 꺼내 쓰는** 자리를 찾습니다. 반드시 `_get_role_ids`를 거쳐야 해요.
 
@@ -663,6 +730,13 @@ async def main(label, max_names):
         for problem in loop_guards:
             print(f"     - {problem}")
 
+    # 💾 새벽 3시를 놓친 날 백업이 스스로 따라잡는지. (진짜 함수를 불러봐요)
+    catch_up = _check_backup_catch_up(bot)
+    print(f"  백업 따라잡기: {'✅ 놓친 날 스스로 돌아요' if not catch_up else f'🚨 {len(catch_up)}건'}")
+    if catch_up:
+        for problem in catch_up:
+            print(f"     - {problem}")
+
     # 🛡️ 역할 ID를 _get_role_ids 없이 직접 꺼내 쓰는 자리가 없는지. (정적 검사)
     role_reads = _check_role_reads()
     print(f"  역할 읽기   : {'✅ 전부 _get_role_ids 경유' if not role_reads else f'🚨 {len(role_reads)}건'}")
@@ -699,7 +773,7 @@ async def main(label, max_names):
     await bot.close()
 
     failed = bool(bot.failed_modules or too_long or ownership or loop_guards or role_reads
-                  or echoes or backoff or delivery)
+                  or catch_up or echoes or backoff or delivery)
 
     # 기본 실행이면 "이름을 상한까지 늘린" 검사도 자동으로 한 번 더 돌립니다.
     # (이름은 import 시점에 설명문으로 굳기 때문에 같은 프로세스에서 두 번 볼 수 없어요)
