@@ -990,6 +990,58 @@ def _check_setting_tables(bot):
     return problems
 
 
+def _check_josa():
+    """조사 고르기가 맞는지. (이름이 바뀌어도 문장이 안 깨지게 만든 자리예요)
+
+    🇰🇷 이름은 서버마다 달라집니다. "골드를"처럼 손으로 붙여두면 "코인"으로 바뀌는 순간
+       "코인를"이 돼요. 그걸 막으려고 josa()를 뒀는데, **정작 그 josa()가 틀리면**
+       같은 사고가 그대로 납니다. 여기서 한 번 태워봐요.
+
+    ⚠️ `으로/로`만 규칙이 다릅니다. 다른 짝은 "받침이 있느냐"만 보면 되는데 이건
+       **그 받침이 ㄹ이냐**를 봐야 해요. 숫자로 끝나는 이름에서 실제로 틀렸었습니다.
+    """
+    from chunsik_names import josa
+
+    cases = [
+        # (이름, 짝, 기대)
+        ("코인", "을를", "을"), ("루나", "을를", "를"),
+        ("코인", "이가", "이"), ("루나", "이가", "가"),
+        ("코인", "은는", "은"), ("루나", "은는", "는"),
+        ("코인", "와과", "과"), ("루나", "와과", "와"),
+        ("코인", "과와", "과"), ("루나", "과와", "와"),
+        ("하늘", "아야", "아"), ("루나", "아야", "야"),
+        ("코인", "이에요예요", "이에요"), ("루나", "이에요예요", "예요"),
+        # 으로/로 — ㄹ받침은 받침이 있어도 "로"
+        ("코인", "으로로", "으로"), ("루나", "으로로", "로"),
+        ("서울", "으로로", "로"), ("별", "으로로", "로"),
+        ("코인", "로으로", "으로"), ("서울", "로으로", "로"),
+        # 숫자로 끝나는 이름 — 소리 나는 대로 (일·칠·팔은 ㄹ받침)
+        ("코인1", "을를", "을"), ("코인2", "을를", "를"), ("코인3", "을를", "을"),
+        ("코인1", "으로로", "로"),   # "일로"
+        ("코인7", "으로로", "로"),   # "칠로"
+        ("코인8", "으로로", "로"),   # "팔로"
+        ("코인0", "으로로", "으로"),  # "영으로"
+        ("코인6", "으로로", "으로"),  # "육으로"
+        ("코인2", "으로로", "로"),   # "이로"
+        # 판단할 수 없는 글자로 끝나면 받침 없는 쪽 (덜 튀는 쪽을 고른 의도된 동작)
+        ("Gold", "을를", "를"), ("Gold", "으로로", "로"),
+    ]
+    problems = []
+    for word, pair, expected in cases:
+        got = josa(word, pair)
+        if got != expected:
+            problems.append(f"josa({word!r}, {pair!r}) → {got!r} (기대: {expected!r}) "
+                            f"— \"{word}{got}\"가 됩니다")
+
+    # 모르는 짝은 조용히 지나가면 안 돼요. 문장이 통째로 어긋난 채로 나갑니다.
+    try:
+        josa("코인", "없는짝")
+        problems.append("모르는 조사 짝인데 예외 없이 지나갔어요")
+    except ValueError:
+        pass
+    return problems
+
+
 def _check_delivery_ids():
     """납품물에 **원본 서버의 진짜 ID**가 남아 있는지 봅니다.
 
@@ -1144,6 +1196,12 @@ async def main(label, max_names):
             print(f"     - {problem}")
 
     # 🚚 납품물에 원본 서버의 진짜 ID가 섞여 있지 않은지. (이것도 정적 검사예요)
+    # 🇰🇷 조사 고르기. (이름이 바뀌어도 문장이 안 깨지게 만든 자리예요)
+    josa_problems = _check_josa()
+    print(f"  조사         : {'✅ 받침 판정 정상' if not josa_problems else f'🚨 {len(josa_problems)}건'}")
+    for problem in josa_problems:
+        print(f"     - {problem}")
+
     # 🧾 `/설정`의 손으로 쓴 표와 실제 하위 명령이 어긋나지 않았는지. (트리가 필요해요)
     setting_tables = _check_setting_tables(bot)
     print(f"  설정 표 짝   : {'✅ 표와 명령이 일치' if not setting_tables else f'🚨 {len(setting_tables)}건'}")
@@ -1165,7 +1223,7 @@ async def main(label, max_names):
 
     failed = bool(bot.failed_modules or too_long or ownership or loop_guards or role_reads
                   or catch_up or stale or perms or privacy or tone or echoes or backoff
-                  or delivery or setting_tables)
+                  or delivery or setting_tables or josa_problems)
 
     # 기본 실행이면 "이름을 상한까지 늘린" 검사도 자동으로 한 번 더 돌립니다.
     # (이름은 import 시점에 설명문으로 굳기 때문에 같은 프로세스에서 두 번 볼 수 없어요)
