@@ -743,7 +743,20 @@ def dangerous_permission(role: discord.Role) -> Optional[str]:
 
 
 def role_reject_reason(role: discord.Role, me: discord.Member) -> Optional[str]:
-    """이 역할을 '아무나 가져가는 역할'로 쓰면 안 되는 이유. 써도 되면 None."""
+    """이 역할을 '아무나 가져가는 역할'로 쓰면 안 되는 이유. 써도 되면 None.
+
+    🐛 [버그 수정] `me`(봇 자신)가 **None일 수 있어요.** `guild.me`는 멤버 캐시에서
+    자기 자신을 찾는 건데, 기동 직후나 재연결 직후엔 아직 안 들어와 있을 수 있습니다.
+    그러면 아래 `me.top_role`에서 AttributeError가 나고, 관리자 화면에는
+    "예상치 못한 오류"만 떠요. 무엇을 잘못했는지 알 방법이 없습니다.
+    `/설치`는 이미 `guild.me is None`을 보고 넘어가는데(cogs/wizard.py) 여기만 빠졌어요.
+
+    🚦 이때 **통과시키지 않습니다.** 봇 역할보다 위에 있는지를 확인할 수 없는 상태라,
+       그냥 담게 두면 나중에 버튼이 눌려도 역할이 안 붙어요. 잠시 뒤 다시 하라고 알립니다.
+    """
+    if me is None:
+        return ("⏳ 봇이 아직 자기 정보를 다 못 읽었어요. 잠시 뒤(보통 1분 안에) 다시 시도해 주세요.\n"
+                "└ 이 역할이 봇 역할보다 위에 있는지 확인할 수가 없어서 멈췄습니다.")
     if role.is_default():
         return "`@everyone`은 담을 수 없어요."
     if role.managed:
