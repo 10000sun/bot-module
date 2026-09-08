@@ -57,7 +57,16 @@ MAX_IMPORT_PEOPLE = 1000
 MAX_SEGMENTS_PER_MESSAGE = 20   # 메세지 하나에서 처리할 조각 수
 MAX_PENDING_PER_MESSAGE = 5     # 메세지 하나가 만들 수 있는 '관리자 확인 요청' 수
 MAX_PENDING_TOTAL = 200         # 대기열 전체. 넘으면 새 요청을 안 받아요 (`/아이디 대기열정리`)
-MAX_NOTICE_LENGTH = 500  # 명단 맨 아래에 붙는 공지 한 덩어리
+MAX_NOTICE_LENGTH = 500  # 명단 맨 아래에 붙는 공지 **한 번에 넣는 양**
+
+# 📢 공지 **전체**의 상한.
+#
+# 🐛 [버그] 한 번에 넣는 양(위 500자)만 막고 **쌓이는 총량은 안 봤어요.** `/아이디 공지`는
+#    기본이 "이어붙이기"라 부를 때마다 계속 길어집니다. 그러면
+#      · `/아이디 공지`(내용 없이)로 확인하려 하면 본문 한도를 넘겨 **화면이 안 뜨고**
+#      · 명단 맨 아래 공지 칸이 메세지 여러 개로 불어납니다
+#    공지는 "한 줄 안내"로 만든 자리예요. 2,000자면 충분히 넉넉합니다.
+MAX_NOTICE_TOTAL = 2000
 
 ROSTER_CHUNK_LIMIT = 1800   # ```ansi 코드블록 오버헤드를 뺀 한 메세지 분량
 
@@ -642,7 +651,10 @@ class ChunsikIds(commands.Cog):
                 if not current:
                     await interaction.response.send_message("ℹ️ 등록된 공지사항이 없어요. `/아이디공지 내용:...`으로 추가할 수 있어요.", ephemeral=True)
                 else:
-                    await interaction.response.send_message(f"📋 **현재 공지사항**\n```\n{current}\n```", ephemeral=True)
+                    # ✂️ 상한이 생기기 전에 쌓인 긴 공지가 남아 있을 수 있어요. 그대로 실으면
+                    #    **공지를 확인하려는 화면 자체가 안 뜹니다.**
+                    await interaction.response.send_message(
+                        f"📋 **현재 공지사항**\n```\n{clip(current, MAX_NOTICE_TOTAL)}\n```", ephemeral=True)
             else:
                 내용 = 내용.replace("\\n", "\n")
 
@@ -653,7 +665,16 @@ class ChunsikIds(commands.Cog):
                     msg = "✅ 공지사항을 통째로 새로 바꿨어요! 아이디 명단 맨 아래에 반영할게요."
                 else:
                     existing = settings.get("id_roster_notice", "").strip()
-                    settings["id_roster_notice"] = f"{existing}\n{내용}" if existing else 내용
+                    merged = f"{existing}\n{내용}" if existing else 내용
+                    # 📏 쌓이는 총량을 봅니다. 넘치면 **붙이지 않고** 알려요 — 앞부분을 말없이
+                    #    잘라내면 예전에 적어둔 안내가 조용히 사라집니다.
+                    if len(merged) > MAX_NOTICE_TOTAL:
+                        return await interaction.response.send_message(
+                            f"❌ 공지가 너무 길어져요. (지금 {len(existing)}자 + 새로 {len(내용)}자 "
+                            f"> 최대 {MAX_NOTICE_TOTAL}자)\n"
+                            f"└ `덮어쓰기: True`로 통째로 새로 쓰거나, `삭제: True`로 비운 뒤 다시 적어주세요.",
+                            ephemeral=True)
+                    settings["id_roster_notice"] = merged
                     msg = "✅ 공지사항에 추가했어요! 아이디 명단 맨 아래에 반영할게요."
 
                 save_settings(settings)

@@ -8,7 +8,7 @@ from discord.ext import commands
 
 from chunsik_config import ENABLED_MODULE_KEYS, KST
 from modules import is_active
-from chunsik_utils import ChunsikView, add_lines_field, fit_embed
+from chunsik_utils import MESSAGE_LIMIT, ChunsikView, add_lines_field, clip, fit_embed
 from chunsik_settings import FEATURE_KEYS, FEATURE_LIST_TEXT, _get_role_ids, has_admin_or_role, is_super_admin, load_settings, save_settings, send_log_embed, set_all_features_enabled, set_feature_enabled
 from chunsik_names import (MAX_NAME_LENGTH, NAME_FIELDS, bot_name, currency, event_name,
                         get_names, josa, save_names, validate_name)
@@ -392,7 +392,10 @@ class ChunsikSetting(commands.Cog):
         save_settings(settings)
 
         if role_ids:
-            current = ", ".join(f"<@&{rid}>" for rid in role_ids)
+            # ✂️ 한 기능에 역할을 몇 개까지 담을지는 안 막고 있어요(그게 이 명령의 취지고요).
+            #    그런데 멘션 하나가 22자쯤이라 90개쯤부터 본문 한도(2,000자)를 넘깁니다.
+            #    그러면 **저장은 이미 끝난 뒤**라 "안 됐나?" 하고 다시 치게 돼요. (#25와 같은 모양)
+            current = clip(", ".join(f"<@&{rid}>" for rid in role_ids), MESSAGE_LIMIT // 2)
             msg += f"\n현재 **{label}**: {current}"
         await interaction.response.send_message(msg, ephemeral=True)
 
