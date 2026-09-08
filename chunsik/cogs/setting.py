@@ -635,25 +635,19 @@ class ChunsikSetting(commands.Cog):
 
         role_lines = []
         for key, label in role_labels.items():
-            if key in ("chief_role",):
-                # 👑 대장 역할은 "누가 쓸 수 있는지"가 아니라 "어느 역할을 가리키는지"라
-                # 지금처럼 단일 역할로 유지해요.
-                rid = roles.get(key)
-                if rid:
+            # 👑 대장도 여기서는 갈라놓지 않아요. 대장은 "단일 역할"이라는 뜻이지
+            #    "저장 형식이 다르다"는 뜻이 아닙니다. 예전엔 대장만 숫자 하나로 읽어서,
+            #    `/설치`가 적어둔 `[역할ID]`를 못 알아보고 "⚠️(역할을 찾을 수 없음)"이
+            #    떴어요. _get_role_ids가 두 형식을 다 받아줍니다.
+            role_ids = _get_role_ids({"roles": roles}, key)
+            if role_ids:
+                mentions = []
+                for rid in role_ids:
                     role = interaction.guild.get_role(rid)
-                    value = role.mention if role else f"<@&{rid}> ⚠️(역할을 찾을 수 없음)"
-                else:
-                    value = "❌ 미설정"
+                    mentions.append(role.mention if role else f"<@&{rid}> ⚠️")
+                value = ", ".join(mentions)
             else:
-                role_ids = _get_role_ids({"roles": roles}, key)
-                if role_ids:
-                    mentions = []
-                    for rid in role_ids:
-                        role = interaction.guild.get_role(rid)
-                        mentions.append(role.mention if role else f"<@&{rid}> ⚠️")
-                    value = ", ".join(mentions)
-                else:
-                    value = "❌ 미설정"
+                value = "❌ 미설정"
             role_lines.append(f"{label}: {value}")
         embed.add_field(name="🛡️ 관리자 역할 설정", value="\n".join(role_lines) or "지정할 역할이 없어요.", inline=False)
 

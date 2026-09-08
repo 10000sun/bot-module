@@ -327,6 +327,42 @@ def _check_loop_guards():
     return problems
 
 
+def _check_role_reads():
+    """설정의 역할 ID를 **직접 꺼내 쓰는** 자리를 찾습니다. 반드시 `_get_role_ids`를 거쳐야 해요.
+
+    🚨 역할 지정은 예전엔 숫자 하나였고 지금은 **목록**이에요. `/설치`(설치 마법사)는
+       역할을 전부 `[역할ID]` 꼴로 적습니다. 그래서 어딘가에서 숫자 하나로 꺼내
+       `r.id == 값`으로 비교하면 `[123] == 123`이 되어 **언제나 False**가 돼요.
+
+       실제로 대장(chief_role)이 그 상태였습니다 — `/설치`로 세팅한 서버에서는 대장이
+       `/기능제어`를 아예 못 쓰고 아이디 명단의 '대장' 칸도 영영 비어 있었어요.
+       오류가 안 나고 "권한이 없어요"만 뜨니 원인을 알 방법이 없습니다.
+       **손으로 `/설정 명단 대장`을 다시 친 서버에서만** 우연히 동작했어요.
+
+    `_get_role_ids`는 두 형식을 다 받아줍니다. 읽을 때는 그것만 씁니다.
+    (저장하는 쪽 `settings["roles"][key] = ...`은 대입이라 여기 안 걸려요)
+    """
+    problems = []
+    reads = re.compile(r'(?:settings|cfg|data)?\s*\.?get\("roles",\s*\{\}\)\.get\(')
+    files = [os.path.join(CHUNSIK, f) for f in sorted(os.listdir(CHUNSIK)) if f.endswith(".py")]
+    cogs_dir = os.path.join(CHUNSIK, "cogs")
+    files += [os.path.join(cogs_dir, f) for f in sorted(os.listdir(cogs_dir)) if f.endswith(".py")]
+
+    for path in files:
+        rel = os.path.relpath(path, os.path.dirname(HERE))
+        with open(path, "r", encoding="utf-8") as f:
+            lines = f.read().splitlines()
+        for no, line in enumerate(lines, start=1):
+            if not reads.search(line):
+                continue
+            # _get_role_ids 자신은 이 일을 하라고 있는 함수예요.
+            if "chunsik_settings.py" in path and "def _get_role_ids" in "\n".join(lines[max(0, no - 8):no]):
+                continue
+            problems.append(f"{rel}:{no}: 역할 ID를 직접 꺼냈어요 — _get_role_ids를 쓰세요 "
+                            f"(목록으로 저장된 값이면 언제나 어긋납니다)")
+    return problems
+
+
 def _check_input_echo():
     """상한 없는 입력값을 **안내 문구에 그대로 되돌려 적는** 자리를 찾습니다.
 
@@ -593,6 +629,13 @@ async def main(label, max_names):
         for problem in loop_guards:
             print(f"     - {problem}")
 
+    # 🛡️ 역할 ID를 _get_role_ids 없이 직접 꺼내 쓰는 자리가 없는지. (정적 검사)
+    role_reads = _check_role_reads()
+    print(f"  역할 읽기   : {'✅ 전부 _get_role_ids 경유' if not role_reads else f'🚨 {len(role_reads)}건'}")
+    if role_reads:
+        for problem in role_reads:
+            print(f"     - {problem}")
+
     # ✂️ 상한 없는 입력을 안내 문구에 그대로 되돌려 적는 자리가 없는지. (정적 검사)
     echoes = _check_input_echo()
     print(f"  입력 되돌림 : {'✅ 전부 잘라서 적음' if not echoes else f'🚨 {len(echoes)}건'}")
@@ -621,8 +664,8 @@ async def main(label, max_names):
 
     await bot.close()
 
-    failed = bool(bot.failed_modules or too_long or ownership or loop_guards or echoes
-                  or backoff or delivery)
+    failed = bool(bot.failed_modules or too_long or ownership or loop_guards or role_reads
+                  or echoes or backoff or delivery)
 
     # 기본 실행이면 "이름을 상한까지 늘린" 검사도 자동으로 한 번 더 돌립니다.
     # (이름은 import 시점에 설명문으로 굳기 때문에 같은 프로세스에서 두 번 볼 수 없어요)
