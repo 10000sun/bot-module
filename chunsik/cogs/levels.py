@@ -22,7 +22,7 @@ from discord.ext import commands, tasks
 
 from chunsik_alerts import report_loop_error
 from chunsik_names import currency
-from chunsik_settings import (feature_gate, has_admin_or_role, is_feature_enabled,
+from chunsik_settings import (feature_gate, has_admin_or_role, is_feature_enabled, send_log_embed,
                            load_settings)
 from chunsik_state import load_levels, save_levels
 from chunsik_storage import DataSaveError
@@ -386,6 +386,20 @@ class ChunsikLevels(commands.Cog):
         after = level_from_xp(entry["xp"])[0]
         self._dirty = True
         self._flush()
+
+        # 🧾 [신규] 남의 누적 경험치를 더하고 빼는 명령인데 **어디에도 흔적이 없었어요.**
+        #    순위가 바뀌는데 "내 레벨 왜 내려갔어요?"에 답할 방법이 없습니다.
+        #    (level_admin 역할로 위임할 수 있어서 서버 주인이 아닌 사람도 씁니다)
+        await send_log_embed(
+            self.bot, "level_log", f"{멤버.mention} 님의 경험치를 관리자가 조정했어요.",
+            fields=[
+                ("조정", f"{경험치:+,}", True),
+                ("누적", f"{entry['xp']:,}", True),
+                ("레벨", f"{before} → {after}", True),
+                ("처리 관리자", interaction.user.mention, False),
+            ],
+            guild=interaction.guild,
+        )
         await interaction.response.send_message(
             f"✅ {멤버.mention} 의 경험치를 {경험치:+,} 했어요. (누적 {entry['xp']:,} · 레벨 {before} → {after})\n"
             f"⚠️ 레벨이 올랐어도 역할 보상은 자동으로 나가지 않아요. 필요하면 `/역할부여`로 직접 주세요.",

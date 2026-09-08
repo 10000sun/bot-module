@@ -20,7 +20,7 @@ from discord.ext import commands, tasks
 
 from chunsik_alerts import report_loop_error
 from chunsik_config import KST, module_active
-from chunsik_settings import feature_gate, has_admin_or_role, is_feature_enabled
+from chunsik_settings import feature_gate, has_admin_or_role, is_feature_enabled, send_log_embed
 from chunsik_state import load_party, save_party, state
 from chunsik_utils import (EMBED_DESC_LIMIT, EMBED_TITLE_LIMIT, MESSAGE_LIMIT,
                         ChunsikView, add_lines_field, clip, fit_embed, mention_list,
@@ -381,5 +381,13 @@ class ChunsikParty(commands.Cog):
             for pid in closed:
                 parties.pop(pid, None)
             self._save(parties)
+        # 🧾 [신규] 지난 기록을 지우는 명령인데 흔적이 없었어요.
+        if closed:
+            await send_log_embed(
+                self.bot, "party_log", "끝난 파티 모집 기록을 정리했어요.",
+                fields=[("지운 건수", f"{len(closed)}건", True),
+                        ("처리 관리자", interaction.user.mention, True)],
+                guild=interaction.guild,
+            )
         await interaction.response.send_message(
             f"🧹 끝난 모집 {len(closed)}건을 지웠어요. (올라간 메시지는 그대로 남아 있어요)", ephemeral=True)

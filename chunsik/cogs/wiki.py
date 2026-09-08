@@ -14,8 +14,8 @@ from discord import app_commands
 from discord.ext import commands
 
 from chunsik_config import KST
-from chunsik_settings import feature_gate, has_admin_or_role
-from chunsik_utils import EMBED_DESC_LIMIT, INPUT_ECHO_LIMIT, chunk_lines, clip, fit_embed
+from chunsik_settings import feature_gate, has_admin_or_role, send_log_embed
+from chunsik_utils import EMBED_DESC_LIMIT, EMBED_FIELD_LIMIT, INPUT_ECHO_LIMIT, chunk_lines, clip, fit_embed
 from chunsik_state import load_wiki, save_wiki
 from chunsik_names import server_name
 
@@ -203,6 +203,18 @@ class ChunsikWiki(commands.Cog):
         data["wiki"][user_id][field_name] = new_value
         stamp_editor(data["wiki"][user_id], interaction.user.display_name)
         save_wiki(data)
+        # 🧾 [신규] 남의 프로필을 고치는 명령이라 흔적이 남아야 해요.
+        #    ⚠️ 이 코그는 __init__이 없어서 self.bot이 **없어요.** interaction.client를 씁니다.
+        #    ✂️ 새 내용은 유저가 자유롭게 적는 값이라 칸 한도를 넘길 수 있습니다.
+        await send_log_embed(
+            interaction.client, "wiki_log", f"{member.mention} 님의 위키를 고쳤어요.",
+            fields=[
+                ("항목", field_name, True),
+                ("처리 관리자", interaction.user.mention, True),
+                ("새 내용", clip(new_value, EMBED_FIELD_LIMIT) or "*(비움)*", False),
+            ],
+            guild=interaction.guild,
+        )
         note = (f"\n⚠️ {FIELD_LIMIT}자를 넘어서 조회할 땐 뒷부분이 생략돼요."
                 if len(new_value) > FIELD_LIMIT else "")
         await interaction.followup.send(f"✅ `{member.display_name}` 님의 `{field_name}` 항목을 수정했어요!{note}", ephemeral=True)
@@ -224,8 +236,20 @@ class ChunsikWiki(commands.Cog):
             await interaction.followup.send("❌ 그 아이디로 등록된 위키가 없어요.", ephemeral=True)
             return
 
+        # 🧾 [신규] **지우면 흔적이 통째로 사라지던** 자리예요. 지우기 전에 무엇이 있었는지
+        #    한 줄이라도 남겨둡니다. (편집자 표시는 남겨도 지워진 내용은 못 되살리니까요)
+        gone = data["wiki"][user_id]
         del data["wiki"][user_id]
         save_wiki(data)
+        filled = ", ".join(k for k, v in gone.items() if v and k not in ("편집자", "수정일"))
+        await send_log_embed(
+            interaction.client, "wiki_log", f"<@{user_id}> 님의 위키를 **지웠어요.**",
+            fields=[
+                ("처리 관리자", interaction.user.mention, True),
+                ("지워진 항목", clip(filled, EMBED_FIELD_LIMIT) or "*(비어 있었어요)*", False),
+            ],
+            guild=interaction.guild,
+        )
         await interaction.followup.send(f"🗑️ `{clip(user_id, INPUT_ECHO_LIMIT)}` 의 위키를 지웠어요.")
 
     @wiki_group.command(name="목록", description="등록된 모든 위키 항목을 보여줘요")

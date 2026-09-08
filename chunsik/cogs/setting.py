@@ -169,6 +169,7 @@ _ICONS = {
     "role_log": "👥", "member_log": "🚪", "welcome": "👋",
     "birthday_announce": "🎂", "birthday_log": "🎉",
     "evashi_announce": "🎉", "scrim_log": "⚔️", "level_announce": "🎚️",
+    "party_log": "🎯", "level_log": "🎚️", "wiki_log": "📖",
     "settings_admin": "🔧", "ids_admin": "🆔", "shop_admin": "🛒",
     "stock_admin": "📈", "evashi_admin": "🎉", "chronicle_admin": "📜",
     "test_admin": "🧪", "selfrole_admin": "🎚️", "welcome_admin": "🚪",
@@ -194,7 +195,8 @@ class ChunsikSetting(commands.Cog):
         "아이디등록": "id_submit", "역할로그": "role_log",
         "생일알림": "birthday_announce", "생일로그": "birthday_log",
         "환영": "welcome", "입퇴장로그": "member_log", "레벨알림": "level_announce",
-        "내전로그": "scrim_log",
+        "내전로그": "scrim_log", "파티로그": "party_log",
+        "레벨로그": "level_log", "위키로그": "wiki_log",
     }
     _ROLE_COMMANDS = {
         "설정": "settings_admin",
@@ -620,6 +622,37 @@ class ChunsikSetting(commands.Cog):
         save_settings(settings)
         await interaction.response.send_message(f"📌 내전 로그 채널이 {채널.mention}로 설정됐어요.", ephemeral=True)
 
+    # 🧾 [신규] 관리자 행동인데 흔적이 안 남던 것들의 자리예요.
+    #    돈 쪽은 "내 재화 왜 줄었어요?" 문의 때문에 원장까지 만들어뒀는데, 레벨·위키·파티는
+    #    같은 질문이 와도 답할 방법이 없었습니다. (`/레벨 조정`은 남의 누적 경험치를 더하고
+    #    빼고, `/위키 삭제`는 남의 프로필을 통째로 지웁니다)
+    @채널.command(name="레벨로그", description="[관리자] 관리자가 경험치를 조정한 기록이 남을 채널이에요.")
+    async def set_level_log_ch(self, interaction: discord.Interaction, 채널: discord.TextChannel):
+        if not self.has_channel_permission(interaction): return await interaction.response.send_message("❌ 서버 관리자이거나 **설정 관리자** 역할이 있어야 해요! (`/설정 관리자 설정`으로 지정)", ephemeral=True)
+        settings = load_settings()
+        if "channels" not in settings: settings["channels"] = {}
+        settings["channels"]["level_log"] = 채널.id
+        save_settings(settings)
+        await interaction.response.send_message(f"📌 레벨 로그 채널이 {채널.mention}로 설정됐어요.", ephemeral=True)
+
+    @채널.command(name="위키로그", description="[관리자] 위키를 고치고 지운 기록이 남을 채널이에요.")
+    async def set_wiki_log_ch(self, interaction: discord.Interaction, 채널: discord.TextChannel):
+        if not self.has_channel_permission(interaction): return await interaction.response.send_message("❌ 서버 관리자이거나 **설정 관리자** 역할이 있어야 해요! (`/설정 관리자 설정`으로 지정)", ephemeral=True)
+        settings = load_settings()
+        if "channels" not in settings: settings["channels"] = {}
+        settings["channels"]["wiki_log"] = 채널.id
+        save_settings(settings)
+        await interaction.response.send_message(f"📌 위키 로그 채널이 {채널.mention}로 설정됐어요.", ephemeral=True)
+
+    @채널.command(name="파티로그", description="[관리자] 파티 모집 기록을 정리한 흔적이 남을 채널이에요.")
+    async def set_party_log_ch(self, interaction: discord.Interaction, 채널: discord.TextChannel):
+        if not self.has_channel_permission(interaction): return await interaction.response.send_message("❌ 서버 관리자이거나 **설정 관리자** 역할이 있어야 해요! (`/설정 관리자 설정`으로 지정)", ephemeral=True)
+        settings = load_settings()
+        if "channels" not in settings: settings["channels"] = {}
+        settings["channels"]["party_log"] = 채널.id
+        save_settings(settings)
+        await interaction.response.send_message(f"📌 파티 로그 채널이 {채널.mention}로 설정됐어요.", ephemeral=True)
+
     @채널.command(name="환영", description="[관리자] 새로 들어온 멤버에게 인사를 올릴 채널이에요.")
     async def set_welcome_ch(self, interaction: discord.Interaction, 채널: discord.TextChannel):
         if not self.has_channel_permission(interaction): return await interaction.response.send_message("❌ 서버 관리자이거나 **설정 관리자** 역할이 있어야 해요! (`/설정 관리자 설정`으로 지정)", ephemeral=True)
@@ -674,7 +707,7 @@ class ChunsikSetting(commands.Cog):
         roles = settings.get("roles", {})
 
         # 🐛 [버그 수정] 여기엔 **손으로 적은 표**가 따로 있었어요. 그 뒤에 채널·역할이
-        #    늘면서 표는 안 따라갔고, 지정할 수 있는 채널 18개 중 5개, 역할 13개 중 6개가
+        #    늘면서 표는 안 따라갔고, 지정할 수 있는 채널 가운데 5개, 역할 가운데 6개가
         #    **이 화면에서 통째로 빠져 있었습니다.**
         #      · 채널: 상점 전광판 · 환영 · 입퇴장 로그 · 내전 로그 · 레벨 알림
         #      · 역할: 셀프역할 · 입장 · 레벨 · 파티 · 내전 · 테스트(일부)
