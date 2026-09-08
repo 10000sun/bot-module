@@ -15,7 +15,8 @@ from chunsik_alerts import report_loop_error
 from chunsik_settings import is_feature_enabled
 from chunsik_storage import atomic_json_save, safe_json_load
 from chunsik_state import load_wiki, state
-from chunsik_utils import find_guild_member_by_name, holding_avg_price, holding_shares
+from chunsik_utils import (EMBED_DESC_LIMIT, INPUT_ECHO_LIMIT, clip,
+                           find_guild_member_by_name, holding_avg_price, holding_shares)
 from chunsik_names import bot_name, currency, josa
 
 # ========== 🎭 봇 페르소나 프롬프트 ==========
@@ -166,6 +167,14 @@ class ChunsikGPT(commands.Cog):
         # 🧠 [신규] 유저별 장기 기억 (짧은 사실 목록, 추가 API 호출 없이 대화 중 자연스럽게 기록)
         self.CHUNSIK_USER_MEMORY_FILE = CHUNSIK_USER_MEMORY_FILE
         self.USER_MEMORY_MAX_FACTS = 20  # 유저 1명당 최대 저장 개수 (토큰 비용 관리)
+        # ✂️ 기억 한 줄의 길이 상한.
+        #
+        # 🐛 [버그] 개수만 막고 **길이는 안 막았어요.** 이 값을 쓰는 건 사람이 아니라 AI라서,
+        #    "짧은 한 문장으로 요약하세요"라고 부탁만 해뒀지 강제는 아니었습니다. 길게 저장되면
+        #      · 그 뒤 **모든 대화의 프롬프트에 매번 실려서** 토큰(=돈)이 계속 나가고
+        #      · `/기억 목록`이 설명 한도(4096자)를 넘겨 **자기 기억을 보지도 지우지도 못하게** 돼요
+        #    한 문장 요약이라면 200자면 충분합니다.
+        self.USER_MEMORY_MAX_LENGTH = 200
 
         # 💡 [최적화] 메시지마다 클라이언트를 새로 생성하지 않도록 __init__에서 한 번만 초기화
         # 🔐 [변경] API 키는 코드가 아니라 .env의 GEMINI_API_KEY에서 읽어옵니다.
@@ -315,6 +324,9 @@ class ChunsikGPT(commands.Cog):
         fact = fact.strip()
         if not fact:
             return "빈 내용은 기억할 수 없어요."
+        # ✂️ 길이는 여기서 끊습니다. (부탁만으로는 안 지켜져요 — 위 상수 설명 참고)
+        if len(fact) > self.USER_MEMORY_MAX_LENGTH:
+            fact = fact[:self.USER_MEMORY_MAX_LENGTH - 1] + "…"
         data = self._load_user_memory()
         facts = data.setdefault(str(user_id), [])
         if fact in facts:
@@ -338,10 +350,13 @@ class ChunsikGPT(commands.Cog):
         facts = self._get_user_facts(interaction.user.id)
         if not facts:
             return await interaction.response.send_message(f"ℹ️ 아직 {bot_name()}{josa(bot_name(), '이가')} 기억하고 있는 내용이 없어요.", ephemeral=True)
-        lines = "\n".join(f"{i+1}. {f}" for i, f in enumerate(facts))
+        # ✂️ 상한이 생기기 전에 저장된 긴 기억이 남아 있을 수 있어요. 그대로 실으면
+        #    **자기 기억을 보지도 지우지도 못하게** 됩니다.
+        lines = "\n".join(f"{i+1}. {clip(f, self.USER_MEMORY_MAX_LENGTH)}"
+                          for i, f in enumerate(facts))
         embed = discord.Embed(
             title=f"🧠 {bot_name()}{josa(bot_name(), '이가')} 기억하고 있는 것",
-            description=lines,
+            description=clip(lines, EMBED_DESC_LIMIT),
             color=0x5ce6b4,
         )
         embed.set_footer(text="/기억 삭제 번호 로 개별 삭제, /기억 초기화 로 전체 삭제할 수 있어요.")
@@ -357,7 +372,8 @@ class ChunsikGPT(commands.Cog):
             return await interaction.response.send_message(f"❌ 유효하지 않은 번호예요. (현재 {len(facts)}개 저장됨)", ephemeral=True)
         removed = facts.pop(번호 - 1)
         self._save_user_memory(data)
-        await interaction.response.send_message(f"🗑️ 지웠어요: {removed}", ephemeral=True)
+        await interaction.response.send_message(
+            f"🗑️ 지웠어요: {clip(removed, INPUT_ECHO_LIMIT)}", ephemeral=True)
 
     @memory_group.command(name="초기화", description=f"{bot_name()}{josa(bot_name(), '이가')} 나에 대해 기억하고 있는 내용을 전부 지워요.")
     async def clear_my_memory(self, interaction: discord.Interaction):
