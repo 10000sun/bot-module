@@ -1050,12 +1050,14 @@ class ChunsikStock(commands.Cog):
             color=0xffcc00
         )
         if held_stocks:
+            # ✂️ 종목 이름 상한(MAX_STOCK_NAME)이 생기기 전에 등록된 긴 이름이 남아 있을 수 있어요.
+            #    그러면 이 칸이 1024자를 넘겨 **종가 승인 화면 자체가 안 뜹니다.**
             embed.add_field(
                 name="🔹 변동 없이 '유지'로 자동 처리될 종목",
-                value=", ".join(f"`{s}`" for s in held_stocks),
+                value=clip(", ".join(f"`{s}`" for s in held_stocks), EMBED_FIELD_LIMIT),
                 inline=False,
             )
-        await interaction.response.send_message(embed=embed, view=view)
+        await interaction.response.send_message(embed=fit_embed(embed), view=view)
         
         # 종가게시 요청 트리거 로그 기록
         await self._log_to_channel(text=f"🔔 {interaction.user.mention} 관리자가 **종가 게시 정산 승인 절차**를 시작했어요. (승인 패널 대기 중)")
