@@ -26,7 +26,8 @@ from chunsik_settings import (feature_gate, has_admin_or_role, is_feature_enable
                            load_settings)
 from chunsik_state import load_levels, save_levels
 from chunsik_storage import DataSaveError
-from chunsik_utils import EMBED_FIELD_LIMIT, clip, dangerous_permission, role_reject_reason
+from chunsik_utils import (MAX_AMOUNT, MAX_REWARD_LEVEL, MAX_XP_COOLDOWN, EMBED_FIELD_LIMIT,
+                           clip, dangerous_permission, role_reject_reason)
 
 SAVE_INTERVAL_SECONDS = 30
 
@@ -277,7 +278,8 @@ class ChunsikLevels(commands.Cog):
 
     @레벨.command(name="보상설정", description="[관리자] 그 레벨에 도달하면 자동으로 붙을 역할을 정해요.")
     @app_commands.describe(레벨="달성 레벨 (1 이상)", 역할="줄 역할")
-    async def set_reward(self, interaction: discord.Interaction, 레벨: int, 역할: discord.Role):
+    async def set_reward(self, interaction: discord.Interaction,
+                         레벨: app_commands.Range[int, 1, MAX_REWARD_LEVEL], 역할: discord.Role):
         if await self._guard(interaction):
             return
         if 레벨 < 1:
@@ -296,7 +298,8 @@ class ChunsikLevels(commands.Cog):
 
     @레벨.command(name="보상삭제", description="[관리자] 그 레벨의 역할 보상을 없애요.")
     @app_commands.describe(레벨="지울 보상의 레벨")
-    async def remove_reward(self, interaction: discord.Interaction, 레벨: int):
+    async def remove_reward(self, interaction: discord.Interaction,
+                            레벨: app_commands.Range[int, 1, MAX_REWARD_LEVEL]):
         if await self._guard(interaction):
             return
         if self._data["rewards"].pop(str(레벨), None) is None:
@@ -316,13 +319,27 @@ class ChunsikLevels(commands.Cog):
         app_commands.Choice(name="지정 채널 (/설정 채널 레벨알림)", value="channel"),
         app_commands.Choice(name="안 올림", value="off"),
     ])
-    async def configure(self, interaction: discord.Interaction, 최소: int = None, 최대: int = None,
-                        쿨다운: int = None, 레벨업보상: int = None,
+    async def configure(self, interaction: discord.Interaction,
+                        최소: app_commands.Range[int, 1, MAX_AMOUNT] = None,
+                        최대: app_commands.Range[int, 1, MAX_AMOUNT] = None,
+                        쿨다운: app_commands.Range[int, 0, MAX_XP_COOLDOWN] = None,
+                        레벨업보상: app_commands.Range[int, 0, MAX_AMOUNT] = None,
                         알림: app_commands.Choice[str] = None):
         if await self._guard(interaction):
             return
 
         cfg = self._data.setdefault("config", {})
+
+        # 🔢 최소가 최대보다 크면 **조용히 최소값으로 고정**돼요(아래 부여 자리가
+        #    max(min, max)로 막고 있어서 터지진 않습니다). 그런데 화면에는 "100~5"라고
+        #    떠서 관리자는 자기가 뒤집어 넣은 걸 모릅니다. 저장 전에 알려요.
+        new_min = 최소 if 최소 is not None else self._config()["min_xp"]
+        new_max = 최대 if 최대 is not None else self._config()["max_xp"]
+        if new_min > new_max:
+            return await interaction.response.send_message(
+                f"❌ 최소({new_min:,})가 최대({new_max:,})보다 커요. 두 값을 바꿔서 넣어주세요.\n"
+                f"└ 아무것도 저장하지 않았습니다.", ephemeral=True)
+
         if 최소 is not None:
             cfg["min_xp"] = max(1, 최소)
         if 최대 is not None:
@@ -359,7 +376,8 @@ class ChunsikLevels(commands.Cog):
 
     @레벨.command(name="조정", description="[관리자] 특정 멤버의 누적 경험치를 더하거나 뺍니다. (실수 복구용)")
     @app_commands.describe(멤버="조정할 멤버", 경험치="더할 값 (빼려면 음수)")
-    async def adjust(self, interaction: discord.Interaction, 멤버: discord.Member, 경험치: int):
+    async def adjust(self, interaction: discord.Interaction, 멤버: discord.Member,
+                     경험치: app_commands.Range[int, -MAX_AMOUNT, MAX_AMOUNT]):
         if await self._guard(interaction):
             return
         entry = self._user(멤버.id)

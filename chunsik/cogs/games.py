@@ -12,7 +12,7 @@ from discord.ext import commands, tasks
 from chunsik_config import KST
 from chunsik_alerts import report_loop_error
 from chunsik_state import record_ledger
-from chunsik_utils import chunk_lines, mention_lines
+from chunsik_utils import MAX_AMOUNT, chunk_lines, mention_lines
 from chunsik_settings import has_admin_or_role, is_feature_enabled, load_settings, save_settings, send_log_embed
 from chunsik_names import bot_name, currency, event_name, josa
 
@@ -281,8 +281,8 @@ class ChunsikGames(commands.Cog):
         self,
         interaction: discord.Interaction,
         선착순인원: Optional[int] = None,
-        선착순금액: Optional[int] = None,
-        나머지금액: Optional[int] = None,
+        선착순금액: Optional[app_commands.Range[int, 0, MAX_AMOUNT]] = None,
+        나머지금액: Optional[app_commands.Range[int, 0, MAX_AMOUNT]] = None,
         지속시간초: Optional[app_commands.Range[int, 1, MAX_WINDOW_SECONDS]] = None,
     ):
         if not self._is_evashi_admin(interaction):
