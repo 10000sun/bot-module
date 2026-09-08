@@ -269,6 +269,28 @@ def build_log_embed(channel_key: str, description: str, fields: list = None) -> 
     # 🧮 칸을 각각 맞춰도 여럿이 쌓이면 전체 6000자를 넘어요. 푸터까지 붙인 맨 마지막에.
     return fit_embed(embed)
 
+# 📣 로그가 **못 나가고 있다**는 걸 콘솔에 한 번은 알립니다.
+#
+# 🐛 [버그] 아래 send_log_embed는 "채널이 사라졌다"와 "글 쓸 권한이 없다"를 **완전히 조용히**
+#    넘겼어요. 그러면 관리자가 로그 채널을 지우거나 봇 권한을 내린 순간부터 **모든 감사 기록이
+#    영영 사라지는데 아무도 모릅니다.** 바로 아래 세 줄 밑에서 "봇 자신을 못 읽었다"는
+#    이미 print로 알리고 있었으니, 같은 함수 안에서 기준이 갈려 있던 셈이에요.
+#
+# 🔁 키마다 한 번만 찍습니다. 로그는 거래마다 불리는 자리라 매번 찍으면 콘솔이 도배돼요.
+#    전송이 다시 성공하면 지워서, 나중에 또 망가지면 다시 알립니다.
+#    (급한 알림이 필요한 건 아니에요 — `/테스트 채널점검`이 언제든 전수 확인을 해줍니다)
+_LOG_CHANNEL_BROKEN = set()
+
+
+def _log_channel_broken(channel_key: str, reason: str):
+    if channel_key in _LOG_CHANNEL_BROKEN:
+        return
+    _LOG_CHANNEL_BROKEN.add(channel_key)
+    print(f"⚠️ 로그가 안 나가고 있어요 ({channel_key}): {reason}. "
+          f"`/설정 채널 …`로 다시 지정하거나 봇 권한을 확인해 주세요. "
+          f"(전체 점검은 `/테스트 채널점검`)")
+
+
 async def send_log_embed(bot: commands.Bot, channel_key: str, description: str,
                           fields: list = None, guild: discord.Guild = None,
                           content: str = None) -> bool:
@@ -285,6 +307,7 @@ async def send_log_embed(bot: commands.Bot, channel_key: str, description: str,
 
     channel = guild.get_channel(ch_id) if guild else bot.get_channel(ch_id)
     if not channel:
+        _log_channel_broken(channel_key, f"지정된 채널(ID {ch_id})을 찾을 수 없어요")
         return False
 
     me = guild.me if guild else channel.guild.me
@@ -296,6 +319,7 @@ async def send_log_embed(bot: commands.Bot, channel_key: str, description: str,
         print(f"⚠️ 로그 전송 건너뜀 ({channel_key}): 봇 자신의 멤버 정보를 아직 못 읽었어요.")
         return False
     if not channel.permissions_for(me).send_messages:
+        _log_channel_broken(channel_key, f"#{channel.name}에 글을 쓸 권한이 없어요")
         return False
 
     try:
@@ -305,6 +329,7 @@ async def send_log_embed(bot: commands.Bot, channel_key: str, description: str,
             # 역할 태그가 실제로 울리도록 명시합니다. (@everyone/@here는 실수로도 울리지 않게 막아둬요)
             allowed_mentions=discord.AllowedMentions(roles=True, users=True, everyone=False),
         )
+        _LOG_CHANNEL_BROKEN.discard(channel_key)   # 고쳐졌으면 다음에 또 알릴 수 있게
         return True
     except Exception as e:
         print(f"❗ 로그 전송 실패 ({channel_key}): {type(e).__name__} {e}")
