@@ -24,7 +24,7 @@ from chunsik_settings import feature_gate, has_admin_or_role, is_feature_enabled
 from chunsik_state import load_party, save_party, state
 from chunsik_utils import (EMBED_DESC_LIMIT, EMBED_TITLE_LIMIT, MESSAGE_LIMIT,
                         ChunsikView, add_lines_field, clip, fit_embed, mention_list,
-                        parse_datetime_text, repaint_note)
+                        parse_datetime_text, repaint_note, stored_start)
 
 # ⏰ 시작 몇 분 전에 부를지. 0이면 시작할 때만 불러요.
 REMIND_BEFORE_MINUTES = 10
@@ -105,7 +105,9 @@ class ChunsikParty(commands.Cog):
         save_party({"parties": parties})
 
     def _embed(self, party: dict, guild_id) -> discord.Embed:
-        start = dt.datetime.fromisoformat(party["start"])
+        # ⏰ 시각이 깨져 있어도 모집글은 그려져야 해요. 여기서 던지면 참가 버튼을 눌러도
+        #    다시 그릴 수가 없어서 명단이 그 시점에 얼어붙습니다.
+        start = stored_start(party)
         joined = party.get("members", [])
         waiting = party.get("waiting", [])
         size = party["size"]
@@ -120,7 +122,11 @@ class ChunsikParty(commands.Cog):
             color=0x9B59B6 if not party.get("closed") else 0x99AAB5,
         )
         # ⏱️ 디스코드 타임스탬프로 넣으면 보는 사람의 시간대로 알아서 바뀌어요.
-        embed.add_field(name="시작", value=f"<t:{int(start.timestamp())}:F>\n<t:{int(start.timestamp())}:R>", inline=True)
+        embed.add_field(
+            name="시작",
+            value=(f"<t:{int(start.timestamp())}:F>\n<t:{int(start.timestamp())}:R>" if start
+                   else "⚠️ 시각을 알 수 없어요 (기록이 깨졌어요)"),
+            inline=True)
         embed.add_field(name="인원", value=f"**{len(joined)}** / {size}", inline=True)
         embed.add_field(name="주최", value=f"<@{party['host']}>", inline=True)
 
@@ -245,7 +251,12 @@ class ChunsikParty(commands.Cog):
             for pid, party in list(parties.items()):
                 if party.get("closed"):
                     continue
-                start = dt.datetime.fromisoformat(party["start"])
+                start = stored_start(party)
+                if start is None:
+                    # 🛡️ 깨진 줄 하나가 나머지 모집 전부의 알림을 멈추게 두지 않아요.
+                    #    (예전엔 여기서 루프가 통째로 죽었습니다)
+                    print(f"⚠️ [파티] 시작 시각이 깨진 모집글을 건너뛰었어요: {pid} -> {party.get('start')!r}")
+                    continue
 
                 if (not party.get("reminded") and REMIND_BEFORE_MINUTES
                         and 0 < (start - now).total_seconds() <= REMIND_BEFORE_MINUTES * 60):
@@ -344,13 +355,15 @@ class ChunsikParty(commands.Cog):
             return await interaction.response.send_message(
                 "지금 열려 있는 모집이 없어요. `/파티 모집`으로 하나 열어보세요!", ephemeral=True)
 
-        rows.sort(key=lambda kv: kv[1]["start"])
+        # 🛡️ 시각이 깨진 줄이 하나 있으면 정렬하다 통째로 죽었어요. 그런 줄은 맨 뒤로 보냅니다.
+        rows.sort(key=lambda kv: (stored_start(kv[1]) is None, str(kv[1].get("start") or "")))
         embed = discord.Embed(title="🎯 모집 중인 파티", color=0x9B59B6)
         for pid, p in rows[:MAX_OPEN_PARTIES]:
-            start = int(dt.datetime.fromisoformat(p["start"]).timestamp())
+            start = stored_start(p)
+            when = f"<t:{int(start.timestamp())}:R>" if start else "⚠️ 시각 깨짐"
             embed.add_field(
                 name=clip(f"{p['title']} — {len(p.get('members', []))}/{p['size']}", EMBED_TITLE_LIMIT),
-                value=f"<t:{start}:R> · <#{p['channel_id']}> · 주최 <@{p['host']}>\n"
+                value=f"{when} · <#{p['channel_id']}> · 주최 <@{p['host']}>\n"
                       f"https://discord.com/channels/{p['guild_id']}/{p['channel_id']}/{pid}",
                 inline=False)
         await interaction.response.send_message(embed=embed, ephemeral=True)

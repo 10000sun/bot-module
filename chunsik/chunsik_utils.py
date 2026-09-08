@@ -321,6 +321,28 @@ def describe_user_error(error: BaseException) -> str:
     return "❗ 처리하는 중 예상치 못한 오류가 발생했어요. 잠시 후 다시 시도해 주세요."
 
 
+def stored_start(row: dict, key: str = "start"):
+    """저장해둔 시각 문자열을 datetime으로 바꿉니다. 값이 없거나 깨졌으면 **None**.
+
+    🐛 [버그 수정] 파티·내전은 `dt.datetime.fromisoformat(row["start"])`를 그냥 불렀어요.
+    줄 하나가 깨져 있으면(사람이 손으로 고치다, 저장이 반쯤 끊겨서, 옛 형식이 남아서)
+
+      · 1분마다 도는 tick이 **통째로** 죽어서 열려 있는 모집 **전부**의 알림이 멈추고
+      · `/파티 목록`은 정렬하다 죽어서 아무도 목록을 못 보고
+      · 그 모집글은 다시 그릴 수도 없어 참가 버튼이 얼어붙습니다
+
+    깨진 줄 하나 때문에 나머지가 다 막히는 자리라, 스누즈(`_wake_at`)가 이미 쓰던
+    "None을 돌려주고 부르는 쪽이 건너뛴다" 방식으로 맞춥니다.
+
+    시간대가 없는 옛 값은 KST로 봅니다. (이 봇의 시각은 전부 KST예요)
+    """
+    try:
+        parsed = dt.datetime.fromisoformat(row.get(key) or "")
+    except (TypeError, ValueError, AttributeError):
+        return None
+    return parsed.replace(tzinfo=KST) if parsed.tzinfo is None else parsed
+
+
 async def repaint_note(coro, what: str = "패널") -> str:
     """패널을 **다시 그리는** 데 실패해도 "저장은 이미 끝났다"는 사실이 묻히지 않게 합니다.
 
