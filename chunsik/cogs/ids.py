@@ -360,8 +360,11 @@ class ChunsikIds(commands.Cog):
         한 번만 읽어서 넘겨줄 수 있게 했고, 안 넘기면 예전처럼 그때 한 번만 읽어요."""
         if settings is None:
             settings = load_settings()
-        chief_role_id = settings.get("roles", {}).get("chief_role")
-        return bool(chief_role_id and any(r.id == chief_role_id for r in member.roles))
+        # 🐛 [버그 수정] 여기도 숫자 하나로 꺼내 비교하고 있었어요. `/설치`는 역할을
+        #    `[역할ID]` 목록으로 적어서, 그렇게 세팅한 서버에서는 명단의 '대장' 칸이
+        #    영영 비어 있었습니다. (chunsik_settings.is_super_admin과 같은 자리)
+        chief_role_ids = _get_role_ids(settings, "chief_role")
+        return bool(chief_role_ids and any(r.id in chief_role_ids for r in member.roles))
 
     # 📛 명단 블록의 제목과 색. ANSI 색은 디스코드 ```ansi 코드블록에서만 먹혀요.
     # (앞자리 2는 흐리게, 41은 배경 빨강이라 대장 칸만 반전돼 보입니다)

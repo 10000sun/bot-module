@@ -121,12 +121,20 @@ async def feature_gate(interaction: discord.Interaction, feature_key: str, featu
     return False
 
 def is_super_admin(interaction: discord.Interaction) -> bool:
-    """서버 관리자 또는 대장(chief_role) 역할 보유자만 True. (테스트 관리자 등 세부 역할로는 절대 통과 못 함)"""
-    if interaction.user.guild_permissions.administrator:
-        return True
-    settings = load_settings()
-    chief_id = settings.get("roles", {}).get("chief_role")
-    return bool(chief_id and any(r.id == chief_id for r in interaction.user.roles))
+    """서버 관리자 또는 대장(chief_role) 역할 보유자만 True. (테스트 관리자 등 세부 역할로는 절대 통과 못 함)
+
+    🐛 [버그 수정] 예전엔 `settings["roles"]["chief_role"]`을 **숫자 하나로** 꺼내
+    `r.id == chief_id`로 비교했어요. 그런데 역할 지정은 이미 **목록**으로 바뀌었고,
+    `/설치`(설치 마법사)는 역할을 전부 `[역할ID]` 꼴로 적습니다.
+
+    그래서 `/설치`로 세팅한 서버에서는 `[123]`과 `123`을 비교하게 되어 **언제나 False** —
+    대장 역할을 받은 사람이 `/기능제어`를 아예 쓸 수 없었어요. 오류도 안 나고
+    "권한이 없어요"만 뜨니 원인을 알 방법이 없습니다. 게다가 `/설치`는 납품 절차의
+    기본 경로라, **손으로 `/설정 명단 대장`을 다시 친 서버에서만** 우연히 동작했어요.
+
+    `_get_role_ids`가 옛 형식(숫자 하나)과 새 형식(목록)을 둘 다 받아주니 그걸 씁니다.
+    """
+    return member_has_admin_or_role(interaction.user, "chief_role")
 
 # ⚙️ 동적 설정값 불러오기 및 저장하기 유틸리티 함수
 # ⚡ [성능 개선] settings.json은 on_message(=서버의 모든 메세지)마다 읽히는데, 예전엔
