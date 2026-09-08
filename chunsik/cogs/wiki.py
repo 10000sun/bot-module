@@ -5,7 +5,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from chunsik_settings import feature_gate, has_admin_or_role
-from chunsik_utils import fit_embed
+from chunsik_utils import EMBED_DESC_LIMIT, chunk_lines, clip, fit_embed
 from chunsik_state import load_wiki, save_wiki
 from chunsik_names import server_name
 
@@ -14,6 +14,40 @@ from chunsik_names import server_name
 # `논란`·`TMI`는 길이 제한 없는 자유 입력이라 실제로 넘길 수 있어서, 보여줄 때 잘라둡니다.
 FIELD_LIMIT = 1024
 _TRUNCATED_NOTE = "\n… (내용이 길어 생략했어요)"
+
+# 📚 `/위키 목록` 한 줄이 차지할 수 있는 길이. 소개는 상한 없는 자유 입력이라,
+#    한 명이 길게 적으면 그 줄 하나가 페이지 한도를 통째로 먹습니다.
+LIST_LINE_LIMIT = 150
+# 📄 목록이 몇 페이지까지 나갈지. 사람이 아주 많은 서버에서 봇이 도배하지 않게 막아둡니다.
+LIST_MAX_PAGES = 5
+
+
+def build_wiki_list_pages(rows: list) -> tuple:
+    """(이름, 아이디, 소개) 목록을 임베드 설명 한도에 맞는 페이지들로 나눕니다.
+
+    → (페이지 목록, 못 담은 인원 수)
+
+    🐛 [버그 수정] 예전엔 전부 한 덩어리로 이어 붙인 뒤 4000자가 넘으면
+    **"⚠️ 목록이 너무 길어. 나중에 검색 기능도 추가할게!"** 한 줄만 내보냈어요.
+    나중은 오지 않은 채로 납품물에 들어갔고, 사람이 늘면 `/위키 목록`이 그냥 안 됩니다.
+    등록·조회·수정·삭제는 다 되는데 목록만 영영 못 보는 상태였어요.
+
+    🚨 나누는 것만으로는 부족합니다. `chunk_lines`는 줄과 줄 **사이**에서만 나눠요.
+       소개에 긴 글을 적은 사람이 하나 있으면 그 줄이 혼자 한 페이지가 되어, 나눠도
+       여전히 한도를 넘습니다. (#11 명단이 굳던 것과 같은 부류) 줄부터 잘라둬요.
+
+    🔎 모듈 바깥에 둔 이유: 검사 도구(tools/check_embeds.py)가 진짜 코드를 그대로
+       불러서 재게 하려고요. 베껴 쓰면 코드가 바뀔 때 옛 규칙을 계속 통과시킵니다.
+    """
+    lines = [clip(f"• `{name}` (`{uid}`) – {intro or '-'}", LIST_LINE_LIMIT)
+             for name, uid, intro in rows]
+    pages = chunk_lines(lines, limit=EMBED_DESC_LIMIT)
+    dropped = 0
+    if len(pages) > LIST_MAX_PAGES:
+        kept_lines = sum(page.count("\n") for page in pages[:LIST_MAX_PAGES])
+        dropped = len(lines) - kept_lines
+        pages = pages[:LIST_MAX_PAGES]
+    return pages, dropped
 
 
 def _fit_field(value: str) -> str:
@@ -163,20 +197,23 @@ class ChunsikWiki(commands.Cog):
             await interaction.followup.send("❌ 등록된 위키가 없어!", ephemeral=True)
             return
 
-        embed = discord.Embed(title=f"📚 {server_name()} 위키 목록", color=0xA9CCE3)
-        sorted_ids = sorted(wiki.keys())
-        lines = []
-        for uid in sorted_ids:
+        rows = []
+        for uid in sorted(wiki.keys()):
             try:
                 member = interaction.guild.get_member(int(uid))
                 name = member.display_name if member else f"탈퇴자 ({uid})"
             except ValueError:
                 # uid가 정수로 변환 안 되는 손상된 키인 경우만 여기로 옵니다.
                 name = f"탈퇴자 ({uid})"
-            lines.append(f"• `{name}` (`{uid}`) – {wiki[uid].get('소개', '-')}")
-        joined = "\n".join(lines)
-        if len(joined) <= 4000:
-            embed.description = joined
+            rows.append((name, uid, wiki[uid].get("소개", "-")))
+
+        pages, dropped = build_wiki_list_pages(rows)
+        for i, page in enumerate(pages, start=1):
+            title = f"📚 {server_name()} 위키 목록"
+            if len(pages) > 1:
+                title += f" ({i}/{len(pages)})"
+            embed = discord.Embed(title=title, description=page, color=0xA9CCE3)
+            if i == len(pages) and dropped:
+                embed.set_footer(text=f"등록된 {len(rows)}명 중 {dropped}명은 여기 다 못 담았어요. "
+                                      "`/위키 조회`로 개별 확인해 주세요.")
             await interaction.followup.send(embed=embed)
-        else:
-            await interaction.followup.send("⚠️ 목록이 너무 길어. 나중에 검색 기능도 추가할게!", ephemeral=True)
