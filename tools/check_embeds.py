@@ -438,6 +438,34 @@ def check_diagnostics(diag_mod, setting_mod):
               mark="외 ")
 
 
+def check_log_embeds():
+    print("\n[11] 🧾 로그 임베드 — 길이를 알 수 없는 값이 들어올 때")
+    # 🚨 로그는 마흔 몇 곳에서 부르고, 이름·아이디·명단처럼 **길이를 알 수 없는 값**이
+    #    자주 들어갑니다. 한도를 넘으면 send_log_embed가 예외를 삼켜서 콘솔 한 줄만
+    #    남고 **그 로그가 조용히 증발**해요. "누가 무엇을 했나"를 남기는 곳이 정작
+    #    그 '무엇'이 길 때만 안 남는 셈입니다.
+    #    부르는 쪽마다 자르게 하지 않고 build_log_embed 한 곳에서 맞춥니다.
+    from chunsik_settings import LOG_FIELD_COUNT_LIMIT, build_log_embed
+
+    huge = _fill(DISCORD_STRING_MAX)
+    measure("로그 (설명이 최대)", build_log_embed("id_log", huge, [("이름", "값", True)]))
+    measure("로그 (칸 값이 최대)", build_log_embed("id_log", "설명", [("등록 내역", huge, False)]))
+    measure("로그 (칸 이름·값 모두 최대)", build_log_embed("id_log", huge, [(huge, huge, False)]))
+    measure("로그 (긴 칸 10개)", build_log_embed("id_log", "설명",
+                                            [(f"칸{i}", huge, False) for i in range(10)]))
+    # 칸 수 한도(25)를 넘기면 그 로그가 통째로 거부돼요.
+    many = build_log_embed("id_log", "설명", [(f"칸{i}", "값", True) for i in range(40)])
+    if len(many.fields) > LOG_FIELD_COUNT_LIMIT:
+        _fails.append("로그 칸 수")
+        print(f"  🚨 로그 (칸 40개) — 칸이 {len(many.fields)}개 > {LOG_FIELD_COUNT_LIMIT}")
+    else:
+        print(f"  OK  로그 (칸 40개) — {len(many.fields)}개로 줄임")
+    # 값이 비면 디스코드가 거부합니다.
+    measure("로그 (칸 값이 빈 문자열)", build_log_embed("id_log", "설명", [("이름", "", False)]))
+    untouched("로그 (평범한 값)", build_log_embed("id_log", "짧은 설명",
+                                             [("실행자", "<@123>", True), ("내용", "아이디 등록", False)]))
+
+
 def main():
     import cogs.chronicle as chron_mod
     import cogs.diagnostics as diag_mod
@@ -466,6 +494,7 @@ def main():
     check_roster(ids_mod)
     check_snooze(snooze_mod)
     check_diagnostics(diag_mod, setting_mod)
+    check_log_embeds()
 
     print("\n" + "=" * 62)
     if _fails:
