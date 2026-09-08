@@ -13,6 +13,7 @@ from chunsik_config import (ALERT_DISCONNECT_SECONDS, ENABLED_SPECS, GUILD_LOCK_
                          HEARTBEAT_FILE, KST, MODULE_WARNINGS, TEST_GUILD_ID,
                          guild_allowed)
 from chunsik_alerts import report_loop_error, send_alert
+from chunsik_storage import DataSaveError
 from chunsik_utils import describe_user_error
 from chunsik_names import bot_name, is_configured
 
@@ -281,6 +282,15 @@ class ChunsikBotClient(commands.Bot):
 
         print(f"❗ [전역 에러] /{getattr(interaction.command, 'qualified_name', '알수없음')} 처리 중 오류: "
               f"{type(original).__name__}: {original}")
+        # 🔎 [버그 수정] 예전엔 이 한 줄이 전부였어요. 유저 화면에는 "예상치 못한 오류"만
+        #    뜨는데(그건 맞아요 — 경로가 새면 안 되니까) **콘솔에도 어디서 터졌는지가 없어서**
+        #    납품한 서버에서 문의가 오면 원인을 찾을 방법이 없었습니다.
+        #    루프 오류(report_loop_error)는 이미 트레이스백을 찍고 있었는데 여기만 빠졌어요.
+        #    알려진 부류(권한 없음·쿨다운·저장 실패·파일 손상)는 원인이 이미 문구에 다 있으니
+        #    빼고, **정말 예상 못한 것만** 찍습니다.
+        if not isinstance(error, (app_commands.CheckFailure, app_commands.CommandOnCooldown)) \
+                and not isinstance(original, (DataSaveError, RuntimeError)):
+            traceback.print_exception(type(original), original, original.__traceback__)
 
         try:
             if interaction.response.is_done():
