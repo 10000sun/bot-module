@@ -475,7 +475,15 @@ class ChunsikStock(commands.Cog):
                     embed.color = style["color"]
                     if not embed.title:
                         embed.title = f"{style['emoji']} {style['title']}"
-                    await channel.send(embed=embed)
+                    # ✂️ 이 갈래만 build_log_embed을 안 지나가서 **한도 처리를 비켜 갔어요.**
+                    #    칸에 종목 이름이 들어가는데 상한이 생기기 전 긴 이름이 남아 있으면
+                    #    1024자를 넘겨 로그가 통째로 거부됩니다(그리고 조용히 사라져요).
+                    #    부르는 쪽마다 자르지 않고 여기서 한 번에 맞춥니다.
+                    for i, field in enumerate(embed.fields):
+                        embed.set_field_at(i, name=clip(str(field.name), EMBED_TITLE_LIMIT),
+                                           value=clip(str(field.value), EMBED_FIELD_LIMIT) or "-",
+                                           inline=field.inline)
+                    await channel.send(embed=fit_embed(embed))
                 elif text:
                     await channel.send(embed=build_log_embed("stock_log", text))
         except Exception as e:
