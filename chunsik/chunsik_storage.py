@@ -102,7 +102,22 @@ def safe_json_load(path: str, default):
         with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
     except Exception as e:
-        backup_path = f"{path}.corrupt_{int(dt.datetime.now().timestamp())}"
+        # 🕐 백업 이름에 **지금 시각**이 아니라 **그 파일이 마지막으로 바뀐 시각**을 씁니다.
+        #
+        # 🐛 [버그 수정] 지금 시각을 쓰면 **읽을 때마다 사본이 새로 생겨요.** 손상은 고쳐지지
+        #    않으니 그 파일을 읽는 모든 길이 계속 걸립니다 — 1분마다 도는 파티·내전 tick,
+        #    사람들이 누르는 명령, 다시 그리기까지. 하루면 사본이 수백 개 쌓여서
+        #    데이터 폴더가 파묻히고, 정작 **어느 게 원본인지** 알아보기 어려워집니다.
+        #    (이 사본들을 치우는 코드는 어디에도 없어요 — 백업 정리는 backups/ 폴더만 봅니다)
+        #
+        #    수정 시각을 쓰면 같은 손상은 언제 읽어도 같은 이름이 되어 사본이 하나로 모이고,
+        #    파일이 또 바뀌어 다시 깨지면 그때는 새 이름이 생깁니다. 이름만으로 "언제 깨진
+        #    것인가"도 바로 읽혀요.
+        try:
+            stamp = int(os.path.getmtime(path))
+        except OSError:
+            stamp = int(dt.datetime.now().timestamp())
+        backup_path = f"{path}.corrupt_{stamp}"
         try:
             shutil.copy(path, backup_path)
             print(f"🚨🚨🚨 [심각] '{path}' 파일이 손상돼서 못 읽어요! 원본을 '{backup_path}'로 백업해뒀어요.")
