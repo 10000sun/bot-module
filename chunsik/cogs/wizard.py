@@ -125,6 +125,23 @@ ROLE_PURPOSE = {
 }
 
 
+# 🚫 `/설치`가 **만들지 않는** 역할.
+#
+#    `settings_admin`은 다른 관리자 역할들과 무게가 달라요. 받은 사람이
+#    `/설정 관리자 상점`으로 **자기에게 상점 관리자를 달 수 있고**, 그러면 `/지급`으로
+#    재화를 무제한 찍습니다. "관리자 역할을 나눠줄 수 있다"가 이 역할의 정의라서
+#    구멍이 아니라 성질이에요.
+#
+#    안내문에 ⚠️ 경고를 적어두는 것만으로는 부족합니다 — 클라이언트는 `/설치`가 만든
+#    역할 열두 개를 "담당자에게 나눠주는 것"으로 읽어서, 경고를 읽어도 손이 먼저 가요.
+#    필요한 서버만 `/설정 관리자 설정`으로 한 줄 더 치게 합니다.
+#    (👑 대장을 `/설치`에서 뺀 것과 같은 방식이에요 — 선례가 있습니다)
+#
+#    ⚠️ ROLE_PURPOSE에서는 빼지 마세요. 그 표는 `/설정 관리자 설정`으로 지정할 때
+#       무슨 역할인지 설명하는 데도 쓰이고, check_modules가 빈칸을 잡습니다.
+WIZARD_SKIP_ROLES = {"settings_admin"}
+
+
 def channel_purpose(key: str) -> tuple:
     """(설명, 누가 보는가). 표에 없으면 빈 설명 — 안내가 비어도 설치는 굴러가야 해요."""
     return CHANNEL_PURPOSE.get(key, ("", SEEN_BY_STAFF))
@@ -510,7 +527,8 @@ class ChunsikWizard(commands.Cog):
         #    (표를 고치면 서버에 생기는 순서도 같이 바뀌어요)
         channels.sort(key=lambda item: (_category_order(item[1]), item[0]))
         roles = [(label, key) for label, key in role_table.items()
-                 if is_active("roles", key, ENABLED_MODULE_KEYS) and not set_roles.get(key)]
+                 if is_active("roles", key, ENABLED_MODULE_KEYS) and not set_roles.get(key)
+                 and key not in WIZARD_SKIP_ROLES]
         return channels, roles
 
     @staticmethod
@@ -758,5 +776,15 @@ class ChunsikWizard(commands.Cog):
                 note="*…외 {count}개*")
         if failed:
             add_lines_field(result, "🚨 못 만든 것", failed[:10], note="*…외 {count}개*")
+        # 🚫 `설정 관리자`는 일부러 안 만들어요(WIZARD_SKIP_ROLES). 그런데 아무 말도 없으면
+        #    "빠뜨렸나?" 싶습니다. 왜 없는지와, 정말 필요할 때 어떻게 하는지를 같이 적어요.
+        if made_roles or reuse_roles:
+            result.add_field(
+                name="🔐 `설정 관리자` 역할은 일부러 안 만들었어요",
+                value=("이 역할을 받은 사람은 `/설정` 전체를 쓸 수 있어서 **다른 관리자 역할도 "
+                       "스스로에게 달 수 있어요.** 서버 관리자는 원래부터 `/설정`을 다 쓸 수 있으니 "
+                       "대부분은 필요 없습니다.\n"
+                       "꼭 필요하시면 역할을 하나 만들고 `/설정 관리자 설정`으로 지정해 주세요."),
+                inline=False)
         result.set_footer(text="남은 설정은 /설치 점검으로 다시 확인할 수 있어요.")
         return result
