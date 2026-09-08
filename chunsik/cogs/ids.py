@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+import time
 import uuid
 import datetime as dt
 from typing import Optional
@@ -29,6 +30,19 @@ from chunsik_names import bot_name, josa
 #    슬래시 명령만 막아서는 부족해요. 아이디는 **자동등록 채널에 그냥 글로 올려서도**
 #    들어옵니다. 그래서 저장이 지나가는 길목(_register_single_id)에서 자릅니다.
 MAX_ID_LENGTH = 100      # 게임 아이디는 길어야 수십 자예요 (Riot ID가 `이름#태그`로 제일 긴 편)
+
+# 🕐 명단을 **다시 그리는 간격**의 하한.
+#
+# 🐌 [왜 필요한가] 명단은 등록 안 한 사람도 "(등록된 아이디 없음)"으로 **전원** 싣습니다.
+#    그래서 메세지 수가 서버 인원에 비례해요 — 100명이면 3개, 1,000명이면 25개,
+#    3,000명이면 73개입니다. 그런데 누가 아이디를 **하나** 등록할 때마다 이걸 전부 다시
+#    그렸어요. 디스코드 전송 제한에 걸려서 1,000명이면 한 번에 30초 안팎, 3,000명이면
+#    몇 분이 걸리고, 그동안 settings_lock을 잡고 있습니다.
+#
+# ⚡ [왜 그냥 늦추지 않았나] 작은 서버(주 대상인 100~500명)에서는 지금도 즉시 그려지고
+#    그게 맞아요. 그래서 **첫 요청은 바로** 처리하고, 그 뒤 이 시간 안에 들어온 것들만
+#    한 번으로 모읍니다. 평소엔 예전과 똑같이 동작하고, 사람이 몰릴 때만 부담이 줄어요.
+ROSTER_COALESCE_SECONDS = 60
 
 # 📥 자동등록 채널은 **아무나 글을 올리는 곳**이에요. 한 사람이 올린 글 하나가 서버 전체를
 #    흔들 수 있는 자리라 세 군데를 막아둡니다.
@@ -132,7 +146,7 @@ class ImportConfirmView(ChunsikView):
             registered_people += 1
 
         state.save()
-        await self.core_cog._refresh_id_roster(self.guild)
+        await self.core_cog.queue_roster_refresh(self.guild)
 
         for child in self.children:
             child.disabled = True
@@ -347,8 +361,58 @@ class ChunsikIds(commands.Cog):
         self.id_menu = app_commands.ContextMenu(name="아이디 보기", callback=self.show_ids_menu)
         self.bot.tree.add_command(self.id_menu)
 
+        # 🕐 명단 다시 그리기를 모으는 자리. (ROSTER_COALESCE_SECONDS 설명 참고)
+        self._roster_last_run = 0.0     # 마지막으로 그린 시각 (monotonic)
+        self._roster_pending = None     # 그려야 하는데 아직 못 그린 길드
+        self._roster_task = None
+
     async def cog_unload(self):
         self.bot.tree.remove_command(self.id_menu.name, type=self.id_menu.type)
+        # ⏹️ 모아두기 태스크가 코그보다 오래 살면, 내려간 코그가 명단을 그립니다.
+        if self._roster_task is not None and not self._roster_task.done():
+            self._roster_task.cancel()
+
+    # ========== 🕐 명단 다시 그리기 (모아서) ==========
+
+    async def queue_roster_refresh(self, guild: discord.Guild) -> bool:
+        """명단을 다시 그립니다. 방금 그렸으면 **모아뒀다가** 한 번에 그려요.
+
+        → 지금 바로 그렸으면 True, 나중으로 미뤘으면 False.
+           (부르는 쪽이 "잠시 뒤 반영돼요"라고 알려줄 수 있게)
+
+        ⚠️ 사람이 "지금 갱신해"라고 시킨 자리(`/아이디 새로고침`, 채널에 '갱신')는
+           이걸 쓰지 마세요. 기다리게 하면 안 되는 자리라 _refresh_id_roster를 직접 부릅니다.
+        """
+        now = time.monotonic()
+        if self._roster_task is None and now - self._roster_last_run >= ROSTER_COALESCE_SECONDS:
+            self._roster_last_run = now
+            await self._refresh_id_roster(guild)
+            return True
+
+        self._roster_pending = guild
+        if self._roster_task is None or self._roster_task.done():
+            self._roster_task = asyncio.create_task(self._roster_later())
+        return False
+
+    async def _roster_later(self):
+        """모아둔 변경을 간격이 지난 뒤 **한 번만** 그립니다."""
+        try:
+            while self._roster_pending is not None:
+                delay = ROSTER_COALESCE_SECONDS - (time.monotonic() - self._roster_last_run)
+                if delay > 0:
+                    await asyncio.sleep(delay)
+                # 그리는 동안 또 바뀔 수 있어요. 지금 것만 집어가고 자리를 비웁니다.
+                guild, self._roster_pending = self._roster_pending, None
+                self._roster_last_run = time.monotonic()
+                await self._refresh_id_roster(guild)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            # 🛡️ create_task로 띄운 태스크는 예외가 나도 아무 데도 안 떠요.
+            #    여기서 삼키면 명단이 조용히 옛날 상태로 굳습니다.
+            print(f"❗ [아이디] 명단 갱신(모아두기)에서 오류가 났어요: {type(e).__name__}: {e}")
+        finally:
+            self._roster_task = None
 
     # ========== 🖱️ 우클릭 조회 ==========
     def build_id_embed(self, user, guild: discord.Guild) -> Optional[discord.Embed]:
@@ -682,7 +746,7 @@ class ChunsikIds(commands.Cog):
                 need_refresh = True
 
         if need_refresh:
-            await self._refresh_id_roster(interaction.guild)
+            await self.queue_roster_refresh(interaction.guild)
 
     @id_group.command(name="새로고침", description="[관리자] ids.json 파일을 다시 읽어와 메모리 데이터를 갱신해요. (파일을 직접 수정한 뒤 꼭 실행!)")
     @app_commands.guild_only()
@@ -845,7 +909,7 @@ class ChunsikIds(commands.Cog):
                 "ℹ️ 그 사이에 이미 정리됐는지, 지울 게 남아 있지 않았어요.", ephemeral=True)
 
         state.save()
-        await self._refresh_id_roster(interaction.guild)
+        await self.queue_roster_refresh(interaction.guild)
         await interaction.followup.send(
             f"🧹 중복 정리 완료! **{affected_people}명**에게서 중복 항목 **{removed_count}건**을 삭제했어요. 명단도 갱신했어요.",
             ephemeral=True
@@ -1087,7 +1151,7 @@ class ChunsikIds(commands.Cog):
             f"{message.author.mention} 님이 확인 답변을 거쳐 {member_label}님의 아이디 {verb}했어요.",
             guild=guild,
         )
-        await self._refresh_id_roster(guild)
+        await self.queue_roster_refresh(guild)
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
@@ -1240,9 +1304,13 @@ class ChunsikIds(commands.Cog):
             # 이 메세지 전체가 아이디 시도로 안 보이면, 삭제도 DM도 없이 완전히 그냥 넘어가요.
             return
 
+        roster_now = True
         if registered:
             state.save()
-            await self._refresh_id_roster(message.guild)
+            # 🕐 사람이 몰리면 명단 다시 그리기를 모읍니다(ROSTER_COALESCE_SECONDS).
+            #    미뤄졌으면 아래 결과 안내에 그렇게 적어요 — "등록됐다는데 명단엔 없네"가
+            #    제일 헷갈리는 자리거든요.
+            roster_now = await self.queue_roster_refresh(message.guild)
             # 🐛 [버그 수정] 수동 /아이디 등록은 로그가 남는데, 자동등록 채널은 이 로그 전송이
             # 아예 빠져있었어요. 이제 자동등록도 똑같이 id_log 채널에 기록이 남아요.
             # ✂️ 한 메세지로 여러 개를 등록할 수 있어서 이 칸이 1024자를 넘길 수 있어요.
@@ -1281,6 +1349,8 @@ class ChunsikIds(commands.Cog):
         lines = []
         if registered:
             lines.append("✅ **바로 등록됐어요**\n" + "\n".join(registered))
+            if not roster_now:
+                lines.append("🕐 명단 채널은 **잠시 뒤** 한 번에 갱신돼요. (지금 여러 명이 등록 중이라 모아서 그립니다)")
         if allowed:
             lines.append(f"🔍 플랫폼/형식이 불명확한 항목 {allowed}개는 관리자 확인 후 등록될 예정이에요.")
         # 🙇 잘라낸 게 있으면 반드시 알려요. 조용히 버리면 "올렸는데 왜 없지"가 됩니다.
@@ -1379,7 +1449,7 @@ class ChunsikIds(commands.Cog):
             fields=[("등록 결과", summary, False)],
             guild=interaction.guild,
         )
-        await self._refresh_id_roster(interaction.guild)
+        await self.queue_roster_refresh(interaction.guild)
 
     @id_group.command(name="수정", description="[관리자] 등록된 아이디를 수정해요")
     @app_commands.describe(user="수정할 유저", platform=f"플랫폼명 (비워두면 {bot_name()}{josa(bot_name(), '이가')} 목록 보여줘, 자동완성으로 이 유저가 등록해둔 플랫폼이 힌트로 떠요)", game_id="새 아이디")
@@ -1466,7 +1536,7 @@ class ChunsikIds(commands.Cog):
             
             await respond_modify(interaction, user, target, old, game_id, is_misc=True)
             await notify_log(interaction, user, target, old, game_id)
-            await self._refresh_id_roster(interaction.guild)
+            await self.queue_roster_refresh(interaction.guild)
             return
 
         candidates = get_platform_candidates(state.user_ids[gid][uid], platform)
@@ -1480,7 +1550,7 @@ class ChunsikIds(commands.Cog):
             state.save()
             await respond_modify(interaction, user, target, old, game_id, is_misc=False)
             await notify_log(interaction, user, target, old, game_id)
-            await self._refresh_id_roster(interaction.guild)
+            await self.queue_roster_refresh(interaction.guild)
             return
 
         text = "\n".join(f"{i+1}. {k}: {v}" for i, (k, v) in enumerate(candidates))
@@ -1507,7 +1577,7 @@ class ChunsikIds(commands.Cog):
         state.save()
         await respond_modify(interaction, user, target, old, game_id, is_misc=False)
         await notify_log(interaction, user, target, old, game_id)
-        await self._refresh_id_roster(interaction.guild)
+        await self.queue_roster_refresh(interaction.guild)
 
     # 🐛 [버그 수정] 예전엔 platform이 고정된 10개짜리 드롭다운이라, "닌텐도"·"GTA"·"군번" 같은
     # 자유롭게 등록된 플랫폼은 목록에 없어서 수정 자체가 불가능했어요. 이제는 자유 텍스트 +
@@ -1578,7 +1648,7 @@ class ChunsikIds(commands.Cog):
                     f"{interaction.user.mention} 님이 탈퇴자 {len(leavers)}명을 삭제했어요.",
                     guild=interaction.guild,
                 )
-                await self._refresh_id_roster(interaction.guild)
+                await self.queue_roster_refresh(interaction.guild)
             else:
                 await interaction.followup.send("취소했어요! 😊")
             return
@@ -1625,7 +1695,7 @@ class ChunsikIds(commands.Cog):
                 f"{interaction.user.mention} 님이 <@{uid}>님의 `{target}` 아이디를 삭제했어요.",
                 guild=interaction.guild,
             )
-            await self._refresh_id_roster(interaction.guild)
+            await self.queue_roster_refresh(interaction.guild)
             return
 
         candidates = get_platform_candidates(state.user_ids.get(gid, {}).get(uid, {}), platform)
@@ -1638,7 +1708,7 @@ class ChunsikIds(commands.Cog):
             del state.user_ids[gid][uid][target]
             state.save()
             await interaction.followup.send(f"✅ <@{uid}>님의 `{target}` 아이디가 삭제되었어요.")
-            await self._refresh_id_roster(interaction.guild)
+            await self.queue_roster_refresh(interaction.guild)
             return
 
         text = "\n".join(f"{i+1}. {k}: {v}" for i, (k, v) in enumerate(candidates))
@@ -1664,7 +1734,7 @@ class ChunsikIds(commands.Cog):
         del state.user_ids[gid][uid][target]
         state.save()
         await interaction.followup.send(f"✅ <@{uid}>님의 `{target}` 아이디가 삭제되었어요.")
-        await self._refresh_id_roster(interaction.guild)
+        await self.queue_roster_refresh(interaction.guild)
 
     # 🐛 [버그 수정] user 파라미터가 일반 텍스트라 디스코드 클라이언트가 채널에 캐싱된
     # 사람만 멘션 힌트로 보여주고 있었어요. 자동완성을 직접 붙여서 서버 전체 멤버를
