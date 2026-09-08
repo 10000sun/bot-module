@@ -606,7 +606,10 @@ class ChunsikSetting(commands.Cog):
         if "channels" not in settings: settings["channels"] = {}
         settings["channels"]["birthday_announce"] = 채널.id
         save_settings(settings) # 기존 클래스의 파일 저장 함수
-        await interaction.response.send_message(f"📢 생일 알림 채널이 {채널.mention}(으)로 지정됐어요.")
+        # 🔇 설정 확인은 비공개예요. 나머지 열다섯 개 채널 지정이 전부 그런데 이 둘만
+        #    공개로 나가서, 관리자가 명령을 친 채널에 안내가 그대로 남았어요.
+        await interaction.response.send_message(
+            f"📢 생일 알림 채널이 {채널.mention}(으)로 지정됐어요.", ephemeral=True)
 
     @채널.command(name="생일로그", description="[관리자] 생일 등록/변경/삭제 로그가 기록될 채널을 지정합니다.")
     async def set_birthday_log(self, interaction: discord.Interaction, 채널: discord.TextChannel):
@@ -616,7 +619,8 @@ class ChunsikSetting(commands.Cog):
         if "channels" not in settings: settings["channels"] = {}
         settings["channels"]["birthday_log"] = 채널.id
         save_settings(settings)
-        await interaction.response.send_message(f"📜 생일 로그 채널이 {채널.mention}(으)로 지정됐어요.")
+        await interaction.response.send_message(
+            f"📜 생일 로그 채널이 {채널.mention}(으)로 지정됐어요.", ephemeral=True)
 
     # 📋 [추가] 현재 지정된 모든 채널 및 관리자 역할 설정을 한눈에 조회
     @설정.command(name="채널지정내역", description="[관리자] 현재 지정된 모든 채널 및 관리자 역할 설정 내역을 보여줍니다.")
