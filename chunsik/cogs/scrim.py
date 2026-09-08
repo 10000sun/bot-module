@@ -195,6 +195,12 @@ class ChunsikScrim(commands.Cog):
         if result:
             head = "🏁 **끝났어요** — " + ("🤝 무승부" if result == "draw" else f"{TEAMS[result][0]} 승리")
             color = 0x99AAB5
+        elif scrim.get("closed"):
+            # 🐛 [버그] 이 갈래가 통째로 없었어요. 결과 없이 마감하면 버튼은 전부 사라지는데
+            #    글은 여전히 **"팀 짜기를 누르세요"** 라고 말하고 있었습니다. 누를 게 없는데요.
+            #    (파티 모집글은 "🔒 마감됐어요"를 맨 앞에서 보고 있어요 — 여기만 빠졌습니다)
+            head = "🔒 **마감했어요** — 결과를 남기지 않고 끝난 내전이에요."
+            color = 0x99AAB5
         elif teams:
             head = "⚔️ **팀이 나뉘었어요.** 경기가 끝나면 아래 버튼으로 결과를 남겨주세요."
             color = 0x8B5CF6
@@ -292,7 +298,13 @@ class ChunsikScrim(commands.Cog):
             if not host_or_admin:
                 return "⛔ 내전을 연 사람이나 내전 관리자만 마감할 수 있어요.", False
             scrim["closed"] = True
-            return None, True
+            # 🔒 마감은 **되돌릴 수 없고**, 팀 짜기·결과 기록까지 같이 끝냅니다.
+            #    아무 말 없이 버튼만 사라지면 "잘못 눌렀나?" 싶어요. 무슨 일이 일어났는지 알립니다.
+            #    (파티 마감과 무게가 달라요. 파티는 마감이 자연스러운 끝이지만, 내전은
+            #     결과를 남기기 전에 마감하면 전적이 아예 안 쌓입니다)
+            if not scrim.get("teams"):
+                return "🔒 마감했어요. 팀을 나누기 전이라 **전적은 쌓이지 않아요.**", True
+            return "🔒 마감했어요. 결과를 남기지 않아서 **전적은 쌓이지 않아요.**", True
 
         if action == "draft":
             if not host_or_admin:
