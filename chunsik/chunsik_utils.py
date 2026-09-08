@@ -2,6 +2,7 @@
 
 import asyncio
 import datetime as dt
+import traceback
 import re
 from typing import Any, Optional
 import discord
@@ -409,6 +410,12 @@ class ChunsikView(discord.ui.View):
                        error: Exception, item: discord.ui.Item) -> None:
         print(f"❗ [버튼/드롭다운 오류] {type(self).__name__}.{getattr(item, 'custom_id', None) or type(item).__name__} "
               f"처리 중: {type(error).__name__}: {error}")
+        # 🔎 슬래시 명령 쪽(chunsik_client.on_app_command_error)과 같은 이유로 여기도 찍어요.
+        #    화면에는 안전한 문구만 나가고, 원인은 콘솔에 남아야 합니다.
+        #    저장 실패·파일 손상은 문구에 이미 원인이 다 들어 있어서 뺍니다.
+        if not isinstance(error, DataSaveError) and not (
+                isinstance(error, RuntimeError) and "손상되어" in str(error)):
+            traceback.print_exception(type(error), error, error.__traceback__)
         msg = describe_user_error(error)
         try:
             if interaction.response.is_done():
