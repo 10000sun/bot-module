@@ -376,7 +376,8 @@ def check_roster(ids_mod):
     def build(members, id_len):
         # cogs/ids.py의 _refresh_id_roster가 만드는 것과 같은 모양이에요.
         # ⚠️ ESC 문자는 편집 도구를 거치면 진짜 제어문자로 박혀요. chr(27)로 직접 만듭니다.
-        #    (NEXT.md의 "소스에 이스케이프를 넣을 때 편집 도구를 믿지 말 것" 항목)
+        #    📌 규칙: 소스에 이스케이프(\n 같은 것)를 넣을 때는 편집 도구를 믿지 말고
+        #       저장된 파일을 다시 읽어 확인하세요. 진짜 줄바꿈으로 바뀌어 들어가기 쉽습니다.
         esc = chr(27)
         lines = ["게임 아이디 목록", "", f"{esc}[2;34m멤버{esc}[0m", ""]
         for i in range(members):
