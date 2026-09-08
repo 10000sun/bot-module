@@ -321,6 +321,40 @@ def describe_user_error(error: BaseException) -> str:
     return "❗ 처리하는 중 예상치 못한 오류가 발생했어요. 잠시 후 다시 시도해 주세요."
 
 
+async def repaint_note(coro, what: str = "패널") -> str:
+    """패널을 **다시 그리는** 데 실패해도 "저장은 이미 끝났다"는 사실이 묻히지 않게 합니다.
+
+    🐛 [버그 수정] 셀프 역할·파티·내전은 전부 **저장을 먼저 하고, 그다음에 메시지를 다시
+    그립니다**(순서 자체는 맞아요 — 그림이 실패해도 데이터는 남아야 하니까요). 그런데 그
+    다시 그리기가 던지는 예외를 아무도 안 잡고 있어서, 공용 오류 처리까지 올라가
+    **"❗ 처리하는 중 예상치 못한 오류가 발생했어요"** 한 줄만 뜹니다.
+
+    제일 흔한 길은 관리자가 패널 메시지를 손으로 지운 경우예요. 그러면
+      1) `/셀프역할 역할추가` → 저장은 됐는데 화면엔 "예상치 못한 오류"
+      2) 다시 해보면 "❌ 이미 담겨 있어요"
+    가 되어 **빠져나갈 길이 없습니다.** 내전 쪽은 더 나빠서, 승패가 이미 전적에 박힌 채로
+    결과 발표(`_announce_result`)까지 통째로 건너뛰었어요.
+
+    성공하면 빈 문자열, 실패하면 안내에 덧붙일 한 줄을 돌려줍니다.
+    (오류 원문은 콘솔로만 보냅니다 — 유저 화면에 경로가 새면 안 돼요)
+    """
+    try:
+        await coro
+        return ""
+    except discord.NotFound:
+        reason = f"{what} 메시지를 못 찾았어요. 지워진 것 같아요."
+    except discord.Forbidden:
+        reason = f"{what} 메시지를 고칠 권한이 없어요. 봇에게 그 채널 권한을 주세요."
+    except RuntimeError as e:
+        # 우리 코드가 직접 만든 안내 문구라 그대로 보여줘도 안전해요.
+        reason = str(e)
+    except Exception as e:
+        print(f"❗ [{what} 다시 그리기 실패] {type(e).__name__}: {e}")
+        return f"\n⚠️ 저장은 끝났지만 {what}을(를) 다시 그리지 못했어요. 콘솔을 확인해 주세요."
+    print(f"❗ [{what} 다시 그리기 실패] {reason}")
+    return f"\n⚠️ 저장은 끝났어요. 다만 {reason}"
+
+
 class ChunsikView(discord.ui.View):
     """봇의 모든 버튼/드롭다운 창이 상속하는 기본 View.
 
