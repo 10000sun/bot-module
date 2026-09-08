@@ -84,9 +84,17 @@ def dangling_references(kept: list, dropped: list) -> list:
     names |= {r for r in EXCLUDE if r.endswith("/")}
     names |= {r.rstrip("/").split("/")[-1] + "/" for r in EXCLUDE if r.endswith("/")}
     problems = []
+    here = os.path.relpath(os.path.abspath(__file__), ROOT).replace(os.sep, "/")
     for path in kept:
+        # 🪞 규칙을 적어둔 이 파일 자신은 건너뜁니다. 여기엔 **뺄 것의 이름이 그대로**
+        #    적혀 있을 수밖에 없어요(그게 EXCLUDE니까요). 그걸 "가리킨다"고 보면
+        #    이 검사는 영영 통과할 수 없습니다.
+        #    ⚠️ 그래서 이 파일의 머리말과 이유는 **뭉뚱그려** 적어야 해요. 경로는 남지만
+        #       무엇을 왜 숨기는지까지 적으면 숨긴 의미가 없습니다.
+        if path == here:
+            continue
         # 🐍 `.py`도 봅니다. 주석과 독스트링에 적어둔 말도 그대로 넘어가요.
-        #    (이 파일 자신의 머리말이 여기 걸려서 알았습니다)
+        #    (검사 도구와 코그 주석 네 곳이 실제로 여기 걸렸어요)
         if not path.endswith((".md", ".html", ".txt", ".py")):
             continue
         try:
