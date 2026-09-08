@@ -12,7 +12,7 @@ from chunsik_storage import atomic_json_save_or_raise, safe_json_load
 from chunsik_settings import feature_gate, has_admin_or_role, send_log_embed
 from chunsik_state import record_ledger
 from chunsik_utils import (EMBED_DESC_LIMIT, EMBED_FIELD_LIMIT, EMBED_TITLE_LIMIT,
-                          INPUT_ECHO_LIMIT, ChunsikView,
+                          INPUT_ECHO_LIMIT, MESSAGE_LIMIT, ChunsikView,
                           add_lines_field, clip, dangerous_permission, fit_embed,
                           name_choices,
                           report_broken_transaction, role_reject_reason, schedule_delete)
@@ -1666,16 +1666,24 @@ class ChunsikShop(commands.Cog):
             # 그래서 전 매대를 돌며 "이 유저가 실제로 갖고 있는" 후보만 모읍니다.
             candidates = self._find_use_targets(data, user_id_str, 아이템이름)
 
+            # ✂️ `아이템이름`은 찾는 값이라 상한을 안 겁니다(상한이 생기기 전에 등록된 긴
+            #    이름의 물건도 써줄 수 있어야 하니까요). 되돌려 적을 때만 자릅니다.
+            shown_name = clip(아이템이름, INPUT_ECHO_LIMIT)
             if not candidates:
-                error = (f"❌ {유저.mention}님의 인벤토리에서 `{아이템이름}`을(를) 찾지 못했어요.\n"
+                error = (f"❌ {유저.mention}님의 인벤토리에서 `{shown_name}`을(를) 찾지 못했어요.\n"
                          f"└ 아이템이름 칸의 자동완성 목록에서 골라 주세요.")
             elif len(candidates) > 1:
                 # 같은 이름의 상품이 여러 매대에 등록돼 있으면 어느 쪽을 깎을지 알 수 없어요.
                 # 마음대로 고르면 엉뚱한 매대 물건이 사라지니, 자동완성으로 매대까지 고르게 안내합니다.
+                # 🧮 매대는 채널마다 하나씩 만들 수 있어서 개수에 상한이 없어요. 같은 이름의
+                #    물건을 여러 매대에 둔 서버에서는 이 안내가 본문 한도(2000자)를 넘길 수 있고,
+                #    그러면 **왜 안 되는지 알려주는 문구 자체가 안 나갑니다.**
                 lines = "\n".join(
-                    f"└ {c['board_name']} (<#{c['channel_id']}>) · 보유 {c['qty']:,}개" for c in candidates
+                    f"└ {clip(str(c['board_name']), 60)} (<#{c['channel_id']}>) · 보유 {c['qty']:,}개"
+                    for c in candidates
                 )
-                error = f"❓ `{아이템이름}`이(가) 여러 매대에 있어요. 자동완성 목록에서 골라 주세요.\n{lines}"
+                error = clip(f"❓ `{shown_name}`이(가) 여러 매대에 있어요. "
+                             f"자동완성 목록에서 골라 주세요.\n{lines}", MESSAGE_LIMIT)
             elif candidates[0]["qty"] < 수량:
                 # 보유 수량 검증
                 target = candidates[0]

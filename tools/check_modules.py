@@ -596,6 +596,10 @@ def _check_input_echo():
        만들어 준 값까지 물들이면 온통 헛짚습니다(실제로 오탐이 열다섯 건 났어요).
        `clip(...)`을 씌워 담으면 거기서 물이 끊기고, 다른 값으로 다시 담아도 끊깁니다.
 
+    📨 **문구를 변수에 담았다 보내는 모양도 봅니다.** `error = f"…{아이템이름}…"` 을 만들어
+       두고 나중에 `followup.send(error)` 하는 자리예요. send 자리만 보면 그냥 `error`라
+       놓치는데, `/상점 사용`이 실제로 그 모양이었습니다.
+
     ## 여기서 **안 보는** 것
       · 리스트·딕셔너리에 넣었다 꺼낸 것, 함수를 거쳐 온 것.
       · 임베드 안에 넣는 값. 그쪽은 tools/check_embeds.py가 봅니다.
@@ -663,19 +667,43 @@ def _check_input_echo():
                         live.discard(name)
                 return live
 
+            # 📨 그냥 이름만 넘겨 보내는 자리(`send(error)`)를 먼저 모읍니다.
+            sent_names = set()
+            for call in ast.walk(node):
+                if not isinstance(call, ast.Call) or not send_re.search(ast.unparse(call.func)):
+                    continue
+                for value in list(call.args) + [k.value for k in call.keywords
+                                                if k.arg in (None, "content")]:
+                    if isinstance(value, ast.Name):
+                        sent_names.add(value.id)
+
+            def report(line, name):
+                problems.append(
+                    f"cogs/{fname}:{line}: `{name}`(상한 없는 입력)을 안내 문구에 "
+                    f"그대로 실었어요 — clip({name}, INPUT_ECHO_LIMIT)")
+
+            def scan_text(line, text):
+                for name in sorted(tainted_at(line + 1)):
+                    if re.search(r"\{" + re.escape(name) + r"[!:}]", text) and f"clip({name}" not in text:
+                        report(line, name)
+
             for call in ast.walk(node):
                 if not isinstance(call, ast.Call) or not send_re.search(ast.unparse(call.func)):
                     continue
                 sent = list(call.args) + [k.value for k in call.keywords if k.arg in (None, "content")]
                 for value in sent:
-                    if not isinstance(value, (ast.JoinedStr, ast.BinOp)):
-                        continue
-                    text = ast.unparse(value)
-                    for name in sorted(tainted_at(call.lineno + 1)):
-                        if re.search(r"\{" + re.escape(name) + r"[!:}]", text) and f"clip({name}" not in text:
-                            problems.append(
-                                f"cogs/{fname}:{call.lineno}: `{name}`(상한 없는 입력)을 안내 문구에 "
-                                f"그대로 실었어요 — clip({name}, INPUT_ECHO_LIMIT)")
+                    if isinstance(value, (ast.JoinedStr, ast.BinOp)):
+                        scan_text(call.lineno, ast.unparse(value))
+
+            # 📨 그 이름에 담기는 문구도 같은 눈으로 봅니다.
+            for stmt in ast.walk(node):
+                if not isinstance(stmt, ast.Assign) or len(stmt.targets) != 1:
+                    continue
+                target = stmt.targets[0]
+                if not isinstance(target, ast.Name) or target.id not in sent_names:
+                    continue
+                if isinstance(stmt.value, (ast.JoinedStr, ast.BinOp, ast.IfExp)):
+                    scan_text(stmt.lineno, ast.unparse(stmt.value))
     return sorted(set(problems))
 
 
