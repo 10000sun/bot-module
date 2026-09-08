@@ -1000,7 +1000,13 @@ async def main(label, max_names):
 
     print(f"\n{'=' * 60}\n{label}\n{'=' * 60}")
     print(f"  올라간 모듈 : {len(bot.loaded_modules)}개 — {', '.join(bot.loaded_modules)}")
-    print(f"  최상위 명령 : {len(commands)}개")
+    # 🔢 우클릭 메뉴도 "최상위 명령"으로 함께 셉니다(디스코드가 같은 목록에 담아요).
+    #    그런데 그 숫자를 그대로 "슬래시 명령 N개"라고 옮겨 적으면 사실과 어긋나요.
+    #    나눠서 보여주면 옮겨 적는 사람이 헷갈리지 않습니다.
+    slash = len([c for c in commands if getattr(c, "type", None) is None
+                 or str(getattr(c, "type", "")) == "AppCommandType.chat_input"])
+    menus = len(commands) - slash
+    print(f"  최상위 명령 : {len(commands)}개 (슬래시 {slash} · 우클릭 메뉴 {menus})")
     print(f"  동기화 규격 : payload {len(payloads)}개 생성 성공")
     print(f"  상시 버튼   : {len(bot.persistent_views)}개")
 
