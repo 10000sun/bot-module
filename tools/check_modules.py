@@ -940,6 +940,56 @@ PLACEHOLDER_IDS = {
 _ID_RE = re.compile(r"\b\d{17,20}\b")
 
 
+def _check_setting_tables(bot):
+    """`/설정`의 **표**와 **실제 하위 명령**이 서로 맞는지.
+
+    🐛 setting.py는 `_CHANNEL_COMMANDS` / `_ROLE_COMMANDS` 라는 손으로 쓴 표를 갖고 있어요.
+       그런데 그 표는 **지우는 쪽**(_prune_module_commands)과 `/설정 채널지정내역` 이름표에만
+       쓰입니다. 명령 자체는 데코레이터로 따로 만들어요. 그래서 표에만 있고 명령이 없어도
+       **아무 데서도 안 터집니다** — 없는 명령을 지우려는 시도는 조용히 지나가거든요.
+
+       실제로 내전이 그랬어요. `"내전": "scrim_admin"`과 `"내전로그": "scrim_log"`가 표에는
+       있는데 명령이 없어서, 내전 관리 권한과 내전 로그 채널을 **`/설정`에서 영영 못 바꿨습니다.**
+       (`/설치` 마법사엔 있어서 처음 한 번만 잡히고 그 뒤로는 손을 못 댔어요)
+
+    ⚠️ 반대 방향도 봅니다. 명령만 있고 표에 없으면 그 기능을 빼고 납품할 때 **안 지워져서**,
+       있지도 않은 기능의 채널을 지정하는 명령이 남아요.
+
+    📦 부분 납품에서도 그대로 돌게 is_active로 걸러 비교합니다.
+    """
+    from modules import is_active
+    from chunsik_config import ENABLED_MODULE_KEYS
+
+    problems = []
+    설정 = bot.tree.get_command("설정")
+    if 설정 is None:
+        return problems  # 설정 모듈을 빼고 납품하는 구성 — 볼 게 없어요.
+
+    cog = None
+    for candidate in bot.cogs.values():
+        if hasattr(candidate, "_ROLE_COMMANDS") and hasattr(candidate, "_CHANNEL_COMMANDS"):
+            cog = candidate
+            break
+    if cog is None:
+        return ["setting 코그에서 _ROLE_COMMANDS/_CHANNEL_COMMANDS를 못 찾았어요"]
+
+    for group_name, table, kind in (
+        ("관리자", cog._ROLE_COMMANDS, "roles"),
+        ("채널", cog._CHANNEL_COMMANDS, "channels"),
+    ):
+        group = 설정.get_command(group_name)
+        actual = {c.name for c in getattr(group, "commands", [])} if group else set()
+        expected = {name for name, key in table.items() if is_active(kind, key, ENABLED_MODULE_KEYS)}
+
+        for name in sorted(expected - actual):
+            problems.append(f"/설정 {group_name} {name} — 표에는 있는데 **명령이 없어요** "
+                            f"(그 설정을 영영 못 바꿉니다)")
+        for name in sorted(actual - expected):
+            problems.append(f"/설정 {group_name} {name} — 명령은 있는데 **표에 없어요** "
+                            f"(기능을 빼고 납품해도 이 명령이 안 지워집니다)")
+    return problems
+
+
 def _check_delivery_ids():
     """납품물에 **원본 서버의 진짜 ID**가 남아 있는지 봅니다.
 
@@ -1094,6 +1144,12 @@ async def main(label, max_names):
             print(f"     - {problem}")
 
     # 🚚 납품물에 원본 서버의 진짜 ID가 섞여 있지 않은지. (이것도 정적 검사예요)
+    # 🧾 `/설정`의 손으로 쓴 표와 실제 하위 명령이 어긋나지 않았는지. (트리가 필요해요)
+    setting_tables = _check_setting_tables(bot)
+    print(f"  설정 표 짝   : {'✅ 표와 명령이 일치' if not setting_tables else f'🚨 {len(setting_tables)}건'}")
+    for problem in setting_tables:
+        print(f"     - {problem}")
+
     delivery = _check_delivery_ids()
     print(f"  납품물 ID   : {'✅ 자리표시자만 있음' if not delivery else f'🚨 {len(delivery)}건 남음'}")
     if delivery:
@@ -1109,7 +1165,7 @@ async def main(label, max_names):
 
     failed = bool(bot.failed_modules or too_long or ownership or loop_guards or role_reads
                   or catch_up or stale or perms or privacy or tone or echoes or backoff
-                  or delivery)
+                  or delivery or setting_tables)
 
     # 기본 실행이면 "이름을 상한까지 늘린" 검사도 자동으로 한 번 더 돌립니다.
     # (이름은 import 시점에 설명문으로 굳기 때문에 같은 프로세스에서 두 번 볼 수 없어요)

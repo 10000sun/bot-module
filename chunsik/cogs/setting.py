@@ -443,6 +443,17 @@ class ChunsikSetting(commands.Cog):
     async def set_party_admin(self, interaction: discord.Interaction, 역할: discord.Role, 동작: Optional[app_commands.Choice[str]] = None):
         await self._update_admin_role_list(interaction, "party_admin", "파티 관리자", 역할, 동작)
 
+    # 🐛 [버그] `_ROLE_COMMANDS`에는 `"내전": "scrim_admin"`이 있는데 **이 명령만 없었어요.**
+    #    표는 지우고 만들 때(_prune_module_commands)와 `/설정 채널지정내역` 이름표에만 쓰여서,
+    #    없는 명령을 지우려는 시도는 조용히 지나갑니다. 그래서 아무 데서도 안 터졌어요.
+    #    결과: `/내전` 관리 권한(남의 내전 팀짜기·결과기록)을 **나중에 바꿀 방법이 없었습니다.**
+    #    (`/설치` 마법사에는 있어서 처음 한 번은 잡혔고, 그 뒤로 손을 못 댔어요)
+    @관리자.command(name="내전", description="[관리자] 남이 연 내전도 팀을 짜고 결과를 남길 수 있는 역할을 추가/제거합니다. (여러 역할 동시 지정 가능)")
+    @app_commands.describe(역할="추가/제거할 역할", 동작="추가 또는 제거 (기본값: 추가)")
+    @app_commands.choices(동작=ADMIN_ROLE_ACTION_CHOICES)
+    async def set_scrim_admin(self, interaction: discord.Interaction, 역할: discord.Role, 동작: Optional[app_commands.Choice[str]] = None):
+        await self._update_admin_role_list(interaction, "scrim_admin", "내전 관리자", 역할, 동작)
+
     @관리자.command(name="레벨", description="[관리자] 활동 레벨(경험치·역할 보상)을 설정할 역할을 추가/제거합니다. (여러 역할 동시 지정 가능)")
     @app_commands.describe(역할="추가/제거할 역할", 동작="추가 또는 제거 (기본값: 추가)")
     @app_commands.choices(동작=ADMIN_ROLE_ACTION_CHOICES)
@@ -597,6 +608,17 @@ class ChunsikSetting(commands.Cog):
         settings["channels"]["level_announce"] = 채널.id
         save_settings(settings)
         await interaction.response.send_message(f"📌 레벨업 알림 채널이 {채널.mention}로 설정됐어요.", ephemeral=True)
+
+    # 🐛 [버그] 위 `_CHANNEL_COMMANDS`의 `"내전로그": "scrim_log"`도 같은 이유로 짝이 없었어요.
+    #    내전 결과 로그가 갈 곳을 `/설정`에서 지정할 수 없어서, 로그가 조용히 아무 데도 안 갔습니다.
+    @채널.command(name="내전로그", description="[관리자] 내전 결과(누가 어느 팀으로 이겼는지)가 쌓일 로그 채널이에요.")
+    async def set_scrim_log_ch(self, interaction: discord.Interaction, 채널: discord.TextChannel):
+        if not self.has_channel_permission(interaction): return await interaction.response.send_message("❌ 서버 관리자이거나 **설정 관리자** 역할이 있어야 해요! (`/설정 관리자 설정`으로 지정)", ephemeral=True)
+        settings = load_settings()
+        if "channels" not in settings: settings["channels"] = {}
+        settings["channels"]["scrim_log"] = 채널.id
+        save_settings(settings)
+        await interaction.response.send_message(f"📌 내전 로그 채널이 {채널.mention}로 설정됐어요.", ephemeral=True)
 
     @채널.command(name="환영", description="[관리자] 새로 들어온 멤버에게 인사를 올릴 채널이에요.")
     async def set_welcome_ch(self, interaction: discord.Interaction, 채널: discord.TextChannel):
