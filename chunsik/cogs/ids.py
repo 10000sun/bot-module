@@ -41,6 +41,19 @@ MAX_ID_LENGTH = 100      # 게임 아이디는 길어야 수십 자예요 (Riot 
 #      · 대기열 파일에도 200건이 쌓입니다
 #    악의가 없어도 옛 아이디 목록을 통째로 붙여넣으면 그대로 재현돼요.
 #    (그런 용도로는 `/아이디 가져오기`가 따로 있습니다 — 파일로 받아서 한 번에 처리해요)
+# 📄 `/아이디 가져오기`로 받는 파일의 상한.
+#
+# 🐛 [버그] 예전엔 크기도 건수도 안 봤어요. 디스코드 첨부는 25MB까지 올라가는데,
+#    그걸 통째로 읽어 문자열로 펼치고 **동기 함수로 파싱**합니다. 그동안 봇 전체가 멈춰요
+#    (이벤트 루프를 붙잡습니다). 악의가 아니라 **엉뚱한 파일을 잘못 고른 것**만으로도
+#    재현되는 자리라, 관리자 명령이어도 막아둘 값어치가 있어요.
+#    인식된 항목 수도 안 봤습니다 — 수천 명이 한 번에 들어오면 명단 게시가 수백 개
+#    메세지로 나뉘어 몇 시간씩 걸립니다.
+#
+# 1MB면 아이디 목록으로는 아주 넉넉해요(한 줄 50자 기준 2만 줄).
+MAX_IMPORT_BYTES = 1024 * 1024
+MAX_IMPORT_PEOPLE = 1000
+
 MAX_SEGMENTS_PER_MESSAGE = 20   # 메세지 하나에서 처리할 조각 수
 MAX_PENDING_PER_MESSAGE = 5     # 메세지 하나가 만들 수 있는 '관리자 확인 요청' 수
 MAX_PENDING_TOTAL = 200         # 대기열 전체. 넘으면 새 요청을 안 받아요 (`/아이디 대기열정리`)
@@ -828,6 +841,14 @@ class ChunsikIds(commands.Cog):
 
         await interaction.response.defer(ephemeral=True)
 
+        # 📏 내려받기 **전에** 크기를 봅니다. (디스코드가 알려주는 값이에요)
+        if 파일.size and 파일.size > MAX_IMPORT_BYTES:
+            return await interaction.followup.send(
+                f"❌ 파일이 너무 커요. ({파일.size / 1024 / 1024:.1f}MB · 최대 "
+                f"{MAX_IMPORT_BYTES // 1024 // 1024}MB)\n"
+                f"└ 아이디 목록이 맞는지 확인해 주세요. 큰 파일을 읽는 동안 봇 전체가 멈춥니다.",
+                ephemeral=True)
+
         try:
             raw_bytes = await 파일.read()
             text = raw_bytes.decode("utf-8", errors="ignore")
@@ -836,9 +857,19 @@ class ChunsikIds(commands.Cog):
 
         # 🪜 문서에서 구획 제목으로 인정할 이름은 guild.json에 적어둔 등급 이름이에요.
         # (등급을 안 쓰는 서버는 빈 목록이라 옛 형식의 제목만 걸러냅니다)
-        parsed = parse_legacy_id_document(text, [r["label"] for r in RANKS])
+        # 🧵 파싱은 동기 함수예요. 파일이 크면 그동안 봇 전체가 멈추니 스레드로 넘깁니다.
+        #    (자동 백업이 파일 복사를 스레드로 넘기는 것과 같은 이유)
+        parsed = await asyncio.to_thread(
+            parse_legacy_id_document, text, [r["label"] for r in RANKS])
         if not parsed:
             return await interaction.followup.send("❌ 파일에서 아무 항목도 인식하지 못했어요. 형식을 확인해주세요.", ephemeral=True)
+
+        # 👥 한 번에 받을 인원도 끊습니다. 수천 명이 들어오면 명단 게시가 수백 개 메세지로
+        #    나뉘어 몇 시간씩 걸려요. 잘라낸 건 조용히 버리지 않고 화면에 적습니다.
+        skipped_people = 0
+        if len(parsed) > MAX_IMPORT_PEOPLE:
+            skipped_people = len(parsed) - MAX_IMPORT_PEOPLE
+            parsed = dict(list(parsed.items())[:MAX_IMPORT_PEOPLE])
 
         guild = interaction.guild
         matched = []    # (name, member, id_dict)
@@ -858,6 +889,9 @@ class ChunsikIds(commands.Cog):
             f"⚠️ 서버 멤버와 매칭 안 된 이름: **{len(unmatched)}명**\n\n"
             f"바로 **[확정]** 하시거나, **[🔗 매칭 안 된 이름 연결하기]**로 직접 서버 멤버를 골라 연결할 수 있어요. (5분 내 미클릭 시 자동 취소)"
         )
+        if skipped_people:
+            desc = (f"⚠️ 파일에 사람이 너무 많아 **앞 {MAX_IMPORT_PEOPLE}명만** 읽었어요. "
+                    f"({skipped_people}명 남음 — 나눠서 다시 올려주세요)\n\n") + desc
         if unmatched:
             names_text = ", ".join(n for n, _ in unmatched[:30])
             if len(unmatched) > 30:
