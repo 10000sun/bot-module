@@ -12,8 +12,38 @@ from chunsik_config import DATA_DIR, KST, json_data_files, module_active
 from chunsik_storage import SAVE_FAILURES, safe_json_load
 from chunsik_settings import _get_role_ids, has_admin_or_role, load_settings
 from chunsik_state import state
-from chunsik_utils import KNOWN_PLATFORMS, _looks_like_id_entry, _split_platform_and_id, normalize_platform
+from chunsik_utils import (EMBED_DESC_LIMIT, EMBED_FIELD_LIMIT, KNOWN_PLATFORMS, _looks_like_id_entry,
+                          _split_platform_and_id, add_lines_field, clip, fit_embed,
+                          normalize_platform)
 from chunsik_names import bot_name, currency, event_name
+
+# ✂️ 실패 줄에 붙는 오류 원문 길이. 예외 문구는 길이에 제한이 없어서 그대로 실으면
+#    한 줄이 칸 하나(1024자)를 통째로 먹습니다.
+ERROR_TEXT_LIMIT = 120
+
+
+def build_channel_report(ok: list, failed: list, missing: list) -> discord.Embed:
+    """`/테스트 채널점검` 결과 화면.
+
+    🐛 [버그 수정] 예전엔 세 칸에 `", ".join(...)`을 그대로 실었어요. 지정할 수 있는
+    채널이 18개인데 **실패 줄에는 예외 원문까지 붙습니다**(`f"{label} ({e})"`). 길이 제한이
+    없는 값이라 칸 하나가 1024자를 넘기면 **결과 화면이 통째로 400으로 거부**돼요.
+
+    하필 **전부 실패했을 때** — 봇 권한을 아직 안 준 설치 직후가 딱 그 상태예요 — 결과를
+    못 봅니다. 점검 도구가 정작 문제가 있을 때만 안 뜨는 셈이라 제일 나쁜 자리였어요.
+
+    🔎 모듈 바깥에 둔 이유: tools/check_embeds.py가 진짜 코드를 그대로 불러서 재게 하려고요.
+    """
+    embed = discord.Embed(title="🧪 채널점검 결과", color=discord.Color.blurple())
+    add_lines_field(embed, f"✅ 정상 ({len(ok)})", ok, empty="없음")
+    # 실패 줄은 하나도 빠뜨리면 안 돼요 — 그게 고칠 목록이니까요. 기본 예산(2048자)으로는
+    # 채널 18개가 전부 실패하면 뒷줄이 "…외 N줄"로 잘립니다. 넉넉히 잡고 총량은 fit_embed에 맡겨요.
+    add_lines_field(embed, f"❌ 실패 ({len(failed)})", failed, empty="없음",
+                    budget=EMBED_FIELD_LIMIT * 4)
+    add_lines_field(embed, f"⚠️ 미설정 ({len(missing)})", missing, empty="없음")
+    # 🧮 칸을 각각 맞춰도 셋이 쌓이면 전체 6000자를 넘을 수 있어요.
+    return fit_embed(embed)
+
 
 # ========== 🧪 [신규] 관리자 전용 테스트 도구 모음 ==========
 
@@ -139,7 +169,8 @@ class ChunsikTest(commands.Cog):
             except discord.Forbidden:
                 failed.append(f"{label} (봇 권한 부족)")
             except Exception as e:
-                failed.append(f"{label} ({e})")
+                # 예외 문구는 길이 제한이 없어요. 한 줄이 칸 하나를 다 먹지 않게 먼저 자릅니다.
+                failed.append(f"{label} ({clip(str(e), ERROR_TEXT_LIMIT)})")
 
         # 🧹 전부 보낸 **뒤에** 한 번만 쉬고 한꺼번에 지웁니다.
         #    예전엔 채널마다 5초씩 기다리고 지웠어요. 채널이 13개일 땐 65초였는데
@@ -155,11 +186,7 @@ class ChunsikTest(commands.Cog):
                     # 지우기 실패는 점검 결과와 상관없어요. (메세지 관리 권한이 없는 채널 등)
                     pass
 
-        embed = discord.Embed(title="🧪 채널점검 결과", color=discord.Color.blurple())
-        embed.add_field(name=f"✅ 정상 ({len(ok)})", value=", ".join(ok) if ok else "없음", inline=False)
-        embed.add_field(name=f"❌ 실패 ({len(failed)})", value="\n".join(failed) if failed else "없음", inline=False)
-        embed.add_field(name=f"⚠️ 미설정 ({len(missing)})", value=", ".join(missing) if missing else "없음", inline=False)
-        await interaction.followup.send(embed=embed, ephemeral=True)
+        await interaction.followup.send(embed=build_channel_report(ok, failed, missing), ephemeral=True)
 
     # ---------- 2. 권한확인 ----------
     @test_group.command(name="권한확인", description="[관리자] 본인이 가진 관리자 권한을 한눈에 확인해요.")
@@ -253,7 +280,9 @@ class ChunsikTest(commands.Cog):
             else:
                 lines.append(f"`{seg}` → 🔍 플랫폼 미인식('{plat_input}'), 관리자 확인 대기열로 (아이디는 `{game_id}`로 인식)")
 
-        embed = discord.Embed(title="🧪 아이디 파싱 미리보기", description="\n".join(lines)[:4000], color=discord.Color.blurple())
+        embed = discord.Embed(title="🧪 아이디 파싱 미리보기",
+                              description=clip("\n".join(lines), EMBED_DESC_LIMIT),
+                              color=discord.Color.blurple())
         embed.set_footer(text="실제로 등록되지 않아요. 순수 미리보기예요.")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
@@ -347,7 +376,11 @@ class ChunsikTest(commands.Cog):
         else:
             report.append(f"✅ 데이터 폴더 위치: 클라우드 동기화 폴더 아님\n　`{DATA_DIR}`")
 
-        embed = discord.Embed(title="🧪 데이터 무결성 점검 결과", description="\n".join(report), color=discord.Color.blurple())
+        # ✂️ 손상 파일 목록·최근 저장 실패 원문이 길어지면 설명 한도를 넘겨요.
+        #    점검 결과를 못 보게 되는 게 제일 나쁩니다.
+        embed = discord.Embed(title="🧪 데이터 무결성 점검 결과",
+                              description=clip("\n".join(report), EMBED_DESC_LIMIT),
+                              color=discord.Color.blurple())
         await interaction.followup.send(embed=embed, ephemeral=True)
 
     # ---------- 8. 명령어 강제 동기화 ----------
@@ -420,7 +453,7 @@ class ChunsikTest(commands.Cog):
 
         embed = discord.Embed(
             title="🧪 종가게시 미리보기 (실제로 반영되지 않았어요)",
-            description="\n".join(lines)[:4000],
+            description=clip("\n".join(lines), EMBED_DESC_LIMIT),
             color=discord.Color.orange(),
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
