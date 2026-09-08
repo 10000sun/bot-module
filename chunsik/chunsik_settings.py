@@ -212,24 +212,54 @@ LOG_STYLES = {
     "scrim_log":    {"color": discord.Color.dark_red(), "emoji": "⚔️", "title": "내전 로그"},
 }
 
+# 📏 한 로그에 담을 수 있는 칸 수. 디스코드 한도는 25개인데, 넘으면 그 로그가 통째로 거부돼요.
+LOG_FIELD_COUNT_LIMIT = 25
+
+
 def build_log_embed(channel_key: str, description: str, fields: list = None) -> discord.Embed:
     """로그 종류(channel_key)에 맞는 색상/아이콘이 자동 적용된 임베드를 만들어 줍니다.
-    fields는 (이름, 값, inline여부) 튜플의 리스트입니다."""
+    fields는 (이름, 값, inline여부) 튜플의 리스트입니다.
+
+    ✂️ [버그 수정] 예전엔 넘겨받은 글자를 **그대로** 담았어요. 디스코드 한도(설명 4096 ·
+    칸 값 1024 · 칸 이름 256 · 칸 수 25 · 전체 6000)를 넘으면 그 메세지가 400으로 거부되고,
+    `send_log_embed`는 예외를 삼켜서 **콘솔 한 줄만 남깁니다.** 즉 로그가 조용히 증발해요.
+
+    로그에는 이름·아이디·명단처럼 **길이를 알 수 없는 값**이 자주 들어갑니다.
+    "누가 무엇을 했나"를 남기는 곳이 정작 그 '무엇'이 길 때만 안 남는 셈이었어요.
+    부르는 쪽 마흔 몇 곳에서 하나씩 자르게 하는 대신 여기서 한 번에 맞춥니다.
+    (실제로 아이디 자동등록 로그가 그 상태였고, 거기만 손으로 고쳤었어요)
+    """
+    # 🔁 chunsik_utils가 이 파일을 import하기 때문에 맨 위에 두면 순환 import가 돼요.
+    #    (아래 chunsik_names도 같은 이유로 함수 안에서 부릅니다)
+    from chunsik_utils import (EMBED_DESC_LIMIT, EMBED_FIELD_LIMIT, EMBED_TITLE_LIMIT,
+                               clip, fit_embed)
+
     style = LOG_STYLES.get(channel_key, {"color": discord.Color.greyple(), "emoji": "📋", "title": "로그"})
     embed = discord.Embed(
         title=f"{style['emoji']} {style['title']}",
-        description=description,
+        description=clip(description, EMBED_DESC_LIMIT),
         color=style["color"],
         timestamp=dt.datetime.now(KST),
     )
     if fields:
-        for name, value, inline in fields:
-            embed.add_field(name=name, value=value, inline=inline)
+        shown = list(fields)[:LOG_FIELD_COUNT_LIMIT]
+        for name, value, inline in shown:
+            # 값이 비면 디스코드가 거부해요. 빈 칸을 그냥 지우지 않는 건, 무엇이 비어 있는지도
+            # 로그에서는 정보이기 때문입니다.
+            embed.add_field(name=clip(str(name), EMBED_TITLE_LIMIT),
+                            value=clip(str(value), EMBED_FIELD_LIMIT) or "-",
+                            inline=inline)
+        if len(fields) > LOG_FIELD_COUNT_LIMIT:
+            embed.set_field_at(
+                LOG_FIELD_COUNT_LIMIT - 1, name="…",
+                value=f"칸이 {len(fields)}개라 {LOG_FIELD_COUNT_LIMIT - 1}개까지만 남겼어요.",
+                inline=False)
     # 🔁 여기서만 함수 안에서 import합니다. chunsik_names가 이 파일(load_settings)을 쓰기 때문에
     #    맨 위에 두면 서로를 부르는 순환 import가 돼서 봇이 기동조차 못 해요.
     from chunsik_names import bot_name
     embed.set_footer(text=f"{bot_name()}봇 로그 시스템")
-    return embed
+    # 🧮 칸을 각각 맞춰도 여럿이 쌓이면 전체 6000자를 넘어요. 푸터까지 붙인 맨 마지막에.
+    return fit_embed(embed)
 
 async def send_log_embed(bot: commands.Bot, channel_key: str, description: str,
                           fields: list = None, guild: discord.Guild = None,
