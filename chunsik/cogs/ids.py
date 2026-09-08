@@ -15,7 +15,7 @@ from chunsik_config import DATA_DIR, ID_PENDING_FILE, KST, RANKS, json_data_file
 from chunsik_storage import atomic_json_save_or_raise, safe_json_load
 from chunsik_settings import _get_role_ids, feature_gate, is_feature_enabled, load_settings, member_has_admin_or_role, save_settings, send_log_embed
 from chunsik_state import state
-from chunsik_utils import INPUT_ECHO_LIMIT, KNOWN_PLATFORMS, ChunsikView, clip, _looks_like_id_entry, _split_platform_and_id, extract_id_from_mention, find_guild_member_by_name, get_platform_candidates, next_misc_name, next_platform_name, normalize_platform, notify_log, parse_legacy_id_document, respond_modify
+from chunsik_utils import EMBED_FIELD_LIMIT, INPUT_ECHO_LIMIT, KNOWN_PLATFORMS, ChunsikView, clip, _looks_like_id_entry, _split_platform_and_id, extract_id_from_mention, find_guild_member_by_name, get_platform_candidates, next_misc_name, next_platform_name, normalize_platform, notify_log, parse_legacy_id_document, respond_modify
 from chunsik_names import bot_name, josa
 
 
@@ -29,6 +29,21 @@ from chunsik_names import bot_name, josa
 #    슬래시 명령만 막아서는 부족해요. 아이디는 **자동등록 채널에 그냥 글로 올려서도**
 #    들어옵니다. 그래서 저장이 지나가는 길목(_register_single_id)에서 자릅니다.
 MAX_ID_LENGTH = 100      # 게임 아이디는 길어야 수십 자예요 (Riot ID가 `이름#태그`로 제일 긴 편)
+
+# 📥 자동등록 채널은 **아무나 글을 올리는 곳**이에요. 한 사람이 올린 글 하나가 서버 전체를
+#    흔들 수 있는 자리라 세 군데를 막아둡니다.
+#
+# 🐛 [버그] 예전엔 상한이 하나도 없었어요. 메세지 하나를 줄·쉼표로 쪼개서 **조각마다** 처리하는데,
+#    형식을 못 알아본 조각은 그때마다 **아이디 로그 채널에 관리자를 멘션한 확인 요청**이 하나씩
+#    올라갑니다. 즉 아이디처럼 생긴 줄 200개를 한 번에 올리면
+#      · 로그 채널에 관리자 멘션 메세지가 **200개**
+#      · 디스코드 전송 제한 때문에 그게 몇 분에 걸쳐 줄줄이 나가고
+#      · 대기열 파일에도 200건이 쌓입니다
+#    악의가 없어도 옛 아이디 목록을 통째로 붙여넣으면 그대로 재현돼요.
+#    (그런 용도로는 `/아이디 가져오기`가 따로 있습니다 — 파일로 받아서 한 번에 처리해요)
+MAX_SEGMENTS_PER_MESSAGE = 20   # 메세지 하나에서 처리할 조각 수
+MAX_PENDING_PER_MESSAGE = 5     # 메세지 하나가 만들 수 있는 '관리자 확인 요청' 수
+MAX_PENDING_TOTAL = 200         # 대기열 전체. 넘으면 새 요청을 안 받아요 (`/아이디 대기열정리`)
 MAX_NOTICE_LENGTH = 500  # 명단 맨 아래에 붙는 공지 한 덩어리
 
 ROSTER_CHUNK_LIMIT = 1800   # ```ansi 코드블록 오버헤드를 뺀 한 메세지 분량
@@ -973,6 +988,10 @@ class ChunsikIds(commands.Cog):
         if not raw_segments:
             return
 
+        # ✂️ 한 번에 처리할 조각 수를 끊습니다. (위 MAX_SEGMENTS_PER_MESSAGE 주석 참고)
+        skipped_segments = max(0, len(raw_segments) - MAX_SEGMENTS_PER_MESSAGE)
+        raw_segments = raw_segments[:MAX_SEGMENTS_PER_MESSAGE]
+
         registered = []
         pending_data = self._load_id_pending()
         new_pending = []  # (request_id, req) 튜플들, 나중에 한꺼번에 DM 발송
@@ -1055,17 +1074,27 @@ class ChunsikIds(commands.Cog):
             await self._refresh_id_roster(message.guild)
             # 🐛 [버그 수정] 수동 /아이디 등록은 로그가 남는데, 자동등록 채널은 이 로그 전송이
             # 아예 빠져있었어요. 이제 자동등록도 똑같이 id_log 채널에 기록이 남아요.
+            # ✂️ 한 메세지로 여러 개를 등록할 수 있어서 이 칸이 1024자를 넘길 수 있어요.
+            #    넘으면 로그가 통째로 안 올라가서, 등록은 됐는데 기록만 사라집니다.
             await send_log_embed(
                 self.bot, "id_log",
                 f"{message.author.mention} 님이 아이디 자동등록 채널에서 등록했어요.",
-                fields=[("등록 내역", "\n".join(registered), False)],
+                fields=[("등록 내역", clip("\n".join(registered), EMBED_FIELD_LIMIT), False)],
                 guild=message.guild,
             )
 
-        for request_id, req in new_pending:
+        # 🚧 확인 요청은 **관리자를 멘션해서 로그 채널에 올라가는** 메세지예요. 한 메세지가
+        #    만들 수 있는 개수를 끊고, 대기열 전체 크기도 봅니다.
+        room = max(0, MAX_PENDING_TOTAL - len(pending_data.get("requests", {})))
+        allowed = min(len(new_pending), MAX_PENDING_PER_MESSAGE, room)
+        dropped_pending = len(new_pending) - allowed
+        if room == 0 and new_pending:
+            print(f"⚠️ [아이디] 확인 대기열이 {MAX_PENDING_TOTAL}건으로 꽉 찼어요. "
+                  f"`/아이디 대기열정리`로 비워주세요.")
+        for request_id, req in new_pending[:allowed]:
             await self._notify_admins_for_clarification(message.guild, message.author, request_id, req)
             pending_data["requests"][request_id] = req
-        if new_pending:
+        if allowed:
             self._save_id_pending(pending_data)
 
         # 📨 처리 결과를 본인에게 DM으로 짧게 알려드려요 (실패해도 조용히 넘어감)
@@ -1073,8 +1102,15 @@ class ChunsikIds(commands.Cog):
             lines = []
             if registered:
                 lines.append("✅ **바로 등록됐어요**\n" + "\n".join(registered))
-            if new_pending:
-                lines.append(f"🔍 플랫폼/형식이 불명확한 항목 {len(new_pending)}개는 관리자 확인 후 등록될 예정이에요.")
+            if allowed:
+                lines.append(f"🔍 플랫폼/형식이 불명확한 항목 {allowed}개는 관리자 확인 후 등록될 예정이에요.")
+            # 🙇 잘라낸 게 있으면 반드시 알려요. 조용히 버리면 "올렸는데 왜 없지"가 됩니다.
+            if skipped_segments or dropped_pending:
+                lines.append(
+                    f"⚠️ 한 번에 처리할 수 있는 양을 넘어서 **{skipped_segments + dropped_pending}개는 건너뛰었어요.**\n"
+                    f"└ 한 메세지에 {MAX_SEGMENTS_PER_MESSAGE}줄까지, 확인이 필요한 항목은 "
+                    f"{MAX_PENDING_PER_MESSAGE}개까지만 받아요. 나눠서 다시 올려주세요.\n"
+                    f"└ 예전 목록을 통째로 옮기는 거라면 관리자에게 `/아이디 가져오기`를 부탁하세요.")
             if lines:
                 await message.author.send(f"({message.guild.name}) 아이디 등록 처리 결과예요.\n\n" + "\n\n".join(lines))
         except Exception:
