@@ -15,7 +15,7 @@ from chunsik_config import DATA_DIR, ID_PENDING_FILE, KST, RANKS, json_data_file
 from chunsik_storage import atomic_json_save_or_raise, safe_json_load
 from chunsik_settings import _get_role_ids, feature_gate, is_feature_enabled, load_settings, member_has_admin_or_role, save_settings, send_log_embed
 from chunsik_state import state
-from chunsik_utils import KNOWN_PLATFORMS, ChunsikView, _looks_like_id_entry, _split_platform_and_id, extract_id_from_mention, find_guild_member_by_name, get_platform_candidates, next_misc_name, next_platform_name, normalize_platform, notify_log, parse_legacy_id_document, respond_modify
+from chunsik_utils import INPUT_ECHO_LIMIT, KNOWN_PLATFORMS, ChunsikView, clip, _looks_like_id_entry, _split_platform_and_id, extract_id_from_mention, find_guild_member_by_name, get_platform_candidates, next_misc_name, next_platform_name, normalize_platform, notify_log, parse_legacy_id_document, respond_modify
 from chunsik_names import bot_name, josa
 
 
@@ -1215,7 +1215,7 @@ class ChunsikIds(commands.Cog):
 
         candidates = get_platform_candidates(state.user_ids[gid][uid], platform)
         if not candidates:
-            await interaction.followup.send(f"❌ {user.mention}님의 `{platform}` 아이디가 등록되어 있지 않아요!", ephemeral=True)
+            await interaction.followup.send(f"❌ {user.mention}님의 `{clip(platform, INPUT_ECHO_LIMIT)}` 아이디가 등록되어 있지 않아요!", ephemeral=True)
             return
 
         if len(candidates) == 1:

@@ -8,7 +8,7 @@ from discord.ext import commands
 
 from chunsik_config import KST
 from chunsik_settings import feature_gate, has_admin_or_role
-from chunsik_utils import EMBED_DESC_LIMIT, chunk_lines, clip, fit_embed
+from chunsik_utils import EMBED_DESC_LIMIT, INPUT_ECHO_LIMIT, chunk_lines, clip, fit_embed
 from chunsik_state import load_wiki, save_wiki
 from chunsik_names import server_name
 
@@ -219,7 +219,7 @@ class ChunsikWiki(commands.Cog):
 
         del data["wiki"][user_id]
         save_wiki(data)
-        await interaction.followup.send(f"🗑️ `{user_id}` 의 위키가 삭제됐어!")
+        await interaction.followup.send(f"🗑️ `{clip(user_id, INPUT_ECHO_LIMIT)}` 의 위키가 삭제됐어!")
 
     @wiki_group.command(name="목록", description="등록된 모든 위키 항목을 보여줘요")
     @app_commands.guild_only()

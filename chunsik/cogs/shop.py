@@ -11,7 +11,8 @@ from chunsik_alerts import report_loop_error
 from chunsik_storage import atomic_json_save_or_raise, safe_json_load
 from chunsik_settings import feature_gate, has_admin_or_role, send_log_embed
 from chunsik_state import record_ledger
-from chunsik_utils import (EMBED_DESC_LIMIT, EMBED_FIELD_LIMIT, EMBED_TITLE_LIMIT, ChunsikView,
+from chunsik_utils import (EMBED_DESC_LIMIT, EMBED_FIELD_LIMIT, EMBED_TITLE_LIMIT,
+                          INPUT_ECHO_LIMIT, ChunsikView,
                           clip, dangerous_permission, fit_embed, name_choices,
                           report_broken_transaction, role_reject_reason, schedule_delete)
 from chunsik_names import currency, josa
@@ -1519,7 +1520,8 @@ class ChunsikShop(commands.Cog):
         del board["items"][item_id]
         self._save_shop(data)
         # ⏱️ 응답 먼저, 전광판 갱신은 그 다음. (이유는 `/상점 설정` 쪽 주석 참고)
-        await interaction.response.send_message(f"🗑️ `{이름}` 항목을 이 매대에서 폐기했어요.", ephemeral=True)
+        await interaction.response.send_message(
+            f"🗑️ `{clip(이름, INPUT_ECHO_LIMIT)}` 항목을 이 매대에서 폐기했어요.", ephemeral=True)
         await self.update_shop_board(interaction.channel_id)
 
     @remove_item.autocomplete('이름')
@@ -1553,7 +1555,8 @@ class ChunsikShop(commands.Cog):
         if 새이름 is not None and 새이름 != info["name"]:
             existing_id, _ = self._get_item_by_name(board, 새이름)
             if existing_id: return await interaction.response.send_message(f"❌ 이미 이 매대에 `{새이름}`이라는 이름의 상품이 있어요.", ephemeral=True)
-            logs.append(f"이름: {info['name']} ➡️ {새이름}")
+            # 옛 이름은 상한이 생기기 전 값이라 길 수 있어요. 되돌려 적을 때만 자릅니다.
+            logs.append(f"이름: {clip(info['name'], INPUT_ECHO_LIMIT)} ➡️ {새이름}")
             info["name"] = 새이름
 
         if 새가격 is not None:

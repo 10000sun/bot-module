@@ -327,6 +327,69 @@ def _check_loop_guards():
     return problems
 
 
+def _check_input_echo():
+    """상한 없는 입력값을 **안내 문구에 그대로 되돌려 적는** 자리를 찾습니다.
+
+    🚨 "찾는 값"(상품 이름·종목 이름·기록 번호 …)에는 일부러 `Range` 상한을 안 겁니다.
+       상한이 생기기 전에 등록된 긴 이름을 못 지우게 되니까요. 그 판단은 맞아요.
+       그런데 그 값을 **확인 문구에 그대로 되돌려 적는 것**까지 같이 풀려 있었습니다.
+       슬래시 명령의 문자열 칸은 6,000자까지 들어오는데 메세지 본문은 2,000자예요.
+
+         · 오류 안내가 안 나가서 "예상치 못한 오류"만 뜨고
+         · **삭제·수정은 이미 저장된 뒤**라 다시 해보면 "찾을 수 없어요"가 나옵니다
+
+       빠져나갈 길이 없어지는 건 #25(저장 성공이 오류로 둔갑)와 같은 모양이에요.
+       손으로 여덟 곳을 고쳤으니 도구가 잡게 합니다.
+
+    ## 여기서 **안 보는** 것
+      · 입력을 다른 변수에 옮겨 담은 뒤 그 변수를 적는 경우
+        (`target = 번호.strip()` → `{target}`). 그런 자리는 옮겨 담는 지점에서
+        `clip`을 걸어두면 됩니다 — 연대기·스누즈가 그렇게 하고 있어요.
+      · 임베드 안에 넣는 값. 그쪽은 tools/check_embeds.py가 봅니다.
+    """
+    send_re = re.compile(r"(send_message|followup\.send|channel\.send)$")
+    problems = []
+    cogs_dir = os.path.join(CHUNSIK, "cogs")
+    for fname in sorted(os.listdir(cogs_dir)):
+        if not fname.endswith(".py"):
+            continue
+        path = os.path.join(cogs_dir, fname)
+        with open(path, "r", encoding="utf-8") as f:
+            tree = ast.parse(f.read(), filename=path)
+
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.AsyncFunctionDef):
+                continue
+            decorators = " ".join(ast.unparse(d) for d in node.decorator_list)
+            if "command(name=" not in decorators:
+                continue
+
+            # 상한이 없는 문자열 칸만 추립니다. (Range[str, ...]는 디스코드가 막아줘요)
+            loose = set()
+            for arg in node.args.args:
+                if arg.arg in ("self", "interaction") or arg.annotation is None:
+                    continue
+                if ast.unparse(arg.annotation) in ("str", "Optional[str]"):
+                    loose.add(arg.arg)
+            if not loose:
+                continue
+
+            for call in ast.walk(node):
+                if not isinstance(call, ast.Call) or not send_re.search(ast.unparse(call.func)):
+                    continue
+                sent = list(call.args) + [k.value for k in call.keywords if k.arg in (None, "content")]
+                for value in sent:
+                    if not isinstance(value, (ast.JoinedStr, ast.BinOp)):
+                        continue
+                    text = ast.unparse(value)
+                    for name in sorted(loose):
+                        if re.search(r"\{" + re.escape(name) + r"[!:}]", text) and f"clip({name}" not in text:
+                            problems.append(
+                                f"cogs/{fname}:{call.lineno}: `{name}`(상한 없는 입력)을 안내 문구에 "
+                                f"그대로 실었어요 — clip({name}, INPUT_ECHO_LIMIT)")
+    return sorted(set(problems))
+
+
 async def _check_loop_backoff():
     """같은 오류로 계속 죽는 루프가 알림을 도배하지 않는지 **실제로 돌려서** 봅니다.
 
@@ -530,6 +593,13 @@ async def main(label, max_names):
         for problem in loop_guards:
             print(f"     - {problem}")
 
+    # ✂️ 상한 없는 입력을 안내 문구에 그대로 되돌려 적는 자리가 없는지. (정적 검사)
+    echoes = _check_input_echo()
+    print(f"  입력 되돌림 : {'✅ 전부 잘라서 적음' if not echoes else f'🚨 {len(echoes)}건'}")
+    if echoes:
+        for problem in echoes:
+            print(f"     - {problem}")
+
     # 🔁 같은 오류로 계속 죽는 루프가 알림을 도배하지 않는지. (진짜 함수를 돌려봐요)
     backoff = await _check_loop_backoff()
     print(f"  루프 되살림 : {'✅ 알림 도배·헛돌기 없음' if not backoff else f'🚨 {len(backoff)}건'}")
@@ -551,7 +621,8 @@ async def main(label, max_names):
 
     await bot.close()
 
-    failed = bool(bot.failed_modules or too_long or ownership or loop_guards or backoff or delivery)
+    failed = bool(bot.failed_modules or too_long or ownership or loop_guards or echoes
+                  or backoff or delivery)
 
     # 기본 실행이면 "이름을 상한까지 늘린" 검사도 자동으로 한 번 더 돌립니다.
     # (이름은 import 시점에 설명문으로 굳기 때문에 같은 프로세스에서 두 번 볼 수 없어요)

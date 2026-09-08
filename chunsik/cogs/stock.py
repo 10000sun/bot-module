@@ -20,7 +20,8 @@ from chunsik_config import CHART_BG, CHART_DOWN, CHART_GRID, CHART_INK, CHART_IN
 from chunsik_storage import atomic_json_save, atomic_json_save_or_raise, safe_json_load
 from chunsik_settings import LOG_STYLES, build_log_embed, feature_gate, has_admin_or_role, load_settings
 from chunsik_state import record_ledger
-from chunsik_utils import (EMBED_FIELD_LIMIT, EMBED_TITLE_LIMIT, ChunsikView, chunk_lines,
+from chunsik_utils import (EMBED_FIELD_LIMIT, EMBED_TITLE_LIMIT, INPUT_ECHO_LIMIT,
+                          ChunsikView, chunk_lines,
                           clip, describe_user_error, fit_embed, holding_avg_price,
                           holding_shares, name_choices,
                           portfolio_value, report_broken_transaction)
@@ -862,7 +863,7 @@ class ChunsikStock(commands.Cog):
                 break
 
         if not target_stock:
-            return await interaction.followup.send(f"❌ 존재하지 않는 종목이에요: {주식명}", ephemeral=True)
+            return await interaction.followup.send(f"❌ 존재하지 않는 종목이에요: {clip(주식명, INPUT_ECHO_LIMIT)}", ephemeral=True)
 
         stock_info = stocks_dict[target_stock]
         current_price = stock_info.get("price", 0)
@@ -1082,7 +1083,7 @@ class ChunsikStock(commands.Cog):
         stocks_dict = stock_data.get("stocks", {})
         info = stocks_dict.get(주식명)
         if not info:
-            return await interaction.response.send_message(f"❌ `{주식명}` 종목을 찾을 수 없어요.", ephemeral=True)
+            return await interaction.response.send_message(f"❌ `{clip(주식명, INPUT_ECHO_LIMIT)}` 종목을 찾을 수 없어요.", ephemeral=True)
 
         history = info.get("price_history", [])
         if len(history) < 2:
@@ -1211,7 +1212,7 @@ class ChunsikStock(commands.Cog):
                     break
                     
             if not target_stock:
-                return await interaction.followup.send(f"❌ 상장되지 않았거나 존재하지 않는 주식 종목이에요: `{주식명}`")
+                return await interaction.followup.send(f"❌ 상장되지 않았거나 존재하지 않는 주식 종목이에요: `{clip(주식명, INPUT_ECHO_LIMIT)}`")
                 
             stock_name = target_stock
             current_price = stocks_dict[stock_name].get("price", 0)
@@ -1276,7 +1277,7 @@ class ChunsikStock(commands.Cog):
                     break
                     
             if not target_stock:
-                return await interaction.followup.send(f"❌ 상장되지 않았거나 존재하지 않는 주식 종목이에요: `{주식명}`")
+                return await interaction.followup.send(f"❌ 상장되지 않았거나 존재하지 않는 주식 종목이에요: `{clip(주식명, INPUT_ECHO_LIMIT)}`")
                 
             stock_name = target_stock
             user_shares = data.get("user_shares", {})
