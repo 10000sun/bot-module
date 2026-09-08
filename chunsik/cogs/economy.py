@@ -215,6 +215,11 @@ def member_cache_incomplete(guild) -> bool:
     return len(guild.members) < total * MEMBER_CACHE_READY_RATIO
 
 
+ROLE_CACHE_WARNING = (
+    "❌ 서버 멤버 목록이 아직 다 안 불러와졌어요. 지금 하면 **역할을 가진 사람 일부에게만**"
+    " 처리돼서 멈췄습니다.\n└ 잠시 뒤(보통 1분 안에) 다시 시도해 주세요."
+)
+
 CACHE_WARNING = (
     "❌ 서버 멤버 목록이 아직 다 안 불러와졌어요. 지금 지우면 **서버에 있는 사람의 지갑까지**"
     " 지워질 수 있어서 멈췄습니다.\n└ 잠시 뒤(보통 1분 안에) 다시 시도해 주세요."
@@ -1021,6 +1026,11 @@ class ChunsikEconomy(commands.Cog):
             targets = [유저]
             target_mention_str = 유저.mention
         else:
+            # 🧊 `역할.members`는 **캐시**를 훑어요. 캐시가 덜 찼으면 역할을 가진 사람 중
+            #    일부만 잡힙니다. 그대로 진행하면 나머지는 못 받고, 관리자는 그 사실을
+            #    모른 채 다시 한 번 실행해서 **이미 받은 사람에게 두 번** 주게 돼요.
+            if member_cache_incomplete(interaction.guild):
+                return await interaction.followup.send(ROLE_CACHE_WARNING)
             # 봇을 제외하고 해당 역할을 보유한 실제 서버 멤버만 필터링
             targets = [m for m in 역할.members if not m.bot]
             target_mention_str = f"{역할.mention} 역할 인원 전체 ({len(targets)}명)"
@@ -1083,6 +1093,11 @@ class ChunsikEconomy(commands.Cog):
             targets = [유저]
             target_mention_str = 유저.mention
         else:
+            # 🧊 `역할.members`는 **캐시**를 훑어요. 캐시가 덜 찼으면 역할을 가진 사람 중
+            #    일부만 잡힙니다. 그대로 진행하면 나머지는 못 받고, 관리자는 그 사실을
+            #    모른 채 다시 한 번 실행해서 **이미 받은 사람에게 두 번** 주게 돼요.
+            if member_cache_incomplete(interaction.guild):
+                return await interaction.followup.send(ROLE_CACHE_WARNING)
             # 봇을 제외하고 해당 역할을 보유한 실제 서버 멤버만 필터링
             targets = [m for m in 역할.members if not m.bot]
             target_mention_str = f"{역할.mention} 역할 인원 전체 ({len(targets)}명)"
