@@ -581,6 +581,47 @@ def _check_role_reads():
 _BANMAL_ENDINGS = ("했어", "없어", "됐어", "있어", "줄게", "할게", "해줘", "봤어", "왔어", "갔어")
 
 
+def _check_setting_privacy():
+    """`/설정 …` 응답이 전부 **비공개(ephemeral)** 인지 봅니다.
+
+    🔇 설정은 관리자가 자기 확인용으로 쓰는 명령이에요. 응답이 공개로 나가면 관리자가
+       명령을 친 채널(대개 유저도 보는 곳)에 *"○○ 채널이 #어디로 지정됐어요"* 가 그대로
+       남습니다. 채널 지정 열일곱 개 중 **열다섯 개는 비공개인데 생일 둘만** 공개였어요.
+       나중에 붙인 명령이 옆 명령을 안 보고 만들어지면 또 어긋납니다.
+
+    ## 여기서 **안 보는** 것
+      · `/설정` 밖의 명령. 지급·종가게시처럼 **일부러 공개로 알리는** 자리가 많아요.
+      · `defer(...)` 뒤 `followup.send(...)`로 답하는 자리 — 지금 `/설정`에는 없습니다.
+    """
+    problems = []
+    path = os.path.join(CHUNSIK, "cogs", "setting.py")
+    with open(path, "r", encoding="utf-8") as f:
+        tree = ast.parse(f.read(), filename=path)
+
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.AsyncFunctionDef):
+            continue
+        decorators = [ast.unparse(d) for d in node.decorator_list]
+        joined = " ".join(decorators)
+        # `/설정` 아래의 하위 명령만 봅니다. (설정·채널·관리자·명단 그룹)
+        if not any(d.startswith(("설정.command", "채널.command", "관리자.command", "명단.command"))
+                   for d in decorators):
+            continue
+        # ⚠️ ast.unparse는 따옴표를 작은따옴표로 바꿔 적어요. 둘 다 받아야 합니다.
+        #    (큰따옴표만 찾다가 명령 이름 대신 함수 이름이 찍혔습니다)
+        name = re.search(r"command\(name=['\"]([^'\"]+)", joined)
+        label = name.group(1) if name else node.name
+        for call in ast.walk(node):
+            if not isinstance(call, ast.Call):
+                continue
+            if not ast.unparse(call.func).endswith("send_message"):
+                continue
+            if not any(k.arg == "ephemeral" for k in call.keywords):
+                problems.append(f"cogs/setting.py:{call.lineno}: `/설정 … {label}` 응답이 "
+                                f"공개로 나가요 — ephemeral=True 를 붙이세요")
+    return sorted(set(problems))
+
+
 def _check_tone():
     """유저에게 나가는 문구가 **존댓말**인지 봅니다.
 
@@ -978,6 +1019,13 @@ async def main(label, max_names):
         for problem in catch_up:
             print(f"     - {problem}")
 
+    # 🔇 `/설정 …` 응답이 전부 비공개인지. (정적 검사)
+    privacy = _check_setting_privacy()
+    print(f"  설정 비공개 : {'✅ 전부 비공개' if not privacy else f'🚨 {len(privacy)}건'}")
+    if privacy:
+        for problem in privacy:
+            print(f"     - {problem}")
+
     # 🗣️ 유저에게 나가는 문구가 존댓말인지. (정적 검사)
     tone = _check_tone()
     print(f"  말투        : {'✅ 전부 존댓말' if not tone else f'🚨 {len(tone)}건'}")
@@ -1021,7 +1069,7 @@ async def main(label, max_names):
     await bot.close()
 
     failed = bool(bot.failed_modules or too_long or ownership or loop_guards or role_reads
-                  or catch_up or stale or tone or echoes or backoff or delivery)
+                  or catch_up or stale or privacy or tone or echoes or backoff or delivery)
 
     # 기본 실행이면 "이름을 상한까지 늘린" 검사도 자동으로 한 번 더 돌립니다.
     # (이름은 import 시점에 설명문으로 굳기 때문에 같은 프로세스에서 두 번 볼 수 없어요)
