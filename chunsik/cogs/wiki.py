@@ -1,9 +1,12 @@
 """ChunsikWiki — 멤버 위키(소개/취미/MBTI 등) 등록·조회."""
 
+import datetime as dt
+
 import discord
 from discord import app_commands
 from discord.ext import commands
 
+from chunsik_config import KST
 from chunsik_settings import feature_gate, has_admin_or_role
 from chunsik_utils import EMBED_DESC_LIMIT, chunk_lines, clip, fit_embed
 from chunsik_state import load_wiki, save_wiki
@@ -60,6 +63,36 @@ def _fit_field(value: str) -> str:
     return text[:FIELD_LIMIT - len(_TRUNCATED_NOTE)].rstrip() + _TRUNCATED_NOTE
 
 
+# 🖋️ 마지막으로 손댄 사람. 위키 항목 이름(소개·생일·…)과 겹치지 않게 밑줄로 시작해요.
+_EDITOR_KEY = "_edited_by"
+_EDITED_AT_KEY = "_edited_at"
+_EDITOR_NAME_LIMIT = 60
+
+
+def stamp_editor(entry: dict, editor_name: str) -> dict:
+    """이 항목을 방금 누가 고쳤는지 적어둡니다."""
+    entry[_EDITOR_KEY] = clip(editor_name or "", _EDITOR_NAME_LIMIT)
+    entry[_EDITED_AT_KEY] = dt.datetime.now(KST).strftime("%Y-%m-%d")
+    return entry
+
+
+def editor_footer(entry: dict) -> str:
+    """조회 화면 아래에 붙는 '마지막으로 고친 사람' 한 줄.
+
+    🐛 [버그 수정] 예전엔 `last edit by {interaction.user.display_name}` 이었어요.
+    그 interaction은 **조회한 사람**입니다. 즉 누가 열어보든 자기 이름이 "마지막
+    편집자"로 찍혔어요. 아무도 안 고쳤는데 고친 것처럼 보이고, 진짜 고친 사람은
+    어디에도 안 남습니다. 오류가 안 나서 티가 안 나는 종류의 거짓말이에요.
+    이제 등록·수정할 때 적어둔 사람을 보여줍니다.
+    """
+    name = entry.get(_EDITOR_KEY)
+    if not name:
+        # 이 기능이 생기기 전에 등록된 항목이에요. 없는 이름을 지어내지 않습니다.
+        return "last edit by 기록 없음"
+    when = entry.get(_EDITED_AT_KEY)
+    return f"last edit by {name}" + (f" · {when}" if when else "")
+
+
 class ChunsikWiki(commands.Cog):
     """서버 위키 시스템"""
 
@@ -84,14 +117,14 @@ class ChunsikWiki(commands.Cog):
         if "wiki" not in data:
             data["wiki"] = {}
 
-        data["wiki"][user_id] = {
+        data["wiki"][user_id] = stamp_editor({
             "소개": 소개,
             "생일": 생일,
             "서식지": 서식지,
             "MBTI": mbti,
             "논란": 논란.replace("\\n", "\n"),
             "TMI": tmi.replace("\\n", "\n"),
-        }
+        }, interaction.user.display_name)
         save_wiki(data)
 
         # 조회 화면에서 잘릴 항목이 있으면 등록한 사람에게 미리 알려줘요.
@@ -125,7 +158,7 @@ class ChunsikWiki(commands.Cog):
         embed.add_field(name="🌀 논란 및 사건 사고", value=_fit_field(entry.get("논란")), inline=False)
         embed.add_field(name="\u200B", value="\u200B", inline=False)
         embed.add_field(name="📎 TMI", value=_fit_field(entry.get("TMI")), inline=False)
-        embed.set_footer(text=f"last edit by {interaction.user.display_name}")
+        embed.set_footer(text=editor_footer(entry))
         # 🧮 칸마다 1024자로 잘라도 여섯 칸이 쌓이면 합이 6000자를 넘어 조회가 통째로 실패해요.
         #    (위 FIELD_LIMIT은 "칸 하나" 기준이라, 칸이 여러 개면 그것만으론 모자랍니다)
         fit_embed(embed)
@@ -161,6 +194,7 @@ class ChunsikWiki(commands.Cog):
         field_name = 항목.value
         new_value = 내용.replace("\\n", "\n") if field_name in ("논란", "TMI") else 내용
         data["wiki"][user_id][field_name] = new_value
+        stamp_editor(data["wiki"][user_id], interaction.user.display_name)
         save_wiki(data)
         note = (f"\n⚠️ {FIELD_LIMIT}자를 넘어서 조회할 땐 뒷부분이 생략돼요."
                 if len(new_value) > FIELD_LIMIT else "")

@@ -197,7 +197,10 @@ def check_wiki(wiki_mod):
     embed.add_field(name="🌀 논란 및 사건 사고", value=fit(long_text), inline=False)
     embed.add_field(name=blank, value=blank, inline=False)
     embed.add_field(name="📎 TMI", value=fit(long_text), inline=False)
-    embed.set_footer(text="last edit by 아주아주긴별명입니다")
+    # 푸터도 실제 코드가 만드는 것을 씁니다. 손으로 적어두면 저기서 이름 상한이
+    # 바뀌어도 여기는 옛 길이로 계속 통과시켜요.
+    embed.set_footer(text=wiki_mod.editor_footer(
+        wiki_mod.stamp_editor({}, _fill(DISCORD_STRING_MAX))))
     measure("위키 조회 (여섯 칸 전부 최대)", fit_embed(embed))
 
 
