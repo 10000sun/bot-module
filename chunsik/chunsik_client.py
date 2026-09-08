@@ -61,13 +61,34 @@ class ChunsikBotClient(commands.Bot):
         # 재시작이 반복되면 이 알림이 계속 오므로, 크래시 루프를 바로 알아챌 수 있어요.
         if not self._startup_alert_sent:
             self._startup_alert_sent = True
-            await send_alert(
-                f"✅ {bot_name()}봇이 정상 기동했어요",
-                f"계정: `{self.user}` (ID: `{self.user.id}`)\n"
-                f"참여 서버: {len(self.guilds)}개\n"
-                f"기동 시각: {dt.datetime.now(KST).strftime('%Y-%m-%d %H:%M:%S')} KST",
-                color=0x2ECC71,
-            )
+            # 🚨 [버그 수정] 모듈 하나가 안 올라와도 **"정상 기동했어요"** 라고 알렸어요.
+            #    load_modules는 한 모듈이 터져도 나머지를 계속 올립니다(그게 맞아요 — 하나
+            #    때문에 전부 죽으면 안 되니까). 그런데 실패는 **콘솔에만** 남았습니다.
+            #    납품한 서버의 콘솔은 백그라운드 서비스라 아무도 안 봐요. 그래서
+            #    "데이터 파일 하나가 깨져서 레벨 기능이 통째로 빠진 채" 며칠이 지나가고,
+            #    관리자는 초록색 "정상 기동" 알림만 받습니다.
+            #    (실제로 levels.json이 깨지면 그 코그만 조용히 빠집니다)
+            failed = self.failed_modules
+            if failed:
+                lines = "\n".join(f"· **{key}** — {reason}" for key, reason in failed[:10])
+                more = f"\n… 외 {len(failed) - 10}개" if len(failed) > 10 else ""
+                await send_alert(
+                    f"⚠️ {bot_name()}봇이 켜졌지만 기능 {len(failed)}개가 빠졌어요",
+                    f"계정: `{self.user}` (ID: `{self.user.id}`)\n"
+                    f"기동 시각: {dt.datetime.now(KST).strftime('%Y-%m-%d %H:%M:%S')} KST\n\n"
+                    f"**못 올라온 기능**\n{lines}{more}\n\n"
+                    f"데이터 파일이 깨졌을 수 있어요. `/테스트 데이터점검`으로 확인하고, "
+                    f"깨진 파일은 `data/backups/`에서 되돌린 뒤 봇을 다시 켜주세요.",
+                    color=0xF39C12,
+                )
+            else:
+                await send_alert(
+                    f"✅ {bot_name()}봇이 정상 기동했어요",
+                    f"계정: `{self.user}` (ID: `{self.user.id}`)\n"
+                    f"참여 서버: {len(self.guilds)}개\n"
+                    f"기동 시각: {dt.datetime.now(KST).strftime('%Y-%m-%d %H:%M:%S')} KST",
+                    color=0x2ECC71,
+                )
         await self._mark_connected()
         await self._report_unlicensed_guilds()
         if not self.heartbeat_loop.is_running():
