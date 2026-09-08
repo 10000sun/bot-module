@@ -576,6 +576,60 @@ def _check_role_reads():
     return problems
 
 
+# 🗣️ 유저에게 나가는 문구의 **반말 끝맺음**. 여기 있는 말로 줄이 끝나면 잡습니다.
+#    (문장 중간에 나오는 건 안 봐요 — 줄 끝만 봅니다)
+_BANMAL_ENDINGS = ("했어", "없어", "됐어", "있어", "줄게", "할게", "해줘", "봤어", "왔어", "갔어")
+
+
+def _check_tone():
+    """유저에게 나가는 문구가 **존댓말**인지 봅니다.
+
+    🗣️ 이 봇은 전부 존댓말(~어요/~해요)로 말해요. 그런데 위키 코그 하나만 반말이었습니다
+       ("등록됐어!", "위키 정보가 없어!"). 원본 봇에서 옮겨오며 남은 자리인데, 같은 봇인데
+       위키를 쓸 때만 갑자기 말투가 바뀌니 **클라이언트 입장에선 고장이나 미완성으로 보여요.**
+       납품물이라 더 눈에 띕니다.
+
+       오류가 나는 종류가 아니라 아무도 안 잡아줘요. 스무 개 코그가 맞는데 하나만 어긋나는
+       모양은 앞으로도 나올 수 있어서(코그를 새로 만들거나, 다른 봇에서 코드를 가져올 때)
+       도구가 봅니다.
+
+    ## 여기서 **안 보는** 것
+      · 콘솔 `print` — 개발자가 보는 곳이라 말투를 따지지 않아요.
+      · 임베드 안의 글자·명령 설명문. 지금은 send 계열로 나가는 본문만 봅니다.
+      · 문장 **중간**의 반말. 줄 끝만 봐요(그래야 헛짚지 않습니다).
+    """
+    send_re = re.compile(r"(send_message|followup\.send|channel\.send|send)$")
+    problems = []
+    cogs_dir = os.path.join(CHUNSIK, "cogs")
+
+    def banmal_lines(text):
+        out = []
+        for piece in text.split("\n"):
+            stripped = piece.strip().rstrip("!?~ ")
+            if stripped.endswith(_BANMAL_ENDINGS):
+                out.append(piece.strip())
+        return out
+
+    for fname in sorted(os.listdir(cogs_dir)):
+        if not fname.endswith(".py"):
+            continue
+        with open(os.path.join(cogs_dir, fname), "r", encoding="utf-8") as f:
+            tree = ast.parse(f.read(), filename=fname)
+        for call in ast.walk(tree):
+            if not isinstance(call, ast.Call) or not send_re.search(ast.unparse(call.func)):
+                continue
+            sent = list(call.args) + [k.value for k in call.keywords if k.arg in (None, "content")]
+            for value in sent:
+                pieces = ast.walk(value) if isinstance(value, (ast.JoinedStr, ast.BinOp)) else [value]
+                for sub in pieces:
+                    if not (isinstance(sub, ast.Constant) and isinstance(sub.value, str)):
+                        continue
+                    for line in banmal_lines(sub.value):
+                        problems.append(f"cogs/{fname}:{call.lineno}: 반말로 끝나는 문구 — \"{line[:40]}\" "
+                                        f"(이 봇은 전부 존댓말이에요)")
+    return sorted(set(problems))
+
+
 def _check_input_echo():
     """상한 없는 입력값을 **안내 문구에 그대로 되돌려 적는** 자리를 찾습니다.
 
@@ -924,6 +978,13 @@ async def main(label, max_names):
         for problem in catch_up:
             print(f"     - {problem}")
 
+    # 🗣️ 유저에게 나가는 문구가 존댓말인지. (정적 검사)
+    tone = _check_tone()
+    print(f"  말투        : {'✅ 전부 존댓말' if not tone else f'🚨 {len(tone)}건'}")
+    if tone:
+        for problem in tone:
+            print(f"     - {problem}")
+
     # 🛡️ 역할 ID를 _get_role_ids 없이 직접 꺼내 쓰는 자리가 없는지. (정적 검사)
     role_reads = _check_role_reads()
     print(f"  역할 읽기   : {'✅ 전부 _get_role_ids 경유' if not role_reads else f'🚨 {len(role_reads)}건'}")
@@ -960,7 +1021,7 @@ async def main(label, max_names):
     await bot.close()
 
     failed = bool(bot.failed_modules or too_long or ownership or loop_guards or role_reads
-                  or catch_up or stale or echoes or backoff or delivery)
+                  or catch_up or stale or tone or echoes or backoff or delivery)
 
     # 기본 실행이면 "이름을 상한까지 늘린" 검사도 자동으로 한 번 더 돌립니다.
     # (이름은 import 시점에 설명문으로 굳기 때문에 같은 프로세스에서 두 번 볼 수 없어요)
