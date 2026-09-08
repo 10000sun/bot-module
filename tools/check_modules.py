@@ -588,17 +588,35 @@ def _check_input_echo():
          · **삭제·수정은 이미 저장된 뒤**라 다시 해보면 "찾을 수 없어요"가 나옵니다
 
        빠져나갈 길이 없어지는 건 #25(저장 성공이 오류로 둔갑)와 같은 모양이에요.
-       손으로 여덟 곳을 고쳤으니 도구가 잡게 합니다.
+
+    🔗 **옮겨 담은 이름도 따라갑니다.** `stock_name = stock.strip()` 처럼 한 번 옮겨 담고
+       그 이름으로 적는 게 흔한 모양이라서요(`/주식 매수`·`/주식 매도`가 그 모양이라
+       처음엔 놓쳤습니다). 다만 **글자 다루기 — 메서드 사슬(`.strip()`·`.replace()`)과
+       그냥 대입 — 만** 따라가요. `note = await repaint_note(...)` 처럼 다른 함수가
+       만들어 준 값까지 물들이면 온통 헛짚습니다(실제로 오탐이 열다섯 건 났어요).
+       `clip(...)`을 씌워 담으면 거기서 물이 끊기고, 다른 값으로 다시 담아도 끊깁니다.
 
     ## 여기서 **안 보는** 것
-      · 입력을 다른 변수에 옮겨 담은 뒤 그 변수를 적는 경우
-        (`target = 번호.strip()` → `{target}`). 그런 자리는 옮겨 담는 지점에서
-        `clip`을 걸어두면 됩니다 — 연대기·스누즈가 그렇게 하고 있어요.
+      · 리스트·딕셔너리에 넣었다 꺼낸 것, 함수를 거쳐 온 것.
       · 임베드 안에 넣는 값. 그쪽은 tools/check_embeds.py가 봅니다.
     """
     send_re = re.compile(r"(send_message|followup\.send|channel\.send)$")
     problems = []
     cogs_dir = os.path.join(CHUNSIK, "cogs")
+
+    def text_root(node):
+        """`stock.strip().lstrip("#")` → 'stock'. 글자 다루기 사슬이 아니면 None."""
+        while True:
+            if isinstance(node, ast.Name):
+                return node.id
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+                node = node.func.value
+                continue
+            if isinstance(node, ast.Attribute):
+                node = node.value
+                continue
+            return None
+
     for fname in sorted(os.listdir(cogs_dir)):
         if not fname.endswith(".py"):
             continue
@@ -614,14 +632,36 @@ def _check_input_echo():
                 continue
 
             # 상한이 없는 문자열 칸만 추립니다. (Range[str, ...]는 디스코드가 막아줘요)
-            loose = set()
+            seed = set()
             for arg in node.args.args:
                 if arg.arg in ("self", "interaction") or arg.annotation is None:
                     continue
                 if ast.unparse(arg.annotation) in ("str", "Optional[str]"):
-                    loose.add(arg.arg)
-            if not loose:
+                    seed.add(arg.arg)
+            if not seed:
                 continue
+
+            # 줄 순서대로 물들이고 끊습니다. (다른 값으로 다시 담으면 그 자리부터 끊겨요)
+            events = []
+            for stmt in ast.walk(node):
+                if not isinstance(stmt, ast.Assign) or len(stmt.targets) != 1:
+                    continue
+                target = stmt.targets[0]
+                if not isinstance(target, ast.Name):
+                    continue
+                events.append((stmt.lineno, target.id, text_root(stmt.value)))
+            events.sort()
+
+            def tainted_at(line, _seed=seed, _events=events):
+                live = set(_seed)
+                for lineno, name, root in _events:
+                    if lineno >= line:
+                        break
+                    if root is not None and root in live:
+                        live.add(name)
+                    else:
+                        live.discard(name)
+                return live
 
             for call in ast.walk(node):
                 if not isinstance(call, ast.Call) or not send_re.search(ast.unparse(call.func)):
@@ -631,7 +671,7 @@ def _check_input_echo():
                     if not isinstance(value, (ast.JoinedStr, ast.BinOp)):
                         continue
                     text = ast.unparse(value)
-                    for name in sorted(loose):
+                    for name in sorted(tainted_at(call.lineno + 1)):
                         if re.search(r"\{" + re.escape(name) + r"[!:}]", text) and f"clip({name}" not in text:
                             problems.append(
                                 f"cogs/{fname}:{call.lineno}: `{name}`(상한 없는 입력)을 안내 문구에 "
