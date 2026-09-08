@@ -154,6 +154,16 @@ def _log_keys_in_code() -> set:
     return {k for k in keys if k.endswith(("_log", "_announce", "_board"))}
 
 
+# 🧭 `/설정 채널`·`/설정 관리자` 말고 **다른 자리**에서 지정하는 키.
+#    소유 표에는 있지만 그 하위 명령이 없는 게 정상인 것들이에요.
+SET_ELSEWHERE = {
+    "channels": set(),
+    # 👑 대장은 `/설정 명단 대장`으로 지정합니다. "누가 쓸 수 있는지"가 아니라
+    #    "아이디 명단의 어느 칸으로 보여줄지"라서 관리자 역할 목록과 성격이 달라요.
+    "roles": {"chief_role"},
+}
+
+
 def _check_ownership(bot) -> list:
     """modules.py의 소유 표가 실제 코드와 어긋나지 않았는지 봅니다.
 
@@ -203,8 +213,32 @@ def _check_ownership(bot) -> list:
                 problems.append(
                     f"설정 명령은 있는데 modules.py의 {kind}에 없는 키 {missing} — "
                     f"그 기능을 빼도 설정 명령이 남습니다")
+            # 🐛 반대 방향이 비어 있었어요. modules.py는 소유한다고 적어뒀는데 `/설정`에
+            #    하위 명령이 없으면 **지정할 방법이 아예 없습니다.** 기능 키 쪽에서
+            #    똑같은 구멍을 겪고 반대 방향을 붙였는데(내전) 여기는 그대로였어요.
+            unsettable = sorted(set(owners(kind)) - set(table.values()) - SET_ELSEWHERE[kind])
+            if unsettable:
+                problems.append(
+                    f"modules.py는 소유한다는데 `/설정`에 하위 명령이 없는 {kind} 키 "
+                    f"{unsettable} — 지정할 방법이 없습니다")
 
-    # ③ 기능 킬 스위치 키 — 양쪽 방향을 다 봅니다.
+    # ③ 설치 마법사의 안내 표 — 비어 있으면 클라이언트가 무슨 역할인지 모른 채 만듭니다.
+    #    `/설치`는 납품 절차의 기본 경로라, 여기 설명이 비면 그대로 클라이언트가 봐요.
+    #    (실제로 설정 관리자 역할을 새로 만들면서 ROLE_PURPOSE에 넣는 걸 빠뜨렸습니다)
+    wizard_cog = bot.get_cog("ChunsikWizard")
+    if wizard_cog is not None and setting_cog is not None:
+        wizard_mod = sys.modules[type(wizard_cog).__module__]
+        for kind, table, purpose, where in (
+            ("channels", setting_cog._CHANNEL_COMMANDS, wizard_mod.CHANNEL_PURPOSE, "CHANNEL_PURPOSE"),
+            ("roles", setting_cog._ROLE_COMMANDS, wizard_mod.ROLE_PURPOSE, "ROLE_PURPOSE"),
+        ):
+            blank = sorted(set(table.values()) - set(purpose))
+            if blank:
+                problems.append(
+                    f"cogs/wizard.py의 {where}에 설명이 없는 {kind} 키 {blank} — "
+                    f"`/설치` 안내에 빈칸으로 나갑니다")
+
+    # ④ 기능 킬 스위치 키 — 양쪽 방향을 다 봅니다.
     feature_labels = set(_ALL_FEATURE_KEYS.values())
     owned_features = set(owners("features"))
     missing = sorted(feature_labels - owned_features)
@@ -221,7 +255,7 @@ def _check_ownership(bot) -> list:
             f"modules.py는 선언했는데 chunsik_settings._ALL_FEATURE_KEYS에 없는 기능 키 "
             f"{unswitchable} — /기능제어로 끌 수가 없습니다")
 
-    # ④ 로그 스타일 — 로그를 보내면서 스타일 표에 없으면 회색 "📋 로그"로 뭉뚱그려 나와요.
+    # ⑤ 로그 스타일 — 로그를 보내면서 스타일 표에 없으면 회색 "📋 로그"로 뭉뚱그려 나와요.
     #    오류가 안 나는 종류라 아무도 모른 채 지나갑니다. (실제로 두 개가 그 상태였어요)
     used_log_keys = _log_keys_in_code()
     styleless = sorted(used_log_keys - set(cs.LOG_STYLES))
@@ -230,7 +264,7 @@ def _check_ownership(bot) -> list:
             f"로그를 보내는데 chunsik_settings.LOG_STYLES에 없는 키 {styleless} — "
             f"그 로그는 회색 '📋 로그'로 뭉뚱그려 나옵니다")
 
-    # ⑤ 다른 파일이 적어둔 모듈 키에 오타가 없는지
+    # ⑥ 다른 파일이 적어둔 모듈 키에 오타가 없는지
     diag_cog = bot.get_cog("ChunsikTest")
     if diag_cog is not None:
         check_module_keys("cogs/diagnostics.py의 _MODULE_COMMANDS", diag_cog._MODULE_COMMANDS.values())
