@@ -334,6 +334,48 @@ def describe_user_error(error: BaseException) -> str:
     return "❗ 처리하는 중 예상치 못한 오류가 발생했어요. 잠시 후 다시 시도해 주세요."
 
 
+def split_message(text: str, limit: int = MESSAGE_LIMIT, max_parts: int = 5) -> list:
+    """본문을 디스코드 한도 안의 조각으로 나눕니다. **한 줄이 혼자 넘쳐도 나눠져요.**
+
+    🐛 [왜 chunk_lines로는 안 되나] `chunk_lines`는 줄과 줄 **사이**에서만 나눕니다.
+       그건 명단·멘션 목록처럼 "줄을 깨면 안 되는" 것에는 맞는 규칙이에요. 그런데 AI가 쓴
+       답변은 줄바꿈 없이 통째로 2,000자를 넘길 수 있습니다. 그때 `chunk_lines`는
+       **나눠도 그대로**라 전송이 400으로 거부돼요.
+       여기서는 줄 경계를 **되도록** 지키되, 한 줄이 혼자 넘치면 글자 단위로 자릅니다.
+
+    ✂️ `max_parts`를 넘는 만큼은 버리고 마지막 조각에 그 사실을 적어요. 조용히 삼키면
+       "답이 중간에 끊겼는데 왜인지 모르는" 상태가 되니까요.
+    """
+    text = (text or "").strip()
+    if not text:
+        return []
+
+    parts, current = [], ""
+    for line in text.split("\n"):
+        while len(line) > limit:            # 한 줄이 혼자 넘치면 글자 단위로
+            if current:
+                parts.append(current.rstrip("\n"))
+                current = ""
+            parts.append(line[:limit])
+            line = line[limit:]
+        # ⚠️ `current`가 비었는데 조각으로 넣으면 **빈 조각**이 생겨요. 디스코드는 빈
+        #    메세지를 거부하니, 나누려다 오히려 전송이 실패합니다.
+        #    (한 줄이 딱 한도일 때 나던 일 — 검사에서 잡았어요)
+        if current and len(current) + len(line) + 1 > limit:
+            parts.append(current.rstrip("\n"))
+            current = ""
+        current += line + "\n"
+    if current.strip():
+        parts.append(current.rstrip("\n"))
+
+    if len(parts) > max_parts:
+        dropped = len(parts) - max_parts
+        parts = parts[:max_parts]
+        note = f"{"\\n"}… (너무 길어서 {dropped}조각을 줄였어요)"
+        parts[-1] = parts[-1][:limit - len(note)] + note
+    return parts
+
+
 def stored_start(row: dict, key: str = "start"):
     """저장해둔 시각 문자열을 datetime으로 바꿉니다. 값이 없거나 깨졌으면 **None**.
 

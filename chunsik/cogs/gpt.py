@@ -15,8 +15,9 @@ from chunsik_alerts import report_loop_error
 from chunsik_settings import is_feature_enabled
 from chunsik_storage import atomic_json_save, safe_json_load
 from chunsik_state import load_wiki, state
-from chunsik_utils import (EMBED_DESC_LIMIT, INPUT_ECHO_LIMIT, clip,
-                           find_guild_member_by_name, holding_avg_price, holding_shares)
+from chunsik_utils import (EMBED_DESC_LIMIT, INPUT_ECHO_LIMIT, MESSAGE_LIMIT, clip,
+                           find_guild_member_by_name, holding_avg_price, holding_shares,
+                           split_message)
 from chunsik_names import bot_name, currency, josa
 
 # ========== 🎭 봇 페르소나 프롬프트 ==========
@@ -774,7 +775,17 @@ class ChunsikGPT(commands.Cog):
                         self.last_user_message[author_key] = user_content
                         self.last_chunsik_message[author_key] = reply
                         self._save_chat_memory()
-                        await message.channel.send(f"{message.author.mention} {reply}")
+                        # ✂️ [버그 수정] 예전엔 답변을 **통째로** 보냈어요. 디스코드 본문은
+                        #    2,000자인데 AI는 그보다 긴 답을 쉽게 씁니다("○○에 대해 길게 설명해줘").
+                        #    그러면 전송이 400으로 거부되고, 그게 아래 `except`에 걸려
+                        #    **"지금 머리가 띵해서 대답을 못 하겠어요"** 가 나갔어요.
+                        #    답은 멀쩡히 만들어졌고 **돈도 이미 나간 뒤**인데, 유저에겐 고장으로
+                        #    보이고 다시 부르면 또 같은 일이 반복됩니다.
+                        #    (chunk_lines로는 못 나눠요 — 줄바꿈 없는 긴 답변이 바로 그 경우예요)
+                        chunks = split_message(reply, MESSAGE_LIMIT - len(message.author.mention) - 1)
+                        for i, chunk in enumerate(chunks):
+                            await message.channel.send(
+                                f"{message.author.mention} {chunk}" if i == 0 else chunk)
                         # 🏷️ [신규] 명령어 응답과 헷갈리지 않도록, GPT 답변이라는 걸 여기서 직접 명시해서 기록
                         if message.guild:
                             self._append_log_entry(message.guild.id, bot_name(), reply, source="GPT 응답")

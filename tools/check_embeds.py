@@ -438,6 +438,51 @@ def check_diagnostics(diag_mod, setting_mod):
               mark="외 ")
 
 
+def check_ai_reply():
+    print("\n[13] 🤖 AI 답변 — 길게 써 왔을 때 (임베드가 아니라 그냥 메세지)")
+    # 🚨 AI는 2,000자보다 긴 답을 쉽게 씁니다("○○에 대해 길게 설명해줘"). 예전엔 통째로
+    #    보내다가 400으로 거부됐고, 그게 except에 걸려 "지금 머리가 띵해서 대답을 못
+    #    하겠어요"가 나갔어요. **답은 멀쩡히 만들어졌고 돈도 이미 나간 뒤**인데 유저에겐
+    #    고장으로 보입니다.
+    #
+    # ⚠️ chunk_lines로는 못 나눠요 — 줄바꿈 없는 긴 답변이 바로 그 경우입니다.
+    #    split_message는 줄 경계를 되도록 지키되 한 줄이 혼자 넘치면 글자 단위로 자릅니다.
+    from chunsik_utils import split_message
+
+    mention = 24            # "<@000000000000000000> " 몫
+    limit = MESSAGE_MAX - mention
+
+    cases = [
+        ("AI 답변 (짧음)", "안녕하세요!"),
+        ("AI 답변 (딱 한도)", _fill(limit)),
+        ("AI 답변 (한도+1)", _fill(limit + 1)),
+        ("AI 답변 (줄바꿈 없이 1만자)", _fill(10000)),
+        ("AI 답변 (문단이 여러 개)", ("문단입니다. " * 100 + "\n") * 12),
+        ("AI 답변 (10만자)", _fill(100000)),
+    ]
+    for label, text in cases:
+        parts = split_message(text, limit)
+        longest = max((len(p) for p in parts), default=0)
+        empty = [i for i, p in enumerate(parts) if not p.strip()]
+        if longest > limit:
+            _fails.append(label)
+            print(f"  🚨 {label} — {len(parts)}조각인데 제일 긴 조각이 {longest:,}자 > {limit:,}")
+        elif empty:
+            # 빈 조각을 보내면 디스코드가 거부해요. 나누려다 오히려 전송이 실패합니다.
+            _fails.append(label)
+            print(f"  🚨 {label} — 빈 조각이 {len(empty)}개 생겼어요 (디스코드가 거부합니다)")
+        else:
+            print(f"  OK  {label} — {len(parts)}조각, 제일 긴 조각 {longest:,}자 / {limit:,}")
+
+    # 너무 길면 줄이되, **줄였다는 걸 알려야** 해요. 조용히 끊기면 원인을 알 수 없습니다.
+    tail = split_message(_fill(100000), limit)[-1]
+    if "줄였어요" not in tail:
+        _fails.append("AI 답변 줄임 안내")
+        print("  🚨 아주 긴 답변을 줄이면서 그 사실을 알리지 않았어요")
+    else:
+        print("  OK  줄임 안내 — 마지막 조각에 몇 조각을 줄였는지 적습니다")
+
+
 def check_settlement(shop_mod):
     print("\n[12] 📊 상점 정산 — 매대가 여러 개일 때")
     # 🚨 매대는 **채널마다 하나씩** 만들 수 있어서 개수에 상한이 없어요. 한 줄이 70자쯤이라
@@ -514,6 +559,7 @@ def main():
     check_snooze(snooze_mod)
     check_diagnostics(diag_mod, setting_mod)
     check_settlement(shop_mod)
+    check_ai_reply()
     check_log_embeds()
 
     print("\n" + "=" * 62)
