@@ -505,6 +505,64 @@ def check_settlement(shop_mod):
         measure(f"상점 정산 (매대 {count}개)", build(count))
 
 
+def check_panel_states(party_mod, scrim_mod):
+    print("\n[14] 🪧 모집글이 말하는 상태 ↔ 실제로 누를 수 있는 버튼")
+    # 🐛 내전 모집글에 **마감 갈래가 통째로 없었어요.** 결과 없이 마감하면 버튼은 전부
+    #    사라지는데 글은 여전히 "팀 짜기를 누르세요"라고 말했습니다. 누를 게 없는데요.
+    #    파티 모집글은 "🔒 마감됐어요"를 맨 앞에서 보고 있어서 멀쩡했어요 — 형제끼리
+    #    어긋나 있던 자리입니다. 길이가 아니라 **말이 맞는지**를 보는 검사예요.
+    start = dt.datetime.now(KST) + dt.timedelta(hours=1)
+    party = object.__new__(party_mod.ChunsikParty)
+    scrim = object.__new__(scrim_mod.ChunsikScrim)
+
+    PRESS = ("누르세요", "눌러", "눌러주세요")
+
+    def head_of(embed):
+        return (embed.description or "").strip().split("\n")[-1]
+
+    base_scrim = {
+        "title": "한 판", "note": "", "size": 5, "host": 1, "start": start.isoformat(),
+        "channel_id": 1, "guild_id": 1, "members": list(range(1, 11)),
+        "teams": None, "result": None, "closed": False, "reminded": False, "balanced": True,
+    }
+    teams = {"A": [1, 2, 3, 4, 5], "B": [6, 7, 8, 9, 10]}
+    scrim_states = [
+        ("내전 모집 중",        {"members": [1, 2, 3]}),
+        ("내전 정원 참",        {}),
+        ("내전 팀 나뉨",        {"teams": teams}),
+        ("내전 결과 없이 마감", {"closed": True}),
+        ("내전 팀 짠 뒤 마감",  {"closed": True, "teams": teams}),
+        ("내전 결과까지",       {"closed": True, "teams": teams, "result": "A"}),
+    ]
+    for label, extra in scrim_states:
+        row = dict(base_scrim); row.update(extra)
+        head = head_of(scrim._embed(row, {}))
+        # 버튼이 사라지는 상태(done)인데 "누르세요"라고 하면 안 돼요.
+        done = scrim._stage(row) == "done"
+        if done and any(word in head for word in PRESS):
+            _fails.append(label)
+            print(f"  🚨 {label} — 버튼이 없는데 글은 누르라고 해요: {head}")
+        elif done and not any(word in head for word in ("마감", "끝났")):
+            _fails.append(label)
+            print(f"  🚨 {label} — 끝난 상태인데 그렇게 말하지 않아요: {head}")
+        else:
+            print(f"  OK  {label} — {head}")
+
+    base_party = {
+        "title": "한 판", "note": "", "size": 5, "host": 1, "start": start.isoformat(),
+        "channel_id": 1, "guild_id": 1, "members": [1, 2, 3], "waiting": [],
+        "closed": False, "reminded": False,
+    }
+    for label, extra in [("파티 모집 중", {}), ("파티 마감", {"closed": True})]:
+        row = dict(base_party); row.update(extra)
+        head = head_of(party._embed(row, 1))
+        if row["closed"] and "마감" not in head:
+            _fails.append(label)
+            print(f"  🚨 {label} — 마감했는데 그렇게 말하지 않아요: {head}")
+        else:
+            print(f"  OK  {label} — {head}")
+
+
 def check_log_embeds():
     print("\n[11] 🧾 로그 임베드 — 길이를 알 수 없는 값이 들어올 때")
     # 🚨 로그는 마흔 몇 곳에서 부르고, 이름·아이디·명단처럼 **길이를 알 수 없는 값**이
@@ -563,6 +621,7 @@ def main():
     check_diagnostics(diag_mod, setting_mod)
     check_settlement(shop_mod)
     check_ai_reply()
+    check_panel_states(party_mod, scrim_mod)
     check_log_embeds()
 
     print("\n" + "=" * 62)
