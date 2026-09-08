@@ -24,7 +24,7 @@ from chunsik_settings import feature_gate, has_admin_or_role, is_feature_enabled
 from chunsik_state import load_party, save_party, state
 from chunsik_utils import (EMBED_DESC_LIMIT, EMBED_TITLE_LIMIT, MESSAGE_LIMIT,
                         ChunsikView, add_lines_field, clip, fit_embed, mention_list,
-                        parse_datetime_text)
+                        parse_datetime_text, repaint_note)
 
 # ⏰ 시작 몇 분 전에 부를지. 0이면 시작할 때만 불러요.
 REMIND_BEFORE_MINUTES = 10
@@ -223,7 +223,11 @@ class ChunsikParty(commands.Cog):
                 pass  # DM을 막아둔 사람도 있어요. 목록에는 이미 올라가 있으니 괜찮습니다.
 
         if changed_party is not None:
-            await self._repaint(party_id, changed_party)
+            # 참가/취소는 이미 저장이 끝난 상태예요. 여기서 그림이 실패해도 "예상치 못한
+            # 오류"로 뭉뚱그리면, 자리를 잡은 사람이 못 잡은 줄 알고 다시 누릅니다.
+            note = await repaint_note(self._repaint(party_id, changed_party), "모집글")
+            if note:
+                await interaction.followup.send(note.strip(), ephemeral=True)
 
     # ---------- 시작 시각 챙기기 ----------
 

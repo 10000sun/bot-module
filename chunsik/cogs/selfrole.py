@@ -21,7 +21,7 @@ from chunsik_settings import (feature_gate, has_admin_or_role, is_feature_enable
 from chunsik_state import load_selfroles, save_selfroles
 from chunsik_utils import (EMBED_DESC_LIMIT, EMBED_FIELD_LIMIT,
                         EMBED_TITLE_LIMIT, ChunsikView, button_emoji_error, clip,
-                        dangerous_permission, role_reject_reason,
+                        dangerous_permission, repaint_note, role_reject_reason,
                         safe_button_emoji)
 
 # 📏 디스코드 제한 — 한 메시지에 버튼은 5줄 × 5개까지.
@@ -252,8 +252,8 @@ class ChunsikSelfRole(commands.Cog):
                 return await interaction.followup.send("❌ 그새 패널이 사라졌어요.", ephemeral=True)
             panel["roles"].append({"id": 역할.id, "label": 이름 or 역할.name, "emoji": 이모지.strip() or None})
             self._save_panels(panels)
-        await self._repaint(패널, panel)
-        await interaction.followup.send(f"✅ {역할.mention} 을(를) 패널에 담았어요.", ephemeral=True)
+        note = await repaint_note(self._repaint(패널, panel), "패널")
+        await interaction.followup.send(f"✅ {역할.mention} 을(를) 패널에 담았어요.{note}", ephemeral=True)
 
     @셀프역할.command(name="역할빼기", description="[관리자] 패널에서 역할을 빼요. (이미 가져간 사람의 역할은 그대로 둡니다)")
     @app_commands.describe(패널="역할을 뺄 패널", 역할="뺄 역할")
@@ -279,11 +279,11 @@ class ChunsikSelfRole(commands.Cog):
                 return await interaction.followup.send("❌ 그새 패널이 사라졌어요.", ephemeral=True)
             panel["roles"] = [e for e in panel["roles"] if int(e["id"]) != 역할.id]
             self._save_panels(panels)
-        await self._repaint(패널, panel)
+        note = await repaint_note(self._repaint(패널, panel), "패널")
         # 💡 이미 가져간 사람의 역할은 일부러 회수하지 않아요. 패널에서 빼는 건 "더 이상
         #    나눠주지 않는다"는 뜻이지, "지금 가진 사람에게서 뺏는다"가 아닙니다.
         await interaction.followup.send(
-            f"🗑️ {역할.mention} 을(를) 패널에서 뺐어요. (이미 가진 사람은 그대로예요)", ephemeral=True)
+            f"🗑️ {역할.mention} 을(를) 패널에서 뺐어요. (이미 가진 사람은 그대로예요){note}", ephemeral=True)
 
     @셀프역할.command(name="패널삭제", description="[관리자] 패널을 지워요. (이미 가져간 사람의 역할은 그대로 둡니다)")
     @app_commands.describe(패널="지울 패널")

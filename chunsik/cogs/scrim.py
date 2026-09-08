@@ -38,7 +38,7 @@ from chunsik_settings import (feature_gate, has_admin_or_role, is_feature_enable
 from chunsik_state import load_scrim, save_scrim, state
 from chunsik_utils import (EMBED_DESC_LIMIT, EMBED_TITLE_LIMIT, MESSAGE_LIMIT,
                            ChunsikView, add_lines_field, clip, fit_embed, mention_list,
-                           parse_datetime_text)
+                           parse_datetime_text, repaint_note)
 
 REMIND_BEFORE_MINUTES = 10
 
@@ -351,9 +351,13 @@ class ChunsikScrim(commands.Cog):
             await interaction.response.send_message(reply, ephemeral=True)
 
         if changed is not None:
-            await self._repaint(scrim_id, *changed)
+            # 🏁 그림이 실패해도 결과 발표는 반드시 나가야 해요. 예전엔 repaint가 던지면
+            #    승패는 전적에 박힌 채 발표만 통째로 건너뛰었습니다.
+            note = await repaint_note(self._repaint(scrim_id, *changed), "내전 모집글")
             if action.startswith("win:"):
                 await self._announce_result(scrim_id, changed[0])
+            if note:
+                await interaction.followup.send(note.strip(), ephemeral=True)
 
     async def _announce_result(self, scrim_id: str, scrim: dict):
         """결과를 기록 채널에 남깁니다. (채널을 안 정했으면 조용히 건너뜁니다)"""
