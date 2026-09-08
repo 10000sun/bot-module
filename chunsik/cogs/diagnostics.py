@@ -17,6 +17,17 @@ from chunsik_utils import (EMBED_DESC_LIMIT, EMBED_FIELD_LIMIT, KNOWN_PLATFORMS,
                           normalize_platform)
 from chunsik_names import bot_name, currency, event_name
 
+# ⏳ `/테스트 이벤트`로 열 수 있는 창의 최대 길이. 10분이에요.
+#
+# 🐛 [버그 수정] 예전엔 상한이 아예 없었어요. 큰 숫자를 넣으면
+#    `dt.datetime.now(KST) + dt.timedelta(seconds=초)` 가 **OverflowError**를 냅니다.
+#    `/이벤트설정 지속시간초`에서 같은 걸 막았는데, **테스트 쪽은 빠져 있었어요.**
+#    (테스트 명령이 오히려 아무 숫자나 넣어보게 되는 자리라 더 잘 밟습니다)
+#
+# 10분인 이유: 흐름(리액션 → 마감 공지 → 보상)만 확인하는 창이에요. 진짜 이벤트 길이는
+# `/이벤트설정 지속시간초`로 따로 정합니다.
+TEST_EVENT_MAX_SECONDS = 600
+
 # ✂️ 실패 줄에 붙는 오류 원문 길이. 예외 문구는 길이에 제한이 없어서 그대로 실으면
 #    한 줄이 칸 하나(1024자)를 통째로 먹습니다.
 ERROR_TEXT_LIMIT = 120
@@ -214,13 +225,18 @@ class ChunsikTest(commands.Cog):
 
     # ---------- 3. 이벤트 강제 오픈 ----------
     @test_group.command(name="이벤트", description=f"[관리자] {event_name()} 이벤트 창을 짧게 강제로 열어서 전체 흐름(리액션/마감공지/보상)을 테스트해요.")
-    @app_commands.describe(초="테스트용 창 지속시간(초). 기본 15초")
-    async def test_evashi(self, interaction: discord.Interaction, 초: int = 15):
+    @app_commands.describe(초=f"테스트용 창 지속시간(초). 기본 15초, 최대 {TEST_EVENT_MAX_SECONDS}초")
+    async def test_evashi(self, interaction: discord.Interaction,
+                          초: app_commands.Range[int, 1, TEST_EVENT_MAX_SECONDS] = 15):
         if not self._is_server_admin(interaction):
             return await interaction.response.send_message("⛔ 서버 관리자 또는 테스트 관리자만 사용할 수 있어요.", ephemeral=True)
         games_cog = self.bot.get_cog("ChunsikGames")
         if not games_cog:
             return await interaction.response.send_message(f"❌ {event_name()} 시스템을 찾을 수 없어요.", ephemeral=True)
+
+        # 입력창에서 Range가 막지만, 옛 클라이언트 대비로 한 번 더 조입니다.
+        # (여기서 안 막으면 아래 timedelta가 OverflowError로 터져요)
+        초 = max(1, min(int(초), TEST_EVENT_MAX_SECONDS))
 
         games_cog.evashi_participants = set()
         games_cog.evashi_first_claimed = 0
