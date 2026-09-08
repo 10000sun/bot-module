@@ -649,7 +649,7 @@ class ChunsikIds(commands.Cog):
             elif 내용 is None:
                 current = settings.get("id_roster_notice", "").strip()
                 if not current:
-                    await interaction.response.send_message("ℹ️ 등록된 공지사항이 없어요. `/아이디공지 내용:...`으로 추가할 수 있어요.", ephemeral=True)
+                    await interaction.response.send_message("ℹ️ 등록된 공지사항이 없어요. `/아이디 공지 내용:...`으로 추가할 수 있어요.", ephemeral=True)
                 else:
                     # ✂️ 상한이 생기기 전에 쌓인 긴 공지가 남아 있을 수 있어요. 그대로 실으면
                     #    **공지를 확인하려는 화면 자체가 안 뜹니다.**
@@ -706,7 +706,7 @@ class ChunsikIds(commands.Cog):
         await interaction.followup.send(
             f"🔄 `ids.json`을 다시 읽어왔어요!\n"
             f"└ 등록된 서버 수: {before_users}개 → **{after_users}개**\n"
-            f"이제 `/아이디 목록` 갱신하시면 파일 내용 그대로 반영돼요.",
+            f"아이디 목록 채널도 방금 새로 올렸어요.",
             ephemeral=True
         )
         await self._refresh_id_roster(interaction.guild, force_repost=True)
