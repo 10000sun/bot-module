@@ -30,7 +30,7 @@ from chunsik_config import KST, SNOOZE_FILE
 from chunsik_alerts import report_loop_error
 from chunsik_settings import feature_gate, is_feature_enabled
 from chunsik_storage import atomic_json_save_or_raise, safe_json_load
-from chunsik_utils import parse_datetime_text
+from chunsik_utils import parse_datetime_text, stored_start
 from chunsik_utils import ChunsikView
 
 # 🕘 "내일 아침" 같은 말이 실제로 몇 시인지. 하루 중 그 시각이 이미 지났으면 다음 날로 넘어가요.
@@ -398,12 +398,12 @@ class ChunsikSnooze(commands.Cog):
     # ========== ⏰ 깨우기 ==========
     @staticmethod
     def _wake_at(row: dict) -> Optional[dt.datetime]:
-        """예약 한 줄의 '깨울 시각'. 값이 깨져 있으면 None을 돌려줍니다."""
-        try:
-            parsed = dt.datetime.fromisoformat(row.get("wake_at", ""))
-        except (TypeError, ValueError):
-            return None
-        return parsed.replace(tzinfo=KST) if parsed.tzinfo is None else parsed
+        """예약 한 줄의 '깨울 시각'. 값이 깨져 있으면 None을 돌려줍니다.
+
+        🔁 이 방식(깨진 줄은 None → 부르는 쪽이 건너뜀)을 파티·내전도 쓰게 되면서
+           chunsik_utils.stored_start로 옮겼어요. 두 벌로 두면 한쪽만 고쳐집니다.
+        """
+        return stored_start(row, "wake_at")
 
     @tasks.loop(minutes=1)
     async def snooze_loop(self):

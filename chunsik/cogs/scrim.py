@@ -38,7 +38,7 @@ from chunsik_settings import (feature_gate, has_admin_or_role, is_feature_enable
 from chunsik_state import load_scrim, save_scrim, state
 from chunsik_utils import (EMBED_DESC_LIMIT, EMBED_TITLE_LIMIT, MESSAGE_LIMIT,
                            ChunsikView, add_lines_field, clip, fit_embed, mention_list,
-                           parse_datetime_text, repaint_note)
+                           parse_datetime_text, repaint_note, stored_start)
 
 REMIND_BEFORE_MINUTES = 10
 
@@ -183,7 +183,8 @@ class ChunsikScrim(commands.Cog):
     # ---------- 화면 ----------
 
     def _embed(self, scrim: dict, records: dict) -> discord.Embed:
-        start = dt.datetime.fromisoformat(scrim["start"])
+        # ⏰ 시각이 깨져 있어도 모집글은 그려져야 해요. (파티와 같은 이유)
+        start = stored_start(scrim)
         joined = scrim.get("members", [])
         size = scrim["size"]
         need = size * 2
@@ -209,7 +210,11 @@ class ChunsikScrim(commands.Cog):
             description=clip((scrim.get("note") or "") + f"\n\n{head}", EMBED_DESC_LIMIT),
             color=color,
         )
-        embed.add_field(name="시작", value=f"<t:{int(start.timestamp())}:F>\n<t:{int(start.timestamp())}:R>", inline=True)
+        embed.add_field(
+            name="시작",
+            value=(f"<t:{int(start.timestamp())}:F>\n<t:{int(start.timestamp())}:R>" if start
+                   else "⚠️ 시각을 알 수 없어요 (기록이 깨졌어요)"),
+            inline=True)
         embed.add_field(name="형식", value=f"**{size} : {size}**", inline=True)
         embed.add_field(name="주최", value=f"<@{scrim['host']}>", inline=True)
 
@@ -384,7 +389,11 @@ class ChunsikScrim(commands.Cog):
             for sid, scrim in list(data["matches"].items()):
                 if scrim.get("closed") or scrim.get("reminded"):
                     continue
-                start = dt.datetime.fromisoformat(scrim["start"])
+                start = stored_start(scrim)
+                if start is None:
+                    # 🛡️ 깨진 줄 하나가 나머지 내전 전부의 알림을 멈추게 두지 않아요.
+                    print(f"⚠️ [내전] 시작 시각이 깨진 모집글을 건너뛰었어요: {sid} -> {scrim.get('start')!r}")
+                    continue
                 if 0 < (start - now).total_seconds() <= REMIND_BEFORE_MINUTES * 60:
                     scrim["reminded"] = True
                     changed = True
