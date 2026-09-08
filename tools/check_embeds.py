@@ -201,6 +201,49 @@ def check_wiki(wiki_mod):
     measure("위키 조회 (여섯 칸 전부 최대)", fit_embed(embed))
 
 
+def check_wiki_list(wiki_mod):
+    print("\n[3-2] 📚 위키 목록 — 사람이 늘었을 때")
+    # 예전엔 4000자가 넘으면 "나중에 검색 기능도 추가할게!" 한 줄만 나가고 목록을
+    # 아예 못 봤어요. 지금은 페이지로 나눕니다. 나눈 **뒤 제일 긴 페이지**를 재야 해요.
+    #
+    # 🚨 소개는 상한 없는 자유 입력입니다. 한 명이 6000자를 적으면 chunk_lines로는
+    #    못 나눠요(줄 사이에서만 나눔). 그래서 줄부터 자르는지가 진짜 검사입니다.
+    def worst(count, intro_len):
+        rows = [(_fill(32), str(10 ** 17 + i), _fill(intro_len)) for i in range(count)]
+        return wiki_mod.build_wiki_list_pages(rows), len(rows)
+
+    for label, count, intro_len in (
+        ("위키 목록 (100명 · 소개 평범)", 100, 30),
+        ("위키 목록 (100명 · 소개 전부 최대)", 100, DISCORD_STRING_MAX),
+        ("위키 목록 (1명 · 소개 최대)", 1, DISCORD_STRING_MAX),
+        ("위키 목록 (1000명 · 소개 최대)", 1000, DISCORD_STRING_MAX),
+    ):
+        (pages, dropped), total = worst(count, intro_len)
+        longest = max((len(page) for page in pages), default=0)
+        if longest > DESC_MAX:
+            _fails.append(label)
+            print(f"  🚨 {label} — {len(pages)}페이지로 나눴는데 제일 긴 페이지가 "
+                  f"{longest:,}자 > {DESC_MAX:,}")
+            print("       · 한 줄이 혼자 한도를 넘으면 chunk_lines로는 못 나눠요.")
+            print("       · cogs/wiki.py의 LIST_LINE_LIMIT으로 줄을 먼저 자르세요.")
+        elif not pages:
+            _fails.append(label)
+            print(f"  🚨 {label} — 페이지가 하나도 안 나왔어요 (빈 임베드는 디스코드가 거부합니다)")
+        else:
+            note = f", {dropped}명 생략" if dropped else ""
+            print(f"  OK  {label} — {len(pages)}페이지, 제일 긴 페이지 {longest:,}자 "
+                  f"/ {DESC_MAX:,} (총 {total}명{note})")
+
+    # 다 담기지 못한 사람이 있으면 반드시 세어서 알려야 해요. 조용히 사라지면
+    # "등록했는데 목록에 없다"는 문의로 돌아옵니다.
+    (pages, dropped), total = worst(1000, DISCORD_STRING_MAX)
+    if dropped <= 0:
+        _fails.append("위키 목록 생략 인원 표시")
+        print("  🚨 목록에서 잘려나간 사람이 있는데 인원을 세지 않았어요")
+    else:
+        print(f"  OK  생략 인원 표시 — {total}명 중 {dropped}명 생략을 알려줍니다")
+
+
 def check_chronicle(chron_mod):
     print("\n[4] 📜 연대기 — 목록과 기록 확인")
     chron = object.__new__(chron_mod.ChunsikChronicle)
@@ -391,6 +434,7 @@ def main():
     check_shop(shop_mod)
     check_stock(stock_mod)
     check_wiki(wiki_mod)
+    check_wiki_list(wiki_mod)
     check_chronicle(chron_mod)
     check_recruit(party_mod, scrim_mod)
     check_selfrole(selfrole_mod)
