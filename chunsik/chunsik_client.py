@@ -12,7 +12,9 @@ from discord.ext import commands, tasks
 from chunsik_config import (ALERT_DISCONNECT_SECONDS, ENABLED_SPECS, GUILD_LOCK_ON,
                          HEARTBEAT_FILE, KST, MODULE_WARNINGS, TEST_GUILD_ID,
                          guild_allowed)
-from chunsik_alerts import send_alert
+from chunsik_alerts import report_loop_error, send_alert
+from chunsik_storage import SAVE_FAILURES, save_failure_total
+from chunsik_storage import DataSaveError
 from chunsik_utils import describe_user_error
 from chunsik_names import bot_name, is_configured
 
@@ -23,6 +25,11 @@ from chunsik_names import bot_name, is_configured
 # 이제 modules.py의 목록을 보고 importlib으로 하나씩 불러와요. 덕분에
 #   ① 담을 기능을 guild.json에서 고를 수 있고,
 #   ② 한 모듈이 터져도 나머지는 정상적으로 뜹니다. (무엇이 실패했는지는 크게 알려요)
+
+# 💾 같은 저장 사고로 알림이 도배되지 않게 두는 간격(초). 감시 루프는 30초마다 도는데,
+#    폴더가 잠기면 매 회차마다 새 실패가 쌓여요.
+SAVE_ALERT_COOLDOWN = 600
+
 
 # ========== 🤖 봇 클라이언트 정의 ==========
 class ChunsikBotClient(commands.Bot):
@@ -49,6 +56,11 @@ class ChunsikBotClient(commands.Bot):
 
         # 💓 [신규] 다운 알림용 상태값
         self._startup_alert_sent = False      # 기동 알림은 재연결 때마다가 아니라 딱 한 번만
+        # 🔒 허가되지 않은 서버 알림도 같은 이유로 한 번만. (아래 _report_unlicensed_guilds)
+        self._reported_unlicensed = None      # 마지막으로 알린 서버 ID 묶음
+        # 💾 저장 실패 알림용. (아래 heartbeat_loop 참고)
+        self._seen_save_failures = 0          # 마지막으로 알린 시점의 누적 실패 수
+        self._save_alert_at = None            # 마지막으로 알린 시각 (도배 방지)
         self._disconnected_since = None       # 게이트웨이가 끊긴 시각(UTC)
         self._alerted_disconnect = False      # 이번 끊김에 대해 이미 알렸는지
 
@@ -58,13 +70,34 @@ class ChunsikBotClient(commands.Bot):
         # 재시작이 반복되면 이 알림이 계속 오므로, 크래시 루프를 바로 알아챌 수 있어요.
         if not self._startup_alert_sent:
             self._startup_alert_sent = True
-            await send_alert(
-                f"✅ {bot_name()}봇이 정상 기동했어요",
-                f"계정: `{self.user}` (ID: `{self.user.id}`)\n"
-                f"참여 서버: {len(self.guilds)}개\n"
-                f"기동 시각: {dt.datetime.now(KST).strftime('%Y-%m-%d %H:%M:%S')} KST",
-                color=0x2ECC71,
-            )
+            # 🚨 [버그 수정] 모듈 하나가 안 올라와도 **"정상 기동했어요"** 라고 알렸어요.
+            #    load_modules는 한 모듈이 터져도 나머지를 계속 올립니다(그게 맞아요 — 하나
+            #    때문에 전부 죽으면 안 되니까). 그런데 실패는 **콘솔에만** 남았습니다.
+            #    납품한 서버의 콘솔은 백그라운드 서비스라 아무도 안 봐요. 그래서
+            #    "데이터 파일 하나가 깨져서 레벨 기능이 통째로 빠진 채" 며칠이 지나가고,
+            #    관리자는 초록색 "정상 기동" 알림만 받습니다.
+            #    (실제로 levels.json이 깨지면 그 코그만 조용히 빠집니다)
+            failed = self.failed_modules
+            if failed:
+                lines = "\n".join(f"· **{key}** — {reason}" for key, reason in failed[:10])
+                more = f"\n… 외 {len(failed) - 10}개" if len(failed) > 10 else ""
+                await send_alert(
+                    f"⚠️ {bot_name()}봇이 켜졌지만 기능 {len(failed)}개가 빠졌어요",
+                    f"계정: `{self.user}` (ID: `{self.user.id}`)\n"
+                    f"기동 시각: {dt.datetime.now(KST).strftime('%Y-%m-%d %H:%M:%S')} KST\n\n"
+                    f"**못 올라온 기능**\n{lines}{more}\n\n"
+                    f"데이터 파일이 깨졌을 수 있어요. `/테스트 데이터점검`으로 확인하고, "
+                    f"깨진 파일은 `data/backups/`에서 되돌린 뒤 봇을 다시 켜주세요.",
+                    color=0xF39C12,
+                )
+            else:
+                await send_alert(
+                    f"✅ {bot_name()}봇이 정상 기동했어요",
+                    f"계정: `{self.user}` (ID: `{self.user.id}`)\n"
+                    f"참여 서버: {len(self.guilds)}개\n"
+                    f"기동 시각: {dt.datetime.now(KST).strftime('%Y-%m-%d %H:%M:%S')} KST",
+                    color=0x2ECC71,
+                )
         await self._mark_connected()
         await self._report_unlicensed_guilds()
         if not self.heartbeat_loop.is_running():
@@ -116,7 +149,19 @@ class ChunsikBotClient(commands.Bot):
             return
         strangers = [g for g in self.guilds if not guild_allowed(g.id)]
         if not strangers:
+            self._reported_unlicensed = frozenset()
             return
+
+        # 🔁 [버그 수정] `on_ready`는 **재연결할 때마다** 다시 불립니다. 네트워크가 한 번
+        #    끊겼다 붙을 때마다 같은 알림이 또 나갔어요. 기동 알림은 `_startup_alert_sent`로
+        #    한 번만 보내면서 정작 이건 안 막혀 있었습니다.
+        #    허가되지 않은 서버에 들어가 있다는 건 사람이 설정을 고치기 전에는 안 변하는
+        #    사실이라, 같은 얘기를 반복해봐야 정작 봐야 할 다른 알림만 파묻혀요.
+        #    **묶음이 달라졌을 때만** 다시 알립니다. (새 서버가 늘면 그건 알려야 하니까요)
+        current = frozenset(g.id for g in strangers)
+        if current == self._reported_unlicensed:
+            return
+        self._reported_unlicensed = current
 
         listed = "\n".join(f"· **{g.name}** (`{g.id}`)" for g in strangers[:10])
         print(f"🔒 허가되지 않은 서버 {len(strangers)}곳에 들어가 있어요 (명령은 전부 막습니다):")
@@ -180,12 +225,58 @@ class ChunsikBotClient(commands.Bot):
                     color=0xF39C12,
                 )
 
+        # 3) 저장이 실패하고 있는지
+        await self._alert_new_save_failures()
+
+    async def _alert_new_save_failures(self):
+        """저장 실패가 **새로 생겼으면** 관리자에게 알립니다.
+
+        🚨 [버그 수정] 저장 실패는 이 봇에서 제일 위험한 사고예요 — "명령은 처리됐는데
+        파일에는 안 남은" 상태니까요. 그래서 `DataSaveError`를 만들고 화면에도 띄우게
+        해뒀는데, **원장·채팅 로그·통계처럼 예외를 안 던지기로 한 저장**은 실패해도
+        콘솔 한 줄이 전부였습니다. OneDrive나 백신이 데이터 폴더를 붙잡으면 **모든 저장이
+        계속 실패하는데 알림은 한 통도 안 가요.** `/테스트 데이터점검`을 열어봐야 압니다.
+
+        📌 알림은 여기(감시 루프)에서 보냅니다. 저장 함수는 **동기**라 그 자리에서 웹훅을
+           부르면 이벤트 루프가 멈추고, 대개 `economy_lock`을 쥔 채라 서버 전체가 같이 섭니다.
+
+        🔁 같은 사고가 이어질 때 도배하지 않도록 간격을 둬요. (루프 알림과 같은 판단)
+        """
+        total = save_failure_total()
+        if total <= self._seen_save_failures:
+            return
+        now = dt.datetime.now(dt.timezone.utc)
+        if self._save_alert_at and (now - self._save_alert_at).total_seconds() < SAVE_ALERT_COOLDOWN:
+            return
+
+        new_count = total - self._seen_save_failures
+        self._seen_save_failures = total
+        self._save_alert_at = now
+
+        recent = list(SAVE_FAILURES)[-5:]
+        lines = "\n".join(f"· `{f['time']}` **{f['file']}** — {f['error'][:120]}" for f in recent)
+        await send_alert(
+            "🔴 데이터가 저장되지 않고 있어요",
+            f"방금 **{new_count}건**이 더 실패했어요. (봇을 켠 뒤 모두 {total}건)\n\n"
+            f"{lines}\n\n"
+            "**명령은 처리됐는데 파일에 안 남은** 상태예요. 다른 프로그램(백신·클라우드 동기화)이 "
+            "데이터 폴더를 붙잡고 있는지 확인해 주세요.\n"
+            "└ `/테스트 데이터점검`에서 전체 목록을 볼 수 있어요.",
+        )
+
     @heartbeat_loop.error
     async def heartbeat_loop_error(self, error: BaseException):
-        # 감시 루프가 예외로 멈춰버리면 "조용히 감시가 꺼진" 최악의 상태가 되므로 다시 살립니다.
-        print(f"❗ 심장박동 루프 오류: {type(error).__name__}: {error}")
-        if not self.heartbeat_loop.is_running():
-            self.heartbeat_loop.start()
+        """감시 루프가 멈추면 '조용히 감시가 꺼진' 최악의 상태가 됩니다.
+
+        🐛 [버그 수정] 여기만 `report_loop_error`를 안 쓰고 손으로 되살리고 있었어요.
+        루프 열한 개 중 열 개가 그 함수를 쓰는데 **하필 감시 루프만** 빠져 있었습니다.
+        그래서 이 루프가 죽으면
+          · 관리자에게 알림이 안 가고 (콘솔 한 줄이 전부 — 아무도 안 봅니다)
+          · 같은 이유로 계속 죽어도 되살리기를 늦추지 않아 헛돌고
+          · 되살리기까지 실패하면 그 사실조차 아무 데도 안 남습니다
+        봇이 죽은 걸 알려주는 장치가 정작 자기가 죽은 건 못 알리는 상태였어요.
+        """
+        await report_loop_error(self.heartbeat_loop, "연결 감시(심장박동)", error)
 
     # ========== 🏠 [신규] 모든 명령어를 서버 전용으로 ==========
 
@@ -274,6 +365,15 @@ class ChunsikBotClient(commands.Bot):
 
         print(f"❗ [전역 에러] /{getattr(interaction.command, 'qualified_name', '알수없음')} 처리 중 오류: "
               f"{type(original).__name__}: {original}")
+        # 🔎 [버그 수정] 예전엔 이 한 줄이 전부였어요. 유저 화면에는 "예상치 못한 오류"만
+        #    뜨는데(그건 맞아요 — 경로가 새면 안 되니까) **콘솔에도 어디서 터졌는지가 없어서**
+        #    납품한 서버에서 문의가 오면 원인을 찾을 방법이 없었습니다.
+        #    루프 오류(report_loop_error)는 이미 트레이스백을 찍고 있었는데 여기만 빠졌어요.
+        #    알려진 부류(권한 없음·쿨다운·저장 실패·파일 손상)는 원인이 이미 문구에 다 있으니
+        #    빼고, **정말 예상 못한 것만** 찍습니다.
+        if not isinstance(error, (app_commands.CheckFailure, app_commands.CommandOnCooldown)) \
+                and not isinstance(original, (DataSaveError, RuntimeError)):
+            traceback.print_exception(type(original), original, original.__traceback__)
 
         try:
             if interaction.response.is_done():

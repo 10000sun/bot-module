@@ -47,7 +47,9 @@ MODULE_SPECS = (
         channels=("role_log",),
         # 👑 chief_role은 아이디 명단의 '대장' 칸에도 쓰이지만, 동시에 /기능제어를 쓸 수 있는
         #    최고 권한이기도 해요. 아이디 모듈을 빼도 이 역할은 있어야 하므로 여기 둡니다.
-        roles=("chief_role",),
+        # 🔧 settings_admin은 `/설정 …`을 쓸 수 있는 역할이에요. 예전엔 이 자리가
+        #    **"채널관리자"라는 역할 이름 문자열**로 걸려 있었습니다(cogs/setting.py 참고).
+        roles=("chief_role", "settings_admin"),
         note="관리자 역할/로그 채널 지정, 기능 킬 스위치, 역할부여. 이게 없으면 다른 모듈의 권한 설정을 못 해요.",
     ),
     ModuleSpec(
@@ -75,17 +77,24 @@ MODULE_SPECS = (
     ),
     ModuleSpec(
         "wiki", "멤버 위키", "cogs.wiki", "ChunsikWiki",
+        channels=("wiki_log",),
         features=("wiki",),
         data_files=("WIKI_FILE",),
+        # 📖 wiki_log는 없어도 동작해요. 남의 프로필을 고치고 지우는 명령이라
+        #    "누가 뭘 지웠나"에 답할 수 있어야 해서 뒀습니다.
     ),
     ModuleSpec(
         "games", "미니게임·보상", "cogs.games", "ChunsikGames", requires=("economy",),
         channels=("evashi_announce",),
         roles=("evashi_admin",),
+        features=("evashi",),
         # 🎲 하이로우·선착순 이벤트는 진행 상태를 메모리에만 들고 있어서 데이터 파일이 없어요.
+        # 🚧 기능 키는 **선착순 이벤트만** 가리켜요. 하이로우는 돈을 만지지도, 혼자 돌지도
+        #    않아서 끌 이유가 없습니다.
     ),
     ModuleSpec(
         "gpt", "AI 대화", "cogs.gpt", "ChunsikGPT",
+        features=("gpt",),
         data_files=("CHAT_MEMORY_FILE", "CHAT_LOG_FILE", "CHUNSIK_USER_MEMORY_FILE",
                     "CHAT_STATS_FILE", "LIMIT_FILE"),
         note="GEMINI_API_KEY가 없으면 대화 기능만 조용히 꺼집니다. 지갑·주식 조회 도구는 "
@@ -132,6 +141,7 @@ MODULE_SPECS = (
     ),
     ModuleSpec(
         "party", "파티 모집", "cogs.party", "ChunsikParty",
+        channels=("party_log",),
         roles=("party_admin",),
         features=("party",),
         data_files=("PARTY_FILE",),
@@ -152,7 +162,7 @@ MODULE_SPECS = (
     ),
     ModuleSpec(
         "levels", "활동 레벨", "cogs.levels", "ChunsikLevels",
-        channels=("level_announce",),
+        channels=("level_announce", "level_log"),
         roles=("level_admin",),
         features=("level",),
         data_files=("LEVELS_FILE",),

@@ -44,7 +44,7 @@ def has_admin_or_role(interaction: discord.Interaction, role_key: str = None) ->
 
 # ========== 🚧 [신규] 기능 정지/재개(킬 스위치) 시스템 ==========
 # 아래 FEATURE_KEYS에 있는 기능들을 개별적으로, 또는 한 번에 전부 정지·재개할 수 있어요.
-# 이 시스템을 다루는 권한은 일부러 다른 관리자 설정(채널관리자 등)보다 훨씬 엄격하게,
+# 이 시스템을 다루는 권한은 일부러 다른 관리자 설정(설정 관리자 등)보다 훨씬 엄격하게,
 # "진짜 서버 관리자" 또는 "대장 역할" 보유자로만 제한했어요.
 _ALL_FEATURE_KEYS = {
     "주식": "stock", "상점": "shop", "송금": "transfer",
@@ -60,6 +60,25 @@ _ALL_FEATURE_KEYS = {
     "레벨": "level",
     # 🎯 파티 모집은 **정해둔 시각에 사람들을 멘션**해요. 오작동하면 알림 폭탄이 되니 끌 수 있어야 합니다.
     "파티": "party",
+    # ⚔️ [버그 수정] 내전이 빠져 있었어요. modules.py는 features=("scrim",)로 이미 선언하고
+    #    코드도 feature_gate(…, "scrim", …)로 게이트를 걸고 있는데, 이 표에만 없어서
+    #    `/기능제어` 선택지에 안 떴습니다. 즉 **내전만 끌 수 없는** 상태였어요.
+    #    파티와 똑같이 정해둔 시각에 사람들을 멘션하는 기능이라 끌 수단이 꼭 있어야 합니다.
+    "내전": "scrim",
+    # 🤖 AI 대화는 **부를 때마다 실제로 돈이 나가는** 유일한 기능이에요(Gemini 호출).
+    #    일일 한도(RPD)도 서버 전체가 함께 씁니다. 누가 장난으로 계속 부르거나 요금이
+    #    튀는 날에는 즉시 끌 수단이 있어야 해요. 예전엔 끄는 방법이 **.env에서 API 키를
+    #    빼고 봇을 재시작하는 것뿐**이었습니다 — 급할 때 쓸 수 있는 방법이 아니에요.
+    #    (게이트를 걸어도 `/기억 목록`처럼 이미 쌓인 기억을 보고 지우는 건 계속 됩니다)
+    "AI대화": "gpt",
+    # 🎉 [버그] 선착순 이벤트가 빠져 있었어요. **관리자가 아무것도 안 해도 하루 두 번
+    #    정해둔 시각에 스스로 열려서, 키워드를 친 사람 전원의 지갑에 돈을 넣습니다.**
+    #    파티·내전을 넣은 이유("정해둔 시각에 사람들을 멘션한다")와 돈이 나가는 이유를
+    #    한 몸에 갖고 있는데 끄는 수단만 없었어요. 금액을 0으로 바꿔도 창은 그대로 열리고
+    #    공지도 그대로 나갑니다. 즉 **멈출 방법이 봇을 끄는 것뿐**이었습니다.
+    #    (정지하면 창이 안 열리고, 이미 열린 창도 그 순간부터 보상을 주지 않아요.
+    #     `/이벤트설정`은 계속 됩니다 — 잘못 넣은 값을 고치려면 정지한 채로 만져야 하니까요)
+    "이벤트": "evashi",
     # ⏰ 나중에 답장(스누즈)은 돈을 만지지 않지만 **DM을 자동으로 발송**하는 유일한 기능이라,
     # 오작동했을 때 끌 수단이 있어야 해요. 정지하면 새 예약도 막히고 알림 발송도 멈춥니다.
     # (이미 잡혀 있는 예약은 사라지지 않고, 재개하면 밀린 것부터 순서대로 나갑니다)
@@ -116,12 +135,20 @@ async def feature_gate(interaction: discord.Interaction, feature_key: str, featu
     return False
 
 def is_super_admin(interaction: discord.Interaction) -> bool:
-    """서버 관리자 또는 대장(chief_role) 역할 보유자만 True. (테스트 관리자 등 세부 역할로는 절대 통과 못 함)"""
-    if interaction.user.guild_permissions.administrator:
-        return True
-    settings = load_settings()
-    chief_id = settings.get("roles", {}).get("chief_role")
-    return bool(chief_id and any(r.id == chief_id for r in interaction.user.roles))
+    """서버 관리자 또는 대장(chief_role) 역할 보유자만 True. (테스트 관리자 등 세부 역할로는 절대 통과 못 함)
+
+    🐛 [버그 수정] 예전엔 `settings["roles"]["chief_role"]`을 **숫자 하나로** 꺼내
+    `r.id == chief_id`로 비교했어요. 그런데 역할 지정은 이미 **목록**으로 바뀌었고,
+    `/설치`(설치 마법사)는 역할을 전부 `[역할ID]` 꼴로 적습니다.
+
+    그래서 `/설치`로 세팅한 서버에서는 `[123]`과 `123`을 비교하게 되어 **언제나 False** —
+    대장 역할을 받은 사람이 `/기능제어`를 아예 쓸 수 없었어요. 오류도 안 나고
+    "권한이 없어요"만 뜨니 원인을 알 방법이 없습니다. 게다가 `/설치`는 납품 절차의
+    기본 경로라, **손으로 `/설정 명단 대장`을 다시 친 서버에서만** 우연히 동작했어요.
+
+    `_get_role_ids`가 옛 형식(숫자 하나)과 새 형식(목록)을 둘 다 받아주니 그걸 씁니다.
+    """
+    return member_has_admin_or_role(interaction.user, "chief_role")
 
 # ⚙️ 동적 설정값 불러오기 및 저장하기 유틸리티 함수
 # ⚡ [성능 개선] settings.json은 on_message(=서버의 모든 메세지)마다 읽히는데, 예전엔
@@ -184,26 +211,88 @@ LOG_STYLES = {
     "stock_log":    {"color": discord.Color.green(),   "emoji": "📈", "title": "주식 로그"},
     "closing_log":  {"color": discord.Color.green(),   "emoji": "📊", "title": "주식 로그"},
     "birthday_log": {"color": discord.Color.red(),     "emoji": "🎂", "title": "생일 로그"},
+    # 🐛 [버그 수정] 아래 둘이 빠져 있었어요. 로그는 정상적으로 갔지만 스타일 표에 없어서
+    #    회색 "📋 로그"로 뭉뚱그려 나왔습니다. 로그 채널을 한 곳에 몰아둔 서버에서는
+    #    제목만 보고 무슨 로그인지 구분할 수가 없어요.
+    #    (나중에 들어온 코그의 것만 빠졌습니다. 새 로그를 만들면 여기도 꼭 추가하세요 —
+    #     빠뜨리면 check_modules.py의 소유 표 검사가 잡아줍니다)
+    "member_log":   {"color": discord.Color.teal(),     "emoji": "🚪", "title": "입퇴장 로그"},
+    "scrim_log":    {"color": discord.Color.dark_red(), "emoji": "⚔️", "title": "내전 로그"},
+    "party_log":    {"color": discord.Color.magenta(),  "emoji": "🎯", "title": "파티 로그"},
+    "level_log":    {"color": discord.Color.blurple(),  "emoji": "🎚️", "title": "레벨 로그"},
+    "wiki_log":     {"color": discord.Color.dark_teal(), "emoji": "📖", "title": "위키 로그"},
 }
+
+# 📏 한 로그에 담을 수 있는 칸 수. 디스코드 한도는 25개인데, 넘으면 그 로그가 통째로 거부돼요.
+LOG_FIELD_COUNT_LIMIT = 25
+
 
 def build_log_embed(channel_key: str, description: str, fields: list = None) -> discord.Embed:
     """로그 종류(channel_key)에 맞는 색상/아이콘이 자동 적용된 임베드를 만들어 줍니다.
-    fields는 (이름, 값, inline여부) 튜플의 리스트입니다."""
+    fields는 (이름, 값, inline여부) 튜플의 리스트입니다.
+
+    ✂️ [버그 수정] 예전엔 넘겨받은 글자를 **그대로** 담았어요. 디스코드 한도(설명 4096 ·
+    칸 값 1024 · 칸 이름 256 · 칸 수 25 · 전체 6000)를 넘으면 그 메세지가 400으로 거부되고,
+    `send_log_embed`는 예외를 삼켜서 **콘솔 한 줄만 남깁니다.** 즉 로그가 조용히 증발해요.
+
+    로그에는 이름·아이디·명단처럼 **길이를 알 수 없는 값**이 자주 들어갑니다.
+    "누가 무엇을 했나"를 남기는 곳이 정작 그 '무엇'이 길 때만 안 남는 셈이었어요.
+    부르는 쪽 마흔 몇 곳에서 하나씩 자르게 하는 대신 여기서 한 번에 맞춥니다.
+    (실제로 아이디 자동등록 로그가 그 상태였고, 거기만 손으로 고쳤었어요)
+    """
+    # 🔁 chunsik_utils가 이 파일을 import하기 때문에 맨 위에 두면 순환 import가 돼요.
+    #    (아래 chunsik_names도 같은 이유로 함수 안에서 부릅니다)
+    from chunsik_utils import (EMBED_DESC_LIMIT, EMBED_FIELD_LIMIT, EMBED_TITLE_LIMIT,
+                               clip, fit_embed)
+
     style = LOG_STYLES.get(channel_key, {"color": discord.Color.greyple(), "emoji": "📋", "title": "로그"})
     embed = discord.Embed(
         title=f"{style['emoji']} {style['title']}",
-        description=description,
+        description=clip(description, EMBED_DESC_LIMIT),
         color=style["color"],
         timestamp=dt.datetime.now(KST),
     )
     if fields:
-        for name, value, inline in fields:
-            embed.add_field(name=name, value=value, inline=inline)
+        shown = list(fields)[:LOG_FIELD_COUNT_LIMIT]
+        for name, value, inline in shown:
+            # 값이 비면 디스코드가 거부해요. 빈 칸을 그냥 지우지 않는 건, 무엇이 비어 있는지도
+            # 로그에서는 정보이기 때문입니다.
+            embed.add_field(name=clip(str(name), EMBED_TITLE_LIMIT),
+                            value=clip(str(value), EMBED_FIELD_LIMIT) or "-",
+                            inline=inline)
+        if len(fields) > LOG_FIELD_COUNT_LIMIT:
+            embed.set_field_at(
+                LOG_FIELD_COUNT_LIMIT - 1, name="…",
+                value=f"칸이 {len(fields)}개라 {LOG_FIELD_COUNT_LIMIT - 1}개까지만 남겼어요.",
+                inline=False)
     # 🔁 여기서만 함수 안에서 import합니다. chunsik_names가 이 파일(load_settings)을 쓰기 때문에
     #    맨 위에 두면 서로를 부르는 순환 import가 돼서 봇이 기동조차 못 해요.
     from chunsik_names import bot_name
     embed.set_footer(text=f"{bot_name()}봇 로그 시스템")
-    return embed
+    # 🧮 칸을 각각 맞춰도 여럿이 쌓이면 전체 6000자를 넘어요. 푸터까지 붙인 맨 마지막에.
+    return fit_embed(embed)
+
+# 📣 로그가 **못 나가고 있다**는 걸 콘솔에 한 번은 알립니다.
+#
+# 🐛 [버그] 아래 send_log_embed는 "채널이 사라졌다"와 "글 쓸 권한이 없다"를 **완전히 조용히**
+#    넘겼어요. 그러면 관리자가 로그 채널을 지우거나 봇 권한을 내린 순간부터 **모든 감사 기록이
+#    영영 사라지는데 아무도 모릅니다.** 바로 아래 세 줄 밑에서 "봇 자신을 못 읽었다"는
+#    이미 print로 알리고 있었으니, 같은 함수 안에서 기준이 갈려 있던 셈이에요.
+#
+# 🔁 키마다 한 번만 찍습니다. 로그는 거래마다 불리는 자리라 매번 찍으면 콘솔이 도배돼요.
+#    전송이 다시 성공하면 지워서, 나중에 또 망가지면 다시 알립니다.
+#    (급한 알림이 필요한 건 아니에요 — `/테스트 채널점검`이 언제든 전수 확인을 해줍니다)
+_LOG_CHANNEL_BROKEN = set()
+
+
+def _log_channel_broken(channel_key: str, reason: str):
+    if channel_key in _LOG_CHANNEL_BROKEN:
+        return
+    _LOG_CHANNEL_BROKEN.add(channel_key)
+    print(f"⚠️ 로그가 안 나가고 있어요 ({channel_key}): {reason}. "
+          f"`/설정 채널 …`로 다시 지정하거나 봇 권한을 확인해 주세요. "
+          f"(전체 점검은 `/테스트 채널점검`)")
+
 
 async def send_log_embed(bot: commands.Bot, channel_key: str, description: str,
                           fields: list = None, guild: discord.Guild = None,
@@ -221,10 +310,19 @@ async def send_log_embed(bot: commands.Bot, channel_key: str, description: str,
 
     channel = guild.get_channel(ch_id) if guild else bot.get_channel(ch_id)
     if not channel:
+        _log_channel_broken(channel_key, f"지정된 채널(ID {ch_id})을 찾을 수 없어요")
         return False
 
     me = guild.me if guild else channel.guild.me
+    # 🐛 [버그 수정] `guild.me`는 멤버 캐시에서 자기 자신을 찾는 거라 **None일 수 있어요**
+    #    (기동 직후·재연결 직후). 그러면 아래 `permissions_for(None)`이 AttributeError를
+    #    내는데, 이 함수는 그 예외를 안 감싸고 있어서 **로그를 남기려다 명령 자체가
+    #    터졌습니다.** 로그가 못 나가는 건 감수할 만하지만 거래가 깨지면 안 돼요.
+    if me is None:
+        print(f"⚠️ 로그 전송 건너뜀 ({channel_key}): 봇 자신의 멤버 정보를 아직 못 읽었어요.")
+        return False
     if not channel.permissions_for(me).send_messages:
+        _log_channel_broken(channel_key, f"#{channel.name}에 글을 쓸 권한이 없어요")
         return False
 
     try:
@@ -234,6 +332,7 @@ async def send_log_embed(bot: commands.Bot, channel_key: str, description: str,
             # 역할 태그가 실제로 울리도록 명시합니다. (@everyone/@here는 실수로도 울리지 않게 막아둬요)
             allowed_mentions=discord.AllowedMentions(roles=True, users=True, everyone=False),
         )
+        _LOG_CHANNEL_BROKEN.discard(channel_key)   # 고쳐졌으면 다음에 또 알릴 수 있게
         return True
     except Exception as e:
         print(f"❗ 로그 전송 실패 ({channel_key}): {type(e).__name__} {e}")

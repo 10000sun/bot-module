@@ -18,15 +18,24 @@ import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 
+from chunsik_alerts import report_loop_error
 from chunsik_config import KST, module_active
-from chunsik_settings import feature_gate, has_admin_or_role, is_feature_enabled
+from chunsik_settings import feature_gate, has_admin_or_role, is_feature_enabled, send_log_embed
 from chunsik_state import load_party, save_party, state
 from chunsik_utils import (EMBED_DESC_LIMIT, EMBED_TITLE_LIMIT, MESSAGE_LIMIT,
-                        ChunsikView, add_lines_field, clip, mention_list,
-                        parse_datetime_text)
+                        ChunsikView, add_lines_field, clip, fit_embed, mention_list,
+                        parse_datetime_text, repaint_note, stored_start)
 
 # ⏰ 시작 몇 분 전에 부를지. 0이면 시작할 때만 불러요.
 REMIND_BEFORE_MINUTES = 10
+
+# ✍️ 주최자가 손으로 적는 칸의 글자 수 상한.
+# 제목은 임베드 제목, 설명은 임베드 설명으로 그대로 들어갑니다. 칸마다 자르고는
+# 있었지만 **합계(6000자)를 보는 데가 없어서**, 길게 적으면 모집글이 통째로 거부돼요.
+# 그러면 글이 안 올라가는 데서 그치지 않고, 참가 버튼을 눌러도 모집글을 다시 그릴 수
+# 없어서 명단이 그 시점에 얼어붙습니다. (실측: 파티 6,056자 · 내전 6,505자)
+TITLE_LIMIT = 100
+NOTE_LIMIT = 500
 MAX_OPEN_PARTIES = 25  # /파티 목록 임베드가 감당하는 칸 수와 같아요
 
 
@@ -96,7 +105,9 @@ class ChunsikParty(commands.Cog):
         save_party({"parties": parties})
 
     def _embed(self, party: dict, guild_id) -> discord.Embed:
-        start = dt.datetime.fromisoformat(party["start"])
+        # ⏰ 시각이 깨져 있어도 모집글은 그려져야 해요. 여기서 던지면 참가 버튼을 눌러도
+        #    다시 그릴 수가 없어서 명단이 그 시점에 얼어붙습니다.
+        start = stored_start(party)
         joined = party.get("members", [])
         waiting = party.get("waiting", [])
         size = party["size"]
@@ -111,7 +122,11 @@ class ChunsikParty(commands.Cog):
             color=0x9B59B6 if not party.get("closed") else 0x99AAB5,
         )
         # ⏱️ 디스코드 타임스탬프로 넣으면 보는 사람의 시간대로 알아서 바뀌어요.
-        embed.add_field(name="시작", value=f"<t:{int(start.timestamp())}:F>\n<t:{int(start.timestamp())}:R>", inline=True)
+        embed.add_field(
+            name="시작",
+            value=(f"<t:{int(start.timestamp())}:F>\n<t:{int(start.timestamp())}:R>" if start
+                   else "⚠️ 시각을 알 수 없어요 (기록이 깨졌어요)"),
+            inline=True)
         embed.add_field(name="인원", value=f"**{len(joined)}** / {size}", inline=True)
         embed.add_field(name="주최", value=f"<@{party['host']}>", inline=True)
 
@@ -126,7 +141,8 @@ class ChunsikParty(commands.Cog):
         if waiting:
             add_lines_field(embed, f"대기 {len(waiting)}명", [f"<@{uid}>" for uid in waiting])
         embed.set_footer(text="참가를 누르면 자리를 잡아요. 못 가게 되면 취소를 눌러주세요.")
-        return embed
+        # 🧮 상한이 생기기 전에 올라간 모집글 대비. (푸터까지 붙인 맨 마지막에 불러야 해요)
+        return fit_embed(embed)
 
     async def _repaint(self, party_id: str, party: dict):
         channel = self.bot.get_channel(int(party["channel_id"]))
@@ -213,7 +229,11 @@ class ChunsikParty(commands.Cog):
                 pass  # DM을 막아둔 사람도 있어요. 목록에는 이미 올라가 있으니 괜찮습니다.
 
         if changed_party is not None:
-            await self._repaint(party_id, changed_party)
+            # 참가/취소는 이미 저장이 끝난 상태예요. 여기서 그림이 실패해도 "예상치 못한
+            # 오류"로 뭉뚱그리면, 자리를 잡은 사람이 못 잡은 줄 알고 다시 누릅니다.
+            note = await repaint_note(self._repaint(party_id, changed_party), "모집글")
+            if note:
+                await interaction.followup.send(note.strip(), ephemeral=True)
 
     # ---------- 시작 시각 챙기기 ----------
 
@@ -231,7 +251,12 @@ class ChunsikParty(commands.Cog):
             for pid, party in list(parties.items()):
                 if party.get("closed"):
                     continue
-                start = dt.datetime.fromisoformat(party["start"])
+                start = stored_start(party)
+                if start is None:
+                    # 🛡️ 깨진 줄 하나가 나머지 모집 전부의 알림을 멈추게 두지 않아요.
+                    #    (예전엔 여기서 루프가 통째로 죽었습니다)
+                    print(f"⚠️ [파티] 시작 시각이 깨진 모집글을 건너뛰었어요: {pid} -> {party.get('start')!r}")
+                    continue
 
                 if (not party.get("reminded") and REMIND_BEFORE_MINUTES
                         and 0 < (start - now).total_seconds() <= REMIND_BEFORE_MINUTES * 60):
@@ -268,6 +293,12 @@ class ChunsikParty(commands.Cog):
     async def _before_tick(self):
         await self.bot.wait_until_ready()
 
+    @tick.error
+    async def tick_error(self, error: BaseException):
+        # ⏰ 이 루프가 죽으면 파티 시작 알림과 자동 마감이 조용히 영영 안 옵니다.
+        #    party.json이 손상되거나 start 값이 깨져 fromisoformat이 던지면 여기로 와요.
+        await report_loop_error(self.tick, "파티 모집 알림", error)
+
     # ---------- 명령 ----------
 
     파티 = app_commands.Group(name="파티", description="시간과 인원을 정해 파티·레이드 인원을 모읍니다.")
@@ -275,7 +306,9 @@ class ChunsikParty(commands.Cog):
     @파티.command(name="모집", description="이 채널에 파티 모집글을 올려요. 참가 버튼으로 모입니다.")
     @app_commands.describe(제목="무엇을 하는 모집인지 (예: 심연 레이드)", 인원="주최자 포함 정원",
                            시각="예: `20:00` · `8-25 20:00` · `2026-08-25 20:00`", 설명="더 적을 말 (생략 가능)")
-    async def recruit(self, interaction: discord.Interaction, 제목: str, 인원: int, 시각: str, 설명: str = ""):
+    async def recruit(self, interaction: discord.Interaction,
+                      제목: app_commands.Range[str, 1, TITLE_LIMIT], 인원: int, 시각: str,
+                      설명: app_commands.Range[str, None, NOTE_LIMIT] = ""):
         if await feature_gate(interaction, "party", "파티 모집"):
             return
         if not 2 <= 인원 <= 99:
@@ -322,13 +355,15 @@ class ChunsikParty(commands.Cog):
             return await interaction.response.send_message(
                 "지금 열려 있는 모집이 없어요. `/파티 모집`으로 하나 열어보세요!", ephemeral=True)
 
-        rows.sort(key=lambda kv: kv[1]["start"])
+        # 🛡️ 시각이 깨진 줄이 하나 있으면 정렬하다 통째로 죽었어요. 그런 줄은 맨 뒤로 보냅니다.
+        rows.sort(key=lambda kv: (stored_start(kv[1]) is None, str(kv[1].get("start") or "")))
         embed = discord.Embed(title="🎯 모집 중인 파티", color=0x9B59B6)
         for pid, p in rows[:MAX_OPEN_PARTIES]:
-            start = int(dt.datetime.fromisoformat(p["start"]).timestamp())
+            start = stored_start(p)
+            when = f"<t:{int(start.timestamp())}:R>" if start else "⚠️ 시각 깨짐"
             embed.add_field(
                 name=clip(f"{p['title']} — {len(p.get('members', []))}/{p['size']}", EMBED_TITLE_LIMIT),
-                value=f"<t:{start}:R> · <#{p['channel_id']}> · 주최 <@{p['host']}>\n"
+                value=f"{when} · <#{p['channel_id']}> · 주최 <@{p['host']}>\n"
                       f"https://discord.com/channels/{p['guild_id']}/{p['channel_id']}/{pid}",
                 inline=False)
         await interaction.response.send_message(embed=embed, ephemeral=True)
@@ -346,5 +381,13 @@ class ChunsikParty(commands.Cog):
             for pid in closed:
                 parties.pop(pid, None)
             self._save(parties)
+        # 🧾 [신규] 지난 기록을 지우는 명령인데 흔적이 없었어요.
+        if closed:
+            await send_log_embed(
+                self.bot, "party_log", "끝난 파티 모집 기록을 정리했어요.",
+                fields=[("지운 건수", f"{len(closed)}건", True),
+                        ("처리 관리자", interaction.user.mention, True)],
+                guild=interaction.guild,
+            )
         await interaction.response.send_message(
             f"🧹 끝난 모집 {len(closed)}건을 지웠어요. (올라간 메시지는 그대로 남아 있어요)", ephemeral=True)

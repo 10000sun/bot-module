@@ -11,7 +11,7 @@
 
 🔐 [권한]
 기록·조회·삭제 전부 **연대기 관리자**만 할 수 있어요. `/설정 관리자 연대기`로 지정하고,
-그 지정은 서버 관리자나 '채널관리자' 역할만 할 수 있습니다. (다른 관리자 설정과 동일)
+그 지정은 서버 관리자나 **설정 관리자** 역할만 할 수 있습니다. (다른 관리자 설정과 동일)
 다만 `/연대기 보기`의 **결과는 채널에 공개**돼서 모두가 함께 봅니다.
 """
 
@@ -25,7 +25,9 @@ from discord.ext import commands
 from chunsik_config import CHRONICLE_FILE, KST
 from chunsik_settings import member_has_admin_or_role
 from chunsik_storage import atomic_json_save_or_raise, safe_json_load
-from chunsik_utils import ChunsikView
+from chunsik_utils import (EMBED_DESC_LIMIT, EMBED_FIELD_LIMIT, EMBED_TITLE_LIMIT,
+                          INPUT_ECHO_LIMIT, ChunsikView,
+                          clip, fit_embed)
 from chunsik_names import server_name
 
 # 🏷️ 사건 분류. 앞에 붙는 이모지는 목록에서 한눈에 구분하려고 쓰는 거예요.
@@ -37,6 +39,16 @@ TAG_EMOJI = {
 
 PAGE_SIZE = 5           # 한 페이지에 보여줄 사건 수 (임베드 필드 25개 제한에 여유 있게)
 DETAIL_LIMIT = 300      # 목록에서 보여줄 본문 길이. 넘으면 잘라요
+
+# ✍️ 손으로 적는 칸의 글자 수 상한. 우클릭 박제 창(ChroniclePinModal)이 쓰던 값을
+# 그대로 가져와 슬래시 명령에도 겁니다. 같은 기능인데 창으로 넣으면 100자에서 막히고
+# `/연대기 기록`으로는 6000자가 그냥 들어갔어요.
+#
+# 🚨 제목이 길면 기록은 **저장되고** 나서 "이렇게 남았어요" 확인 임베드가 한도를 넘어
+#    실패합니다(설명 6,004자 / 4,096자, 총 7,139자 / 6,000자). 관리자 화면에는 오류만
+#    뜨니 저장된 줄 모르고 같은 명령을 다시 쳐서 **같은 기록이 두 번 남아요.**
+TITLE_INPUT_LIMIT = 100
+DETAIL_INPUT_LIMIT = 500
 
 
 class ChroniclePageView(ChunsikView):
@@ -126,13 +138,15 @@ class ChroniclePageView(ChunsikView):
                 value += f"\n[원본 메시지 보기]({entry['message_link']})"
             value += f"\n`#{entry.get('id', '?')}`"
 
-            embed.add_field(name=name[:256], value=value[:1024], inline=False)
+            embed.add_field(name=clip(name, EMBED_TITLE_LIMIT),
+                            value=clip(value, EMBED_FIELD_LIMIT), inline=False)
 
         embed.set_footer(
             text=f"{self.page + 1}/{total_pages} 페이지 · 총 {len(rows)}건 · "
                  f"{'최신순' if self.newest_first else '오래된 순'}"
         )
-        return embed
+        # 🧮 한 페이지에 5건, 칸마다 1024자까지라 옛 기록이 길면 합이 6000자를 넘어요.
+        return fit_embed(embed)
 
     async def _refresh(self, interaction: discord.Interaction):
         await interaction.response.edit_message(embed=self.build_embed(), view=self)
@@ -171,14 +185,14 @@ class ChroniclePinModal(discord.ui.Modal, title="📜 연대기에 박제"):
     제목 = discord.ui.TextInput(
         label="제목",
         placeholder="한 줄로 요약해 주세요 (예: 길드 첫 우승)",
-        max_length=100,
+        max_length=TITLE_INPUT_LIMIT,
     )
     메모 = discord.ui.TextInput(
         label="덧붙일 메모 (선택)",
         placeholder="왜 기록할 만한 일인지 적어두면 나중에 읽기 좋아요",
         style=discord.TextStyle.paragraph,
         required=False,
-        max_length=500,
+        max_length=DETAIL_INPUT_LIMIT,
     )
 
     def __init__(self, cog, message: discord.Message):
@@ -237,7 +251,7 @@ class ChunsikChronicle(commands.Cog):
     @staticmethod
     def _deny_message() -> str:
         return ("⛔ 연대기는 **연대기 관리자**만 다룰 수 있어요.\n"
-                "└ `/설정 관리자 연대기`로 역할을 지정할 수 있어요. (서버 관리자·채널관리자 전용)")
+                "└ `/설정 관리자 연대기`로 역할을 지정할 수 있어요. (서버 관리자·설정 관리자 전용)")
 
     # ========== 💾 저장소 ==========
     def _load(self) -> dict:
@@ -304,20 +318,22 @@ class ChunsikChronicle(commands.Cog):
     def _entry_embed(self, entry: dict, title: str) -> discord.Embed:
         """기록 직후 '이렇게 남았어요'를 보여주는 확인용 임베드."""
         tag = entry.get("tag", "사건")
+        # ✂️ 상한이 생기기 전에 저장된 긴 제목이 있으면 이 확인 화면부터 실패해요.
         embed = discord.Embed(
-            title=title,
-            description=f"**{entry['title']}**",
+            title=clip(title, EMBED_TITLE_LIMIT),
+            description=clip(f"**{entry['title']}**", EMBED_DESC_LIMIT),
             color=0x5CE6B4,
         )
         embed.add_field(name="날짜", value=entry["date"], inline=True)
         embed.add_field(name="분류", value=f"{TAG_EMOJI.get(tag, '•')} {tag}", inline=True)
         embed.add_field(name="번호", value=f"`#{entry['id']}`", inline=True)
         if entry.get("detail"):
-            embed.add_field(name="내용", value=entry["detail"][:1024], inline=False)
+            embed.add_field(name="내용", value=clip(entry["detail"], EMBED_FIELD_LIMIT), inline=False)
         if entry.get("message_link"):
             embed.add_field(name="원본", value=f"[메시지로 이동]({entry['message_link']})", inline=False)
         embed.set_footer(text="고치려면 /연대기 수정, 지우려면 /연대기 삭제 에 이 번호를 넣어주세요")
-        return embed
+        # 🧮 푸터까지 붙인 뒤 마지막에. (칸을 각각 잘라도 합이 6000자를 넘을 수 있어요)
+        return fit_embed(embed)
 
     # ========== ✍️ 기록 ==========
     @연대기.command(name="기록", description="[연대기 관리자] 서버에서 일어난 일을 연대기에 남깁니다.")
@@ -328,8 +344,10 @@ class ChunsikChronicle(commands.Cog):
         분류="사건 종류. 생략하면 '사건'이에요",
     )
     @app_commands.choices(분류=[app_commands.Choice(name=t, value=t) for t in CHRONICLE_TAGS])
-    async def record(self, interaction: discord.Interaction, 제목: str,
-                     내용: Optional[str] = None, 날짜: Optional[str] = None,
+    async def record(self, interaction: discord.Interaction,
+                     제목: app_commands.Range[str, 1, TITLE_INPUT_LIMIT],
+                     내용: Optional[app_commands.Range[str, None, DETAIL_INPUT_LIMIT]] = None,
+                     날짜: Optional[str] = None,
                      분류: Optional[app_commands.Choice[str]] = None):
         if not self._is_chronicle_admin(interaction.user):
             return await interaction.response.send_message(self._deny_message(), ephemeral=True)
@@ -467,8 +485,11 @@ class ChunsikChronicle(commands.Cog):
     )
     @app_commands.choices(분류=[app_commands.Choice(name=t, value=t) for t in CHRONICLE_TAGS]
                           + [app_commands.Choice(name="온에어", value="온에어")])
+    # ℹ️ `번호`는 찾는 값이라 상한을 안 겁니다. 상한이 생기기 전에 남은 긴 기록도
+    #    고치거나 지울 수 있어야 하니까요. (내용은 빈칸이 '지우기' 뜻이라 최소 길이도 없어요)
     async def edit(self, interaction: discord.Interaction, 번호: str,
-                   제목: Optional[str] = None, 내용: Optional[str] = None,
+                   제목: Optional[app_commands.Range[str, None, TITLE_INPUT_LIMIT]] = None,
+                   내용: Optional[app_commands.Range[str, None, DETAIL_INPUT_LIMIT]] = None,
                    날짜: Optional[str] = None, 분류: Optional[app_commands.Choice[str]] = None):
         if not self._is_chronicle_admin(interaction.user):
             return await interaction.response.send_message(self._deny_message(), ephemeral=True)
@@ -493,7 +514,8 @@ class ChunsikChronicle(commands.Cog):
                 "❌ 바꿀 내용을 하나 이상 넣어주세요. (제목·내용·날짜·분류)", ephemeral=True
             )
 
-        target = 번호.strip().lstrip("#")
+        # ✂️ 번호는 짧은 숫자예요. 여기서 한 번 자르면 아래 안내 문구가 전부 안전해집니다.
+        target = clip(번호.strip().lstrip("#"), INPUT_ECHO_LIMIT)
         data = self._load()
         entry = next((e for e in data["entries"] if e.get("id") == target), None)
         if entry is None:
@@ -534,7 +556,7 @@ class ChunsikChronicle(commands.Cog):
         if not self._is_chronicle_admin(interaction.user):
             return await interaction.response.send_message(self._deny_message(), ephemeral=True)
 
-        target = 번호.strip().lstrip("#")
+        target = clip(번호.strip().lstrip("#"), INPUT_ECHO_LIMIT)
         data = self._load()
         remaining = [e for e in data["entries"] if e.get("id") != target]
 

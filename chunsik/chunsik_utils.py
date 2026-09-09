@@ -2,9 +2,11 @@
 
 import asyncio
 import datetime as dt
+import traceback
 import re
 from typing import Any, Optional
 import discord
+from discord import app_commands
 
 from chunsik_alerts import send_alert
 from chunsik_config import KST
@@ -92,6 +94,78 @@ EMBED_DESC_LIMIT = 4096
 EMBED_FIELD_LIMIT = 1024
 MESSAGE_LIMIT = 2000      # 임베드가 아닌 그냥 본문
 
+# 🧮 임베드 **전체** 한도. 제목·설명·필드 이름·필드 값·푸터를 전부 더한 값이에요.
+# 필드를 하나하나 1024자로 잘라도 여러 개가 쌓이면 여기 걸립니다. 예를 들어 상품
+# 25개짜리 매대는 설명을 200자로 묶어놔도 합이 9,687자예요. 그러면 그 줄만 빠지는 게
+# 아니라 **전광판 메세지 자체가 400으로 거부**됩니다.
+EMBED_TOTAL_LIMIT = 6000
+EMBED_TRIM_NOTE = " …(길어서 줄였어요)"
+
+
+def fit_embed(embed, limit: int = EMBED_TOTAL_LIMIT):
+    """임베드 전체 길이를 한도 안으로 줄입니다. 제일 긴 필드 값부터 깎아요.
+
+    🚨 [왜 필요한가] discord.py는 이걸 **검사하지 않습니다.** 6000자를 넘는 임베드도
+       그냥 만들어지고, 보내는 순간에야 디스코드가 400으로 거부해요. 그래서 상점 전광판·
+       주식 목록·위키 조회처럼 자유 입력이 여러 칸에 쌓이는 화면이 통째로 안 보이게 됩니다.
+
+    제목·설명·필드 **이름**은 건드리지 않아요. 무엇을 보는 화면인지와 항목이 몇 개인지는
+    남아야 쓸모가 있고, 길이를 실제로 잡아먹는 건 대부분 값 쪽입니다.
+
+    (한 항목만 통째로 빼지 않고 제일 긴 것부터 조금씩 깎는 이유: 상품 25개 중 하나가
+     소리 없이 사라지면 "왜 내 물건이 안 보이지"가 되거든요. 전부 보이되 뒷부분이
+     줄어드는 편이 낫습니다)
+    """
+    for _ in range(len(embed.fields) * 2 + 2):   # 못 줄이는 상황에서 맴돌지 않게
+        over = len(embed) - limit
+        if over <= 0:
+            break
+        idx, field = max(enumerate(embed.fields), key=lambda pair: len(pair[1].value or ""),
+                         default=(None, None))
+        if idx is None:
+            break
+        value = field.value or ""
+        keep = len(value) - over - len(EMBED_TRIM_NOTE)
+        if keep < 1:
+            keep = 1        # 값은 비울 수 없어요 (디스코드가 빈 값을 거부합니다)
+        if keep >= len(value):
+            break           # 더 깎을 게 없으면 그만둡니다
+        embed.set_field_at(idx, name=field.name,
+                           value=value[:keep].rstrip() + EMBED_TRIM_NOTE,
+                           inline=field.inline)
+    return embed
+
+
+# 📏 자동완성·드롭다운 한도. 임베드와 똑같이 넘기면 **응답이 통째로 거부**됩니다.
+# 자동완성이 거부되면 화면에는 오류가 아니라 "일치하는 항목 없음"만 뜨기 때문에,
+# 목록에 긴 이름이 하나 섞였다는 걸 아무도 알아채지 못한 채 그 명령어가 못 쓰게 돼요.
+CHOICE_TEXT_LIMIT = 100     # 항목의 표시 이름·값 각각
+CHOICE_COUNT_LIMIT = 25     # 한 응답에 담을 수 있는 항목 수
+
+
+def name_choices(names, current: str, *, label=None) -> list:
+    """이름 목록에서 자동완성 항목을 만듭니다. (`current`가 들어간 것만, 최대 25개)
+
+    같은 코드가 주식 자동완성 다섯 곳과 상점에 복붙돼 있었고, 전부 길이를 안 봤어요.
+
+    ✂️ 표시 이름은 100자로 자릅니다. 값(=실제 이름)은 **자르지 않고, 100자를 넘으면
+       그 항목만 뺍니다.** 값을 자르면 없는 이름을 가리키게 돼서 고르는 순간
+       "찾을 수 없어요"가 나거든요. 한 항목을 빼는 쪽이 목록 전체가 사라지는 것보다 낫습니다.
+       (등록하는 자리에서 길이를 막으므로 새로 생기지는 않고, 옛 데이터만 여기 걸려요)
+
+    label을 주면 표시 이름만 그 함수로 만듭니다. 예: `f"{이름} (1,000 코인)"`
+    """
+    needle = (current or "").lower()
+    picked = []
+    for name in names:
+        if needle not in name.lower() or len(name) > CHOICE_TEXT_LIMIT:
+            continue
+        shown = label(name) if label else name
+        picked.append(app_commands.Choice(name=clip(shown, CHOICE_TEXT_LIMIT), value=name))
+        if len(picked) >= CHOICE_COUNT_LIMIT:
+            break
+    return picked
+
 
 def mention_list(user_ids, limit: int = 40) -> str:
     """여러 명을 한 줄로 부릅니다. 너무 많으면 앞에서 끊고 "외 N명"을 달아요.
@@ -103,6 +177,69 @@ def mention_list(user_ids, limit: int = 40) -> str:
     ids = list(user_ids)
     shown = " ".join(f"<@{u}>" for u in ids[:limit])
     return shown if len(ids) <= limit else f"{shown} 외 {len(ids) - limit}명"
+
+
+def mention_lines(user_ids, limit: int = 900) -> list:
+    """멘션 목록을 limit 글자 이하의 **줄 여러 개**로 나눕니다.
+
+    🚨 [왜 mention_list나 chunk_lines로는 안 되는가]
+       · mention_list는 40명에서 끊고 "외 N명"을 붙여요. 결과 발표처럼 **전원이 호명돼야
+         하는** 자리에서는 나머지가 통째로 사라집니다.
+       · chunk_lines는 줄과 줄 **사이**에서만 나눠요. 멘션을 한 줄에 몰아넣으면 그 줄
+         하나가 통째로 한 덩어리가 돼서, 나눠도 여전히 2000자를 넘습니다.
+         (실측: 참가 100명이면 제일 긴 조각이 2,211자 — 발송이 통째로 실패해요)
+
+    멘션 하나가 22자쯤이라 기본값 900이면 한 줄에 40명 안팎이 들어갑니다.
+    이렇게 만든 줄들은 전부 짧으니 그다음 chunk_lines에 넣어도 안전해요.
+    """
+    lines, current = [], ""
+    for uid in user_ids:
+        mention = f"<@{uid}>"
+        if current and len(current) + 1 + len(mention) > limit:
+            lines.append(current)
+            current = mention
+        else:
+            current = f"{current} {mention}" if current else mention
+    if current:
+        lines.append(current)
+    return lines
+
+
+# ✂️ 유저가 넣은 값을 **안내 문구에 도로 적을 때**의 상한.
+#
+# 🐛 [버그 수정] "찾는 값"(상품 이름·종목 이름·기록 번호 …)에는 일부러 길이 상한을 안 겁니다.
+#    상한이 생기기 전에 등록된 긴 이름을 못 지우게 되니까요. 그건 맞는 판단인데, 그 값을
+#    **확인 문구에 그대로 되돌려 적는 것**까지 같이 풀려 있었어요. 슬래시 명령의 문자열
+#    칸은 6,000자까지 들어오는데 메세지 본문은 2,000자라, 긴 값을 넣으면
+#      · 오류 안내가 안 나가서 "예상치 못한 오류"만 뜨고
+#      · **삭제·수정은 이미 저장된 뒤**라 다시 해보면 "찾을 수 없어요"가 나옵니다
+#    빠져나갈 길이 없어지는 건 #25와 같은 모양이에요.
+INPUT_ECHO_LIMIT = 100
+
+# 💰 관리자가 손으로 치는 **숫자**의 위쪽 상한. 10억이에요.
+#
+# 🐛 [버그] 예전엔 음수만 막고 위쪽은 안 막았어요. `/지급 금액`에 0을 몇 개 더 치면
+#    서버 경제가 한 번에 망가집니다(`/지갑내역 되돌리기`로 복구는 되지만, 그 사이
+#    유통량·순위·통계가 전부 뒤틀려요). 상점 가격·주식 시세도 같습니다.
+#
+# 📊 경험치 쪽은 **느려지는** 문제였어요. 레벨을 구하는 계산이 1씩 더해 올라가는
+#    반복문이라, 누적 경험치가 크면 메시지 하나당 수십만 번을 돕니다.
+#    실측: 10억이면 레벨 838에 0.17ms(체감 없음), 1조면 8,429레벨에 1.7ms,
+#    그 위로는 사람이 말할 때마다 봇이 잠깐씩 멈춰요. 10억이면 충분히 안전합니다.
+#
+# 🤔 왜 하필 10억인가 — 정당하게 큰 숫자를 쓰는 서버를 막지 않으면서(재화 단위를
+#    아무리 크게 잡아도 한 번에 10억을 주는 일은 없어요), 오타 한 번으로 넘길 수 있는
+#    자리보다는 훨씬 위입니다. 사장님이 정하신 값이에요.
+MAX_AMOUNT = 1_000_000_000
+
+# 🎚️ 레벨 보상을 걸 수 있는 최고 레벨. 위 상한(10억 경험치)이 레벨 838쯤이라
+#    그보다 넉넉하게 1,000으로 뒀어요. 더 높은 레벨에 보상을 걸면 영원히 안 닿습니다.
+MAX_REWARD_LEVEL = 1000
+
+# ⏳ 레벨 경험치 쿨다운의 상한(하루).
+#    🐛 여기가 안 막혀 있어서, 실수로 큰 값을 넣으면 **경험치가 조용히 영영 안 쌓입니다.**
+#       오류도 안 나고 "쿨다운 N초"라고만 떠서 원인을 찾기가 어려워요.
+MAX_XP_COOLDOWN = 86400
 
 
 def clip(text: str, limit: int) -> str:
@@ -222,6 +359,104 @@ def describe_user_error(error: BaseException) -> str:
     return "❗ 처리하는 중 예상치 못한 오류가 발생했어요. 잠시 후 다시 시도해 주세요."
 
 
+def split_message(text: str, limit: int = MESSAGE_LIMIT, max_parts: int = 5) -> list:
+    """본문을 디스코드 한도 안의 조각으로 나눕니다. **한 줄이 혼자 넘쳐도 나눠져요.**
+
+    🐛 [왜 chunk_lines로는 안 되나] `chunk_lines`는 줄과 줄 **사이**에서만 나눕니다.
+       그건 명단·멘션 목록처럼 "줄을 깨면 안 되는" 것에는 맞는 규칙이에요. 그런데 AI가 쓴
+       답변은 줄바꿈 없이 통째로 2,000자를 넘길 수 있습니다. 그때 `chunk_lines`는
+       **나눠도 그대로**라 전송이 400으로 거부돼요.
+       여기서는 줄 경계를 **되도록** 지키되, 한 줄이 혼자 넘치면 글자 단위로 자릅니다.
+
+    ✂️ `max_parts`를 넘는 만큼은 버리고 마지막 조각에 그 사실을 적어요. 조용히 삼키면
+       "답이 중간에 끊겼는데 왜인지 모르는" 상태가 되니까요.
+    """
+    text = (text or "").strip()
+    if not text:
+        return []
+
+    parts, current = [], ""
+    for line in text.split("\n"):
+        while len(line) > limit:            # 한 줄이 혼자 넘치면 글자 단위로
+            if current:
+                parts.append(current.rstrip("\n"))
+                current = ""
+            parts.append(line[:limit])
+            line = line[limit:]
+        # ⚠️ `current`가 비었는데 조각으로 넣으면 **빈 조각**이 생겨요. 디스코드는 빈
+        #    메세지를 거부하니, 나누려다 오히려 전송이 실패합니다.
+        #    (한 줄이 딱 한도일 때 나던 일 — 검사에서 잡았어요)
+        if current and len(current) + len(line) + 1 > limit:
+            parts.append(current.rstrip("\n"))
+            current = ""
+        current += line + "\n"
+    if current.strip():
+        parts.append(current.rstrip("\n"))
+
+    if len(parts) > max_parts:
+        dropped = len(parts) - max_parts
+        parts = parts[:max_parts]
+        note = f"{"\\n"}… (너무 길어서 {dropped}조각을 줄였어요)"
+        parts[-1] = parts[-1][:limit - len(note)] + note
+    return parts
+
+
+def stored_start(row: dict, key: str = "start"):
+    """저장해둔 시각 문자열을 datetime으로 바꿉니다. 값이 없거나 깨졌으면 **None**.
+
+    🐛 [버그 수정] 파티·내전은 `dt.datetime.fromisoformat(row["start"])`를 그냥 불렀어요.
+    줄 하나가 깨져 있으면(사람이 손으로 고치다, 저장이 반쯤 끊겨서, 옛 형식이 남아서)
+
+      · 1분마다 도는 tick이 **통째로** 죽어서 열려 있는 모집 **전부**의 알림이 멈추고
+      · `/파티 목록`은 정렬하다 죽어서 아무도 목록을 못 보고
+      · 그 모집글은 다시 그릴 수도 없어 참가 버튼이 얼어붙습니다
+
+    깨진 줄 하나 때문에 나머지가 다 막히는 자리라, 스누즈(`_wake_at`)가 이미 쓰던
+    "None을 돌려주고 부르는 쪽이 건너뛴다" 방식으로 맞춥니다.
+
+    시간대가 없는 옛 값은 KST로 봅니다. (이 봇의 시각은 전부 KST예요)
+    """
+    try:
+        parsed = dt.datetime.fromisoformat(row.get(key) or "")
+    except (TypeError, ValueError, AttributeError):
+        return None
+    return parsed.replace(tzinfo=KST) if parsed.tzinfo is None else parsed
+
+
+async def repaint_note(coro, what: str = "패널") -> str:
+    """패널을 **다시 그리는** 데 실패해도 "저장은 이미 끝났다"는 사실이 묻히지 않게 합니다.
+
+    🐛 [버그 수정] 셀프 역할·파티·내전은 전부 **저장을 먼저 하고, 그다음에 메시지를 다시
+    그립니다**(순서 자체는 맞아요 — 그림이 실패해도 데이터는 남아야 하니까요). 그런데 그
+    다시 그리기가 던지는 예외를 아무도 안 잡고 있어서, 공용 오류 처리까지 올라가
+    **"❗ 처리하는 중 예상치 못한 오류가 발생했어요"** 한 줄만 뜹니다.
+
+    제일 흔한 길은 관리자가 패널 메시지를 손으로 지운 경우예요. 그러면
+      1) `/셀프역할 역할추가` → 저장은 됐는데 화면엔 "예상치 못한 오류"
+      2) 다시 해보면 "❌ 이미 담겨 있어요"
+    가 되어 **빠져나갈 길이 없습니다.** 내전 쪽은 더 나빠서, 승패가 이미 전적에 박힌 채로
+    결과 발표(`_announce_result`)까지 통째로 건너뛰었어요.
+
+    성공하면 빈 문자열, 실패하면 안내에 덧붙일 한 줄을 돌려줍니다.
+    (오류 원문은 콘솔로만 보냅니다 — 유저 화면에 경로가 새면 안 돼요)
+    """
+    try:
+        await coro
+        return ""
+    except discord.NotFound:
+        reason = f"{what} 메시지를 못 찾았어요. 지워진 것 같아요."
+    except discord.Forbidden:
+        reason = f"{what} 메시지를 고칠 권한이 없어요. 봇에게 그 채널 권한을 주세요."
+    except RuntimeError as e:
+        # 우리 코드가 직접 만든 안내 문구라 그대로 보여줘도 안전해요.
+        reason = str(e)
+    except Exception as e:
+        print(f"❗ [{what} 다시 그리기 실패] {type(e).__name__}: {e}")
+        return f"\n⚠️ 저장은 끝났지만 {what}을(를) 다시 그리지 못했어요. 콘솔을 확인해 주세요."
+    print(f"❗ [{what} 다시 그리기 실패] {reason}")
+    return f"\n⚠️ 저장은 끝났어요. 다만 {reason}"
+
+
 class ChunsikView(discord.ui.View):
     """봇의 모든 버튼/드롭다운 창이 상속하는 기본 View.
 
@@ -242,6 +477,12 @@ class ChunsikView(discord.ui.View):
                        error: Exception, item: discord.ui.Item) -> None:
         print(f"❗ [버튼/드롭다운 오류] {type(self).__name__}.{getattr(item, 'custom_id', None) or type(item).__name__} "
               f"처리 중: {type(error).__name__}: {error}")
+        # 🔎 슬래시 명령 쪽(chunsik_client.on_app_command_error)과 같은 이유로 여기도 찍어요.
+        #    화면에는 안전한 문구만 나가고, 원인은 콘솔에 남아야 합니다.
+        #    저장 실패·파일 손상은 문구에 이미 원인이 다 들어 있어서 뺍니다.
+        if not isinstance(error, DataSaveError) and not (
+                isinstance(error, RuntimeError) and "손상되어" in str(error)):
+            traceback.print_exception(type(error), error, error.__traceback__)
         msg = describe_user_error(error)
         try:
             if interaction.response.is_done():
@@ -543,7 +784,8 @@ def schedule_delete(msg, delay: float):
 # 역할을 하나 담는 순간 아무나 서버를 가져갈 수 있게 됩니다.
 #
 # ⚠️ 코그끼리 직접 import하면 안 돼요. 한쪽만 담아 납품하면 import 단계에서 죽습니다.
-#    (이 봇의 코그 14개는 전부 서로를 모릅니다 — NEXT.md 참고)
+#    (이 봇의 코그들은 **전부 서로를 모릅니다** — 몇 개인지는 기동 로그와
+#     `python tools/check_modules.py`가 보여줘요. 숫자를 여기 적으면 또 낡습니다)
 
 # 🚫 이 권한이 하나라도 붙은 역할은 셀프로 가져가게 두지 않습니다.
 DANGEROUS_ROLE_PERMISSIONS = (
@@ -557,7 +799,20 @@ DANGEROUS_ROLE_PERMISSIONS = (
     ("kick_members", "멤버 추방"),
     ("moderate_members", "멤버 타임아웃"),
     ("mention_everyone", "@everyone 멘션"),
+    # 🔊 [추가] 음성 채널에서 **사람을 어떻게 하는** 권한들. 위 '멤버 타임아웃'과 같은 부류인데
+    #    빠져 있었어요. 이 봇이 가는 곳은 대개 게임 커뮤니티라 음성 채널이 중심이고,
+    #    셀프 역할 하나로 남을 마이크 끄고 다른 방으로 끌고 갈 수 있으면 안 됩니다.
+    ("mute_members", "음성 마이크 끄기"),
+    ("deafen_members", "음성 헤드셋 끄기"),
+    ("move_members", "음성 채널 이동시키기"),
+    # 🏷️ [추가] 남의 별명을 바꿀 수 있어요. 다른 사람 행세를 할 수 있는 자리라 넣습니다.
+    ("manage_nicknames", "별명 관리"),
 )
+
+# 📌 일부러 **안 넣은** 권한들 — 사람을 어떻게 하는 게 아니라 '내용'을 다루는 쪽이에요.
+#    셀프 역할로 정당하게 줄 수도 있는 것들이라, 필요하면 그때 넣기로 합니다.
+#      manage_events(이벤트 관리) · manage_threads(스레드 관리) ·
+#      manage_emojis_and_stickers(이모지 관리) · view_audit_log(감사 로그 보기)
 
 
 def dangerous_permission(role: discord.Role) -> Optional[str]:
@@ -569,7 +824,20 @@ def dangerous_permission(role: discord.Role) -> Optional[str]:
 
 
 def role_reject_reason(role: discord.Role, me: discord.Member) -> Optional[str]:
-    """이 역할을 '아무나 가져가는 역할'로 쓰면 안 되는 이유. 써도 되면 None."""
+    """이 역할을 '아무나 가져가는 역할'로 쓰면 안 되는 이유. 써도 되면 None.
+
+    🐛 [버그 수정] `me`(봇 자신)가 **None일 수 있어요.** `guild.me`는 멤버 캐시에서
+    자기 자신을 찾는 건데, 기동 직후나 재연결 직후엔 아직 안 들어와 있을 수 있습니다.
+    그러면 아래 `me.top_role`에서 AttributeError가 나고, 관리자 화면에는
+    "예상치 못한 오류"만 떠요. 무엇을 잘못했는지 알 방법이 없습니다.
+    `/설치`는 이미 `guild.me is None`을 보고 넘어가는데(cogs/wizard.py) 여기만 빠졌어요.
+
+    🚦 이때 **통과시키지 않습니다.** 봇 역할보다 위에 있는지를 확인할 수 없는 상태라,
+       그냥 담게 두면 나중에 버튼이 눌려도 역할이 안 붙어요. 잠시 뒤 다시 하라고 알립니다.
+    """
+    if me is None:
+        return ("⏳ 봇이 아직 자기 정보를 다 못 읽었어요. 잠시 뒤(보통 1분 안에) 다시 시도해 주세요.\n"
+                "└ 이 역할이 봇 역할보다 위에 있는지 확인할 수가 없어서 멈췄습니다.")
     if role.is_default():
         return "`@everyone`은 담을 수 없어요."
     if role.managed:

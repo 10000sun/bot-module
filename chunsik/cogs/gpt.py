@@ -12,9 +12,12 @@ from discord.ext import commands, tasks
 
 from chunsik_config import CHAT_LOG_FILE, CHAT_MEMORY_FILE, CHAT_STATS_FILE, GEMINI_API_KEY, KST, LIMIT_FILE, CHUNSIK_CALL_ROLE_ID, CHUNSIK_USER_MEMORY_FILE, get_pacific_date_str
 from chunsik_alerts import report_loop_error
+from chunsik_settings import is_feature_enabled
 from chunsik_storage import atomic_json_save, safe_json_load
 from chunsik_state import load_wiki, state
-from chunsik_utils import find_guild_member_by_name, holding_avg_price, holding_shares
+from chunsik_utils import (EMBED_DESC_LIMIT, INPUT_ECHO_LIMIT, MESSAGE_LIMIT, clip,
+                           find_guild_member_by_name, holding_avg_price, holding_shares,
+                           split_message)
 from chunsik_names import bot_name, currency, josa
 
 # ========== 🎭 봇 페르소나 프롬프트 ==========
@@ -165,6 +168,14 @@ class ChunsikGPT(commands.Cog):
         # 🧠 [신규] 유저별 장기 기억 (짧은 사실 목록, 추가 API 호출 없이 대화 중 자연스럽게 기록)
         self.CHUNSIK_USER_MEMORY_FILE = CHUNSIK_USER_MEMORY_FILE
         self.USER_MEMORY_MAX_FACTS = 20  # 유저 1명당 최대 저장 개수 (토큰 비용 관리)
+        # ✂️ 기억 한 줄의 길이 상한.
+        #
+        # 🐛 [버그] 개수만 막고 **길이는 안 막았어요.** 이 값을 쓰는 건 사람이 아니라 AI라서,
+        #    "짧은 한 문장으로 요약하세요"라고 부탁만 해뒀지 강제는 아니었습니다. 길게 저장되면
+        #      · 그 뒤 **모든 대화의 프롬프트에 매번 실려서** 토큰(=돈)이 계속 나가고
+        #      · `/기억 목록`이 설명 한도(4096자)를 넘겨 **자기 기억을 보지도 지우지도 못하게** 돼요
+        #    한 문장 요약이라면 200자면 충분합니다.
+        self.USER_MEMORY_MAX_LENGTH = 200
 
         # 💡 [최적화] 메시지마다 클라이언트를 새로 생성하지 않도록 __init__에서 한 번만 초기화
         # 🔐 [변경] API 키는 코드가 아니라 .env의 GEMINI_API_KEY에서 읽어옵니다.
@@ -314,6 +325,9 @@ class ChunsikGPT(commands.Cog):
         fact = fact.strip()
         if not fact:
             return "빈 내용은 기억할 수 없어요."
+        # ✂️ 길이는 여기서 끊습니다. (부탁만으로는 안 지켜져요 — 위 상수 설명 참고)
+        if len(fact) > self.USER_MEMORY_MAX_LENGTH:
+            fact = fact[:self.USER_MEMORY_MAX_LENGTH - 1] + "…"
         data = self._load_user_memory()
         facts = data.setdefault(str(user_id), [])
         if fact in facts:
@@ -337,10 +351,13 @@ class ChunsikGPT(commands.Cog):
         facts = self._get_user_facts(interaction.user.id)
         if not facts:
             return await interaction.response.send_message(f"ℹ️ 아직 {bot_name()}{josa(bot_name(), '이가')} 기억하고 있는 내용이 없어요.", ephemeral=True)
-        lines = "\n".join(f"{i+1}. {f}" for i, f in enumerate(facts))
+        # ✂️ 상한이 생기기 전에 저장된 긴 기억이 남아 있을 수 있어요. 그대로 실으면
+        #    **자기 기억을 보지도 지우지도 못하게** 됩니다.
+        lines = "\n".join(f"{i+1}. {clip(f, self.USER_MEMORY_MAX_LENGTH)}"
+                          for i, f in enumerate(facts))
         embed = discord.Embed(
             title=f"🧠 {bot_name()}{josa(bot_name(), '이가')} 기억하고 있는 것",
-            description=lines,
+            description=clip(lines, EMBED_DESC_LIMIT),
             color=0x5ce6b4,
         )
         embed.set_footer(text="/기억 삭제 번호 로 개별 삭제, /기억 초기화 로 전체 삭제할 수 있어요.")
@@ -356,7 +373,8 @@ class ChunsikGPT(commands.Cog):
             return await interaction.response.send_message(f"❌ 유효하지 않은 번호예요. (현재 {len(facts)}개 저장됨)", ephemeral=True)
         removed = facts.pop(번호 - 1)
         self._save_user_memory(data)
-        await interaction.response.send_message(f"🗑️ 지웠어요: {removed}", ephemeral=True)
+        await interaction.response.send_message(
+            f"🗑️ 지웠어요: {clip(removed, INPUT_ECHO_LIMIT)}", ephemeral=True)
 
     @memory_group.command(name="초기화", description=f"{bot_name()}{josa(bot_name(), '이가')} 나에 대해 기억하고 있는 내용을 전부 지워요.")
     async def clear_my_memory(self, interaction: discord.Interaction):
@@ -456,6 +474,14 @@ class ChunsikGPT(commands.Cog):
         is_role_mentioned = any(role.id == CHUNSIK_CALL_ROLE_ID for role in message.role_mentions)
 
         if is_bot_mentioned or is_role_mentioned:
+            # 🚧 관리자가 `/기능제어 정지 AI대화`로 꺼둔 상태. 조용히 무시하지 않고 한 줄
+            #    알려줘요 — 불렀는데 아무 반응이 없으면 고장 난 걸로 보고 계속 부릅니다.
+            #    (레벨·이벤트는 조용히 넘어가도 되지만, 이건 사람이 **말을 건** 자리예요)
+            if not is_feature_enabled("gpt"):
+                await message.channel.send(
+                    f"{message.author.mention} 🚧 AI 대화가 지금 잠시 꺼져 있어요. 관리자에게 물어봐 주세요.")
+                return
+
             # 🔐 [신규] API 키가 없거나 초기화에 실패하면 AI 대화만 조용히 건너뜁니다.
             if self.client is None:
                 await message.channel.send(
@@ -749,7 +775,17 @@ class ChunsikGPT(commands.Cog):
                         self.last_user_message[author_key] = user_content
                         self.last_chunsik_message[author_key] = reply
                         self._save_chat_memory()
-                        await message.channel.send(f"{message.author.mention} {reply}")
+                        # ✂️ [버그 수정] 예전엔 답변을 **통째로** 보냈어요. 디스코드 본문은
+                        #    2,000자인데 AI는 그보다 긴 답을 쉽게 씁니다("○○에 대해 길게 설명해줘").
+                        #    그러면 전송이 400으로 거부되고, 그게 아래 `except`에 걸려
+                        #    **"지금 머리가 띵해서 대답을 못 하겠어요"** 가 나갔어요.
+                        #    답은 멀쩡히 만들어졌고 **돈도 이미 나간 뒤**인데, 유저에겐 고장으로
+                        #    보이고 다시 부르면 또 같은 일이 반복됩니다.
+                        #    (chunk_lines로는 못 나눠요 — 줄바꿈 없는 긴 답변이 바로 그 경우예요)
+                        chunks = split_message(reply, MESSAGE_LIMIT - len(message.author.mention) - 1)
+                        for i, chunk in enumerate(chunks):
+                            await message.channel.send(
+                                f"{message.author.mention} {chunk}" if i == 0 else chunk)
                         # 🏷️ [신규] 명령어 응답과 헷갈리지 않도록, GPT 답변이라는 걸 여기서 직접 명시해서 기록
                         if message.guild:
                             self._append_log_entry(message.guild.id, bot_name(), reply, source="GPT 응답")

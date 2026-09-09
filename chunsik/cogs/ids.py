@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+import time
 import uuid
 import datetime as dt
 from typing import Optional
@@ -15,8 +16,102 @@ from chunsik_config import DATA_DIR, ID_PENDING_FILE, KST, RANKS, json_data_file
 from chunsik_storage import atomic_json_save_or_raise, safe_json_load
 from chunsik_settings import _get_role_ids, feature_gate, is_feature_enabled, load_settings, member_has_admin_or_role, save_settings, send_log_embed
 from chunsik_state import state
-from chunsik_utils import KNOWN_PLATFORMS, ChunsikView, _looks_like_id_entry, _split_platform_and_id, extract_id_from_mention, find_guild_member_by_name, get_platform_candidates, next_misc_name, next_platform_name, normalize_platform, notify_log, parse_legacy_id_document, respond_modify
+from chunsik_utils import EMBED_DESC_LIMIT, EMBED_FIELD_LIMIT, INPUT_ECHO_LIMIT, KNOWN_PLATFORMS, ChunsikView, add_lines_field, clip, fit_embed, schedule_delete, split_message, _looks_like_id_entry, _split_platform_and_id, extract_id_from_mention, find_guild_member_by_name, get_platform_candidates, next_misc_name, next_platform_name, normalize_platform, notify_log, parse_legacy_id_document, respond_modify
 from chunsik_names import bot_name, josa
+
+
+# ✂️ 아이디 하나와 공지의 글자 수 상한.
+#
+# 🚨 이게 없으면 명단이 **영영 갱신을 멈춥니다.** 명단은 ```ansi 코드블록으로 올라가는데,
+#    디스코드 메세지는 2000자까지예요. 아이디 하나가 그 길이를 넘으면 그 한 줄이 통째로
+#    한 메세지가 돼서 게시가 400으로 거부되고, 그때부터 명단이 그 상태로 굳습니다.
+#    (실측: 1800자짜리 아이디 하나면 메세지가 6,017자까지 커져요)
+#
+#    슬래시 명령만 막아서는 부족해요. 아이디는 **자동등록 채널에 그냥 글로 올려서도**
+#    들어옵니다. 그래서 저장이 지나가는 길목(_register_single_id)에서 자릅니다.
+MAX_ID_LENGTH = 100      # 게임 아이디는 길어야 수십 자예요 (Riot ID가 `이름#태그`로 제일 긴 편)
+
+# 🕐 명단을 **다시 그리는 간격**의 하한.
+#
+# 🐌 [왜 필요한가] 명단은 등록 안 한 사람도 "(등록된 아이디 없음)"으로 **전원** 싣습니다.
+#    그래서 메세지 수가 서버 인원에 비례해요 — 100명이면 3개, 1,000명이면 25개,
+#    3,000명이면 73개입니다. 그런데 누가 아이디를 **하나** 등록할 때마다 이걸 전부 다시
+#    그렸어요. 디스코드 전송 제한에 걸려서 1,000명이면 한 번에 30초 안팎, 3,000명이면
+#    몇 분이 걸리고, 그동안 settings_lock을 잡고 있습니다.
+#
+# ⚡ [왜 그냥 늦추지 않았나] 작은 서버(주 대상인 100~500명)에서는 지금도 즉시 그려지고
+#    그게 맞아요. 그래서 **첫 요청은 바로** 처리하고, 그 뒤 이 시간 안에 들어온 것들만
+#    한 번으로 모읍니다. 평소엔 예전과 똑같이 동작하고, 사람이 몰릴 때만 부담이 줄어요.
+ROSTER_COALESCE_SECONDS = 60
+
+# 📥 자동등록 채널은 **아무나 글을 올리는 곳**이에요. 한 사람이 올린 글 하나가 서버 전체를
+#    흔들 수 있는 자리라 세 군데를 막아둡니다.
+#
+# 🐛 [버그] 예전엔 상한이 하나도 없었어요. 메세지 하나를 줄·쉼표로 쪼개서 **조각마다** 처리하는데,
+#    형식을 못 알아본 조각은 그때마다 **아이디 로그 채널에 관리자를 멘션한 확인 요청**이 하나씩
+#    올라갑니다. 즉 아이디처럼 생긴 줄 200개를 한 번에 올리면
+#      · 로그 채널에 관리자 멘션 메세지가 **200개**
+#      · 디스코드 전송 제한 때문에 그게 몇 분에 걸쳐 줄줄이 나가고
+#      · 대기열 파일에도 200건이 쌓입니다
+#    악의가 없어도 옛 아이디 목록을 통째로 붙여넣으면 그대로 재현돼요.
+#    (그런 용도로는 `/아이디 가져오기`가 따로 있습니다 — 파일로 받아서 한 번에 처리해요)
+# 📄 `/아이디 가져오기`로 받는 파일의 상한.
+#
+# 🐛 [버그] 예전엔 크기도 건수도 안 봤어요. 디스코드 첨부는 25MB까지 올라가는데,
+#    그걸 통째로 읽어 문자열로 펼치고 **동기 함수로 파싱**합니다. 그동안 봇 전체가 멈춰요
+#    (이벤트 루프를 붙잡습니다). 악의가 아니라 **엉뚱한 파일을 잘못 고른 것**만으로도
+#    재현되는 자리라, 관리자 명령이어도 막아둘 값어치가 있어요.
+#    인식된 항목 수도 안 봤습니다 — 수천 명이 한 번에 들어오면 명단 게시가 수백 개
+#    메세지로 나뉘어 몇 시간씩 걸립니다.
+#
+# 1MB면 아이디 목록으로는 아주 넉넉해요(한 줄 50자 기준 2만 줄).
+MAX_IMPORT_BYTES = 1024 * 1024
+MAX_IMPORT_PEOPLE = 1000
+
+MAX_SEGMENTS_PER_MESSAGE = 20   # 메세지 하나에서 처리할 조각 수
+MAX_PENDING_PER_MESSAGE = 5     # 메세지 하나가 만들 수 있는 '관리자 확인 요청' 수
+MAX_PENDING_TOTAL = 200         # 대기열 전체. 넘으면 새 요청을 안 받아요 (`/아이디 대기열정리`)
+MAX_NOTICE_LENGTH = 500  # 명단 맨 아래에 붙는 공지 **한 번에 넣는 양**
+
+# 📢 공지 **전체**의 상한.
+#
+# 🐛 [버그] 한 번에 넣는 양(위 500자)만 막고 **쌓이는 총량은 안 봤어요.** `/아이디 공지`는
+#    기본이 "이어붙이기"라 부를 때마다 계속 길어집니다. 그러면
+#      · `/아이디 공지`(내용 없이)로 확인하려 하면 본문 한도를 넘겨 **화면이 안 뜨고**
+#      · 명단 맨 아래 공지 칸이 메세지 여러 개로 불어납니다
+#    공지는 "한 줄 안내"로 만든 자리예요. 2,000자면 충분히 넉넉합니다.
+MAX_NOTICE_TOTAL = 2000
+
+ROSTER_CHUNK_LIMIT = 1800   # ```ansi 코드블록 오버헤드를 뺀 한 메세지 분량
+
+
+def split_roster_lines(block_lines: list, limit: int = ROSTER_CHUNK_LIMIT) -> list:
+    """명단 블록 하나를 한 메세지에 들어가는 덩어리 여러 개로 쪼갭니다.
+
+    🚨 [중요] 줄과 줄 **사이**에서만 나누면 안 돼요. 한 줄이 혼자 제한을 넘으면 그 줄이
+       통째로 한 덩어리가 돼서, 나눴는데도 메세지가 2000자를 넘습니다. 그러면 명단 게시가
+       400으로 거부되고 **명단이 그 상태로 굳어요.** 등록할 때 MAX_ID_LENGTH로 막지만,
+       그 상한이 생기기 전에 저장된 값이 남아 있을 수 있어서 여기서 한 번 더 봅니다.
+
+    (모듈 바깥에 둔 이유: tools/check_embeds.py가 이 함수를 그대로 불러서 검사해요.
+     안쪽 함수로 두면 검사 도구가 똑같은 코드를 베껴 써야 하고, 그러면 정작 진짜 코드가
+     바뀌었을 때 검사는 옛 코드를 계속 통과시킵니다)
+    """
+    result, current = [], ""
+    for line in block_lines:
+        # 혼자서 한 덩어리를 넘기는 줄은 글자 단위로라도 쪼갭니다.
+        # 억지로 자른 티가 나더라도 명단이 통째로 안 올라가는 것보단 낫습니다.
+        pieces = ([line[i:i + limit] for i in range(0, len(line), limit)]
+                  if len(line) > limit else [line])
+        for piece in pieces:
+            if len(current) + len(piece) + 1 > limit:
+                result.append(current)
+                current = piece + "\n"
+            else:
+                current += piece + "\n"
+    if current.strip():
+        result.append(current)
+    return result
 
 class ImportConfirmView(ChunsikView):
     """/아이디목록가져오기 미리보기 결과를 실제로 등록할지 확인받는 버튼"""
@@ -51,7 +146,7 @@ class ImportConfirmView(ChunsikView):
             registered_people += 1
 
         state.save()
-        await self.core_cog._refresh_id_roster(self.guild)
+        await self.core_cog.queue_roster_refresh(self.guild)
 
         for child in self.children:
             child.disabled = True
@@ -186,6 +281,62 @@ class UnmatchedResolveView(ChunsikView):
         embed = discord.Embed(title="📦 아이디 목록 일괄 가져오기 (연결 완료)", description=desc[:4000], color=discord.Color.orange())
         await interaction.response.edit_message(embed=embed, view=confirm_view)
 
+class DuplicateCleanConfirmView(ChunsikView):
+    """`/아이디 중복정리` — 실제로 지우기 전에 대상을 보여주고 한 번 더 확인받는 버튼.
+
+    아이디 삭제는 되돌릴 방법이 백업 복원밖에 없어요. `/지갑청소`가 같은 이유로 이미
+    이렇게 하고 있는데 여기만 빠져 있었습니다. (economy의 `WalletCleanConfirmView`와
+    같은 모양이에요 — 코그끼리 import하지 않는 규칙이라 각자 들고 있습니다)
+    """
+
+    def __init__(self, cog, plan: dict, author_id: int):
+        super().__init__(timeout=120)
+        self.cog = cog
+        self.plan = plan            # {유저ID: [지울 키, ...]}
+        self.author_id = author_id
+        self.processing = False
+        self.message = None
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.author_id:
+            await interaction.response.send_message(
+                "🙅‍♀️ 이 버튼은 명령을 실행한 관리자만 사용할 수 있어요.", ephemeral=True)
+            return False
+        return True
+
+    async def on_timeout(self):
+        # ⌛ 확인하지 않고 방치된 삭제 버튼이 한참 뒤에 눌리는 일이 없도록 잠가둬요.
+        if self.processing or not self.message:
+            return
+        for child in self.children:
+            child.disabled = True
+        try:
+            await self.message.edit(
+                content="⌛ 시간이 지나 중복정리를 취소했어요. 아무것도 지우지 않았어요.",
+                embed=None, view=self)
+        except Exception:
+            pass
+
+    @discord.ui.button(label="🧹 확인했어요, 삭제할게요", style=discord.ButtonStyle.danger)
+    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.processing:
+            return await interaction.response.send_message("⏳ 이미 처리 중이에요!", ephemeral=True)
+        self.processing = True
+        for child in self.children:
+            child.disabled = True
+        await interaction.response.edit_message(view=self)
+        self.stop()
+        await self.cog.apply_duplicate_clean(interaction, self.plan)
+
+    @discord.ui.button(label="취소", style=discord.ButtonStyle.secondary)
+    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.processing:
+            return await interaction.response.send_message("⏳ 이미 처리 중이라 취소할 수 없어요.", ephemeral=True)
+        self.stop()
+        await interaction.response.edit_message(
+            content="🚫 중복정리를 취소했어요. 아무것도 지우지 않았어요.", embed=None, view=None)
+
+
 class ChunsikIds(commands.Cog):
     """아이디 검색, 로깅 등 봇의 핵심 유틸리티 기능"""
 
@@ -210,8 +361,58 @@ class ChunsikIds(commands.Cog):
         self.id_menu = app_commands.ContextMenu(name="아이디 보기", callback=self.show_ids_menu)
         self.bot.tree.add_command(self.id_menu)
 
+        # 🕐 명단 다시 그리기를 모으는 자리. (ROSTER_COALESCE_SECONDS 설명 참고)
+        self._roster_last_run = 0.0     # 마지막으로 그린 시각 (monotonic)
+        self._roster_pending = None     # 그려야 하는데 아직 못 그린 길드
+        self._roster_task = None
+
     async def cog_unload(self):
         self.bot.tree.remove_command(self.id_menu.name, type=self.id_menu.type)
+        # ⏹️ 모아두기 태스크가 코그보다 오래 살면, 내려간 코그가 명단을 그립니다.
+        if self._roster_task is not None and not self._roster_task.done():
+            self._roster_task.cancel()
+
+    # ========== 🕐 명단 다시 그리기 (모아서) ==========
+
+    async def queue_roster_refresh(self, guild: discord.Guild) -> bool:
+        """명단을 다시 그립니다. 방금 그렸으면 **모아뒀다가** 한 번에 그려요.
+
+        → 지금 바로 그렸으면 True, 나중으로 미뤘으면 False.
+           (부르는 쪽이 "잠시 뒤 반영돼요"라고 알려줄 수 있게)
+
+        ⚠️ 사람이 "지금 갱신해"라고 시킨 자리(`/아이디 새로고침`, 채널에 '갱신')는
+           이걸 쓰지 마세요. 기다리게 하면 안 되는 자리라 _refresh_id_roster를 직접 부릅니다.
+        """
+        now = time.monotonic()
+        if self._roster_task is None and now - self._roster_last_run >= ROSTER_COALESCE_SECONDS:
+            self._roster_last_run = now
+            await self._refresh_id_roster(guild)
+            return True
+
+        self._roster_pending = guild
+        if self._roster_task is None or self._roster_task.done():
+            self._roster_task = asyncio.create_task(self._roster_later())
+        return False
+
+    async def _roster_later(self):
+        """모아둔 변경을 간격이 지난 뒤 **한 번만** 그립니다."""
+        try:
+            while self._roster_pending is not None:
+                delay = ROSTER_COALESCE_SECONDS - (time.monotonic() - self._roster_last_run)
+                if delay > 0:
+                    await asyncio.sleep(delay)
+                # 그리는 동안 또 바뀔 수 있어요. 지금 것만 집어가고 자리를 비웁니다.
+                guild, self._roster_pending = self._roster_pending, None
+                self._roster_last_run = time.monotonic()
+                await self._refresh_id_roster(guild)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            # 🛡️ create_task로 띄운 태스크는 예외가 나도 아무 데도 안 떠요.
+            #    여기서 삼키면 명단이 조용히 옛날 상태로 굳습니다.
+            print(f"❗ [아이디] 명단 갱신(모아두기)에서 오류가 났어요: {type(e).__name__}: {e}")
+        finally:
+            self._roster_task = None
 
     # ========== 🖱️ 우클릭 조회 ==========
     def build_id_embed(self, user, guild: discord.Guild) -> Optional[discord.Embed]:
@@ -273,6 +474,12 @@ class ChunsikIds(commands.Cog):
         existing = state.user_ids[gid][uid]
         normalized = normalize_platform(plat_input)
 
+        # ✂️ 저장이 지나가는 길목이라 여기서 자릅니다. 슬래시 명령·자동등록 채널·명단
+        #    가져오기가 전부 이 함수를 지나가요. 긴 값 하나가 명단 게시를 통째로
+        #    막는 걸 여기서 끊습니다. (위 MAX_ID_LENGTH 주석 참고)
+        if isinstance(game_id, str) and len(game_id) > MAX_ID_LENGTH:
+            game_id = game_id[:MAX_ID_LENGTH]
+
         # 🐛 [버그 수정 + 강화] 이미 완전히 똑같은 값이 등록돼 있으면 새 키를 또 만들지 않고
         # 기존 키를 그대로 재사용해요. 예전엔 "같은 플랫폼 계열(Riot, Riot2...)" 안에서만
         # 검사해서, 플랫폼 표기가 다르게 들어오면(예: '라이엇' vs '롤') 못 걸러냈어요.
@@ -310,8 +517,11 @@ class ChunsikIds(commands.Cog):
         한 번만 읽어서 넘겨줄 수 있게 했고, 안 넘기면 예전처럼 그때 한 번만 읽어요."""
         if settings is None:
             settings = load_settings()
-        chief_role_id = settings.get("roles", {}).get("chief_role")
-        return bool(chief_role_id and any(r.id == chief_role_id for r in member.roles))
+        # 🐛 [버그 수정] 여기도 숫자 하나로 꺼내 비교하고 있었어요. `/설치`는 역할을
+        #    `[역할ID]` 목록으로 적어서, 그렇게 세팅한 서버에서는 명단의 '대장' 칸이
+        #    영영 비어 있었습니다. (chunsik_settings.is_super_admin과 같은 자리)
+        chief_role_ids = _get_role_ids(settings, "chief_role")
+        return bool(chief_role_ids and any(r.id in chief_role_ids for r in member.roles))
 
     # 📛 명단 블록의 제목과 색. ANSI 색은 디스코드 ```ansi 코드블록에서만 먹혀요.
     # (앞자리 2는 흐리게, 41은 배경 빨강이라 대장 칸만 반전돼 보입니다)
@@ -377,20 +587,8 @@ class ChunsikIds(commands.Cog):
 
                 # 📦 [개선] 칸마다 각각 독립된 블록을 만들고, 칸 경계를 넘어서 섞이지 않게 분할합니다.
                 # (예전엔 그냥 2000자 넘으면 뚝 잘라서, 한 칸이 메세지 두 개에 걸쳐 어중간하게 잘릴 수 있었어요)
-                CHUNK_LIMIT = 1800  # ```ansi 코드블록 오버헤드 감안
-
-                def split_lines_to_chunks(block_lines: list) -> list:
-                    """긴 블록 하나를 글자 수 제한에 맞춰 여러 청크로 쪼갭니다."""
-                    result, current = [], ""
-                    for line in block_lines:
-                        if len(current) + len(line) + 1 > CHUNK_LIMIT:
-                            result.append(current)
-                            current = line + "\n"
-                        else:
-                            current += line + "\n"
-                    if current.strip():
-                        result.append(current)
-                    return result
+                CHUNK_LIMIT = ROSTER_CHUNK_LIMIT  # ```ansi 코드블록 오버헤드 감안
+                split_lines_to_chunks = split_roster_lines
 
                 chunks = []
                 header = "게임 아이디 목록"
@@ -475,6 +673,13 @@ class ChunsikIds(commands.Cog):
                 else:
                     new_ids = [m.id for m in old_messages]
 
+                # 🔒 위에서 읽어둔 settings는 이제 **낡았어요.** 그 사이에 메세지를 열댓 번
+                #    가져오고·고치고·지우고·올렸습니다(수백 ms씩). 그동안 관리자가
+                #    `/설정 채널 …`이나 `/기능제어`를 썼다면, 옛 snapshot을 그대로 저장하는
+                #    순간 그 변경이 **조용히 되돌아갑니다.** settings_lock은 여기와 `/아이디 공지`
+                #    두 곳만 쓰고, 나머지 스물몇 곳은 락 없이 그냥 저장하거든요.
+                #    다시 읽어서 우리가 바꾼 칸만 얹습니다. (welcome의 규칙 패널과 같은 처리)
+                settings = load_settings()
                 settings["level_roster_message_ids"] = new_ids
                 save_settings(settings)
         except Exception as e:
@@ -487,7 +692,9 @@ class ChunsikIds(commands.Cog):
         삭제="공지를 전부 지우려면 True로 설정하세요",
     )
     @app_commands.guild_only()
-    async def set_id_roster_notice(self, interaction: discord.Interaction, 내용: Optional[str] = None, 덮어쓰기: bool = False, 삭제: bool = False):
+    async def set_id_roster_notice(self, interaction: discord.Interaction,
+                                   내용: Optional[app_commands.Range[str, None, MAX_NOTICE_LENGTH]] = None,
+                                   덮어쓰기: bool = False, 삭제: bool = False):
         member = interaction.guild.get_member(interaction.user.id)
         if not member or not self.has_permission(member):
             return await interaction.response.send_message("❌ 권한이 없어요! 관리자에게 역할을 받아주세요.", ephemeral=True)
@@ -506,9 +713,12 @@ class ChunsikIds(commands.Cog):
             elif 내용 is None:
                 current = settings.get("id_roster_notice", "").strip()
                 if not current:
-                    await interaction.response.send_message("ℹ️ 등록된 공지사항이 없어요. `/아이디공지 내용:...`으로 추가할 수 있어요.", ephemeral=True)
+                    await interaction.response.send_message("ℹ️ 등록된 공지사항이 없어요. `/아이디 공지 내용:...`으로 추가할 수 있어요.", ephemeral=True)
                 else:
-                    await interaction.response.send_message(f"📋 **현재 공지사항**\n```\n{current}\n```", ephemeral=True)
+                    # ✂️ 상한이 생기기 전에 쌓인 긴 공지가 남아 있을 수 있어요. 그대로 실으면
+                    #    **공지를 확인하려는 화면 자체가 안 뜹니다.**
+                    await interaction.response.send_message(
+                        f"📋 **현재 공지사항**\n```\n{clip(current, MAX_NOTICE_TOTAL)}\n```", ephemeral=True)
             else:
                 내용 = 내용.replace("\\n", "\n")
 
@@ -519,7 +729,16 @@ class ChunsikIds(commands.Cog):
                     msg = "✅ 공지사항을 통째로 새로 바꿨어요! 아이디 명단 맨 아래에 반영할게요."
                 else:
                     existing = settings.get("id_roster_notice", "").strip()
-                    settings["id_roster_notice"] = f"{existing}\n{내용}" if existing else 내용
+                    merged = f"{existing}\n{내용}" if existing else 내용
+                    # 📏 쌓이는 총량을 봅니다. 넘치면 **붙이지 않고** 알려요 — 앞부분을 말없이
+                    #    잘라내면 예전에 적어둔 안내가 조용히 사라집니다.
+                    if len(merged) > MAX_NOTICE_TOTAL:
+                        return await interaction.response.send_message(
+                            f"❌ 공지가 너무 길어져요. (지금 {len(existing)}자 + 새로 {len(내용)}자 "
+                            f"> 최대 {MAX_NOTICE_TOTAL}자)\n"
+                            f"└ `덮어쓰기: True`로 통째로 새로 쓰거나, `삭제: True`로 비운 뒤 다시 적어주세요.",
+                            ephemeral=True)
+                    settings["id_roster_notice"] = merged
                     msg = "✅ 공지사항에 추가했어요! 아이디 명단 맨 아래에 반영할게요."
 
                 save_settings(settings)
@@ -527,7 +746,7 @@ class ChunsikIds(commands.Cog):
                 need_refresh = True
 
         if need_refresh:
-            await self._refresh_id_roster(interaction.guild)
+            await self.queue_roster_refresh(interaction.guild)
 
     @id_group.command(name="새로고침", description="[관리자] ids.json 파일을 다시 읽어와 메모리 데이터를 갱신해요. (파일을 직접 수정한 뒤 꼭 실행!)")
     @app_commands.guild_only()
@@ -551,7 +770,7 @@ class ChunsikIds(commands.Cog):
         await interaction.followup.send(
             f"🔄 `ids.json`을 다시 읽어왔어요!\n"
             f"└ 등록된 서버 수: {before_users}개 → **{after_users}개**\n"
-            f"이제 `/아이디 목록` 갱신하시면 파일 내용 그대로 반영돼요.",
+            f"아이디 목록 채널도 방금 새로 올렸어요.",
             ephemeral=True
         )
         await self._refresh_id_roster(interaction.guild, force_repost=True)
@@ -573,23 +792,21 @@ class ChunsikIds(commands.Cog):
             ephemeral=True
         )
 
-    @id_group.command(name="중복정리", description="[관리자] 같은 아이디가 실수로 중복 등록된 걸 한 번에 정리해요.")
-    @app_commands.guild_only()
-    async def cleanup_duplicate_ids(self, interaction: discord.Interaction):
-        member = interaction.guild.get_member(interaction.user.id)
-        if not member or not self.has_permission(member):
-            return await interaction.response.send_message("❌ 권한이 없어요! 관리자에게 역할을 받아주세요.", ephemeral=True)
+    @staticmethod
+    def find_duplicate_ids(guild_data: dict) -> dict:
+        """중복으로 볼 항목을 **찾기만** 합니다. → `{유저ID: [지울 키, ...]}`
 
-        await interaction.response.defer(ephemeral=True)
-        gid = str(interaction.guild.id)
-        guild_data = state.user_ids.get(gid, {})
+        🚨 [버그 수정] 예전엔 찾자마자 그 자리에서 지웠어요. 되돌릴 방법은 백업 복원뿐인데
+        **뭘 지우는지 보여주지도, 물어보지도 않았습니다.** 끝난 뒤에 "N건 삭제했어요"만 떠요.
+        `/지갑청소`는 같은 무게라고 보고 미리보기 + 확인 버튼을 두고 있는데 여기만 없었습니다.
 
-        removed_count = 0
-        affected_people = 0
+        게다가 아래 '기타N' 규칙은 **추측**이에요. 값 문자열이 서로 달라서 단순 비교로는
+        못 잡는 옛 형식을 모양으로 알아보는 건데, 모양이 우연히 맞으면 멀쩡한 항목도 걸립니다.
+        추측으로 지우는 것일수록 먼저 보여줘야 해요.
 
-        # 🐛 [대폭 강화] 예전엔 "같은 플랫폼 계열(Riot, Riot2...)"일 때만 중복으로 봤는데,
-        # 그거보다 훨씬 많은 중복이 있었어요. 이제는 플랫폼 이름이 무엇이든 상관없이,
-        # 같은 사람 안에서 "값(아이디)이 완전히 똑같으면" 전부 중복으로 간주하고 정리해요.
+        찾기와 지우기를 나눠두면 검사 도구가 규칙만 따로 확인할 수도 있습니다.
+        """
+        plan = {}
         for uid, platforms in guild_data.items():
             seen_values = {}  # 정리된 값(공백 제거) -> 맨 처음 등록된 키
             to_delete = []
@@ -601,8 +818,8 @@ class ChunsikIds(commands.Cog):
                 else:
                     seen_values[norm_val] = key
 
-            # 🗑️ [신규] "기타N": "라벨 : 값" 형태로 예전 방식으로 저장된 항목이, 나중에
-            # 같은 정보가 "라벨": "값"으로 깔끔하게 따로 등록되면서 남긴 레거시 중복도 정리해요.
+            # 🗑️ "기타N": "라벨 : 값" 형태로 예전 방식으로 저장된 항목이, 나중에 같은 정보가
+            # "라벨": "값"으로 깔끔하게 따로 등록되면서 남긴 레거시 중복도 정리해요.
             # (값 문자열 자체는 서로 달라서("라벨 : 값" vs "값") 위 검사로는 못 잡혀요)
             for key in list(platforms.keys()):
                 if not key.startswith("기타"):
@@ -610,31 +827,93 @@ class ChunsikIds(commands.Cog):
                 val = platforms.get(key)
                 if not isinstance(val, str) or " : " not in val:
                     continue
-                embedded_label, _, embedded_value = val.partition(" : ")
+                _label, _, embedded_value = val.partition(" : ")
                 embedded_value = embedded_value.strip()
+                if not embedded_value:
+                    continue
                 for other_key, other_val in platforms.items():
                     if other_key == key:
                         continue
-                    if isinstance(other_val, str) and other_val.strip() == embedded_value and embedded_value:
+                    if isinstance(other_val, str) and other_val.strip() == embedded_value:
                         if key not in to_delete:
                             to_delete.append(key)
                         break
 
-            for key in to_delete:
-                del platforms[key]
-                removed_count += 1
             if to_delete:
+                plan[uid] = to_delete
+        return plan
+
+    @id_group.command(name="중복정리", description="[관리자] 같은 아이디가 실수로 중복 등록된 걸 한 번에 정리해요.")
+    @app_commands.guild_only()
+    async def cleanup_duplicate_ids(self, interaction: discord.Interaction):
+        member = interaction.guild.get_member(interaction.user.id)
+        if not member or not self.has_permission(member):
+            return await interaction.response.send_message("❌ 권한이 없어요! 관리자에게 역할을 받아주세요.", ephemeral=True)
+
+        await interaction.response.defer(ephemeral=True)
+        gid = str(interaction.guild.id)
+        guild_data = state.user_ids.get(gid, {})
+
+        plan = self.find_duplicate_ids(guild_data)
+        if not plan:
+            return await interaction.followup.send("✨ 중복된 항목이 없었어요!", ephemeral=True)
+
+        removed_count = sum(len(keys) for keys in plan.values())
+        lines = []
+        for uid, keys in plan.items():
+            for key in keys:
+                value = clip(str(guild_data.get(uid, {}).get(key, "")), INPUT_ECHO_LIMIT)
+                lines.append(f"• <@{uid}> — `{key}`: `{value}`")
+
+        embed = discord.Embed(
+            title="🧹 아이디 중복정리 — 정말 지울까요?",
+            description=(f"**{len(plan)}명**에게서 중복 항목 **{removed_count}건**을 지웁니다.\n\n"
+                         "⚠️ 한 번 지우면 **백업 복원 말고는 되돌릴 방법이 없어요.**\n"
+                         "└ `기타N` 항목은 **모양으로 알아본 추측**이라 특히 한 번 봐주세요."),
+            color=0xE67E22,
+        )
+        add_lines_field(embed, "지울 항목", lines, empty="없음")
+        embed.set_footer(text="2분 안에 선택하지 않으면 자동으로 취소돼요.")
+
+        view = DuplicateCleanConfirmView(self, plan, interaction.user.id)
+        view.message = await interaction.followup.send(embed=fit_embed(embed), view=view,
+                                                       ephemeral=True, wait=True)
+
+    async def apply_duplicate_clean(self, interaction: discord.Interaction, plan: dict):
+        """확인 버튼을 누른 뒤 실제로 지웁니다.
+
+        미리보기와 확인 사이에 등록이 더 있었을 수 있어요. **그때 찾아둔 키만** 지우고,
+        그 사이에 값이 바뀐 항목은 건드리지 않습니다.
+        """
+        gid = str(interaction.guild.id)
+        guild_data = state.user_ids.get(gid, {})
+
+        removed_count = 0
+        affected_people = 0
+
+        for uid, keys in plan.items():
+            platforms = guild_data.get(uid)
+            if not platforms:
+                continue        # 그 사이에 그 사람 기록이 통째로 사라졌어요
+            gone = 0
+            for key in keys:
+                if key in platforms:
+                    del platforms[key]
+                    gone += 1
+            removed_count += gone
+            if gone:
                 affected_people += 1
 
-        if removed_count:
-            state.save()
-            await self._refresh_id_roster(interaction.guild)
-            await interaction.followup.send(
-                f"🧹 중복 정리 완료! **{affected_people}명**에게서 중복 항목 **{removed_count}건**을 삭제했어요. 명단도 갱신했어요.",
-                ephemeral=True
-            )
-        else:
-            await interaction.followup.send("✨ 중복된 항목이 없었어요!", ephemeral=True)
+        if not removed_count:
+            return await interaction.followup.send(
+                "ℹ️ 그 사이에 이미 정리됐는지, 지울 게 남아 있지 않았어요.", ephemeral=True)
+
+        state.save()
+        await self.queue_roster_refresh(interaction.guild)
+        await interaction.followup.send(
+            f"🧹 중복 정리 완료! **{affected_people}명**에게서 중복 항목 **{removed_count}건**을 삭제했어요. 명단도 갱신했어요.",
+            ephemeral=True
+        )
 
     # ========== 📦 [신규] 기존 아이디 목록 문서 일괄 가져오기 ==========
     @id_group.command(name="가져오기", description="[관리자] 예전에 쓰던 아이디 목록 게시글을 .txt 파일로 올리면 한 번에 등록해요.")
@@ -647,6 +926,14 @@ class ChunsikIds(commands.Cog):
 
         await interaction.response.defer(ephemeral=True)
 
+        # 📏 내려받기 **전에** 크기를 봅니다. (디스코드가 알려주는 값이에요)
+        if 파일.size and 파일.size > MAX_IMPORT_BYTES:
+            return await interaction.followup.send(
+                f"❌ 파일이 너무 커요. ({파일.size / 1024 / 1024:.1f}MB · 최대 "
+                f"{MAX_IMPORT_BYTES // 1024 // 1024}MB)\n"
+                f"└ 아이디 목록이 맞는지 확인해 주세요. 큰 파일을 읽는 동안 봇 전체가 멈춥니다.",
+                ephemeral=True)
+
         try:
             raw_bytes = await 파일.read()
             text = raw_bytes.decode("utf-8", errors="ignore")
@@ -655,9 +942,19 @@ class ChunsikIds(commands.Cog):
 
         # 🪜 문서에서 구획 제목으로 인정할 이름은 guild.json에 적어둔 등급 이름이에요.
         # (등급을 안 쓰는 서버는 빈 목록이라 옛 형식의 제목만 걸러냅니다)
-        parsed = parse_legacy_id_document(text, [r["label"] for r in RANKS])
+        # 🧵 파싱은 동기 함수예요. 파일이 크면 그동안 봇 전체가 멈추니 스레드로 넘깁니다.
+        #    (자동 백업이 파일 복사를 스레드로 넘기는 것과 같은 이유)
+        parsed = await asyncio.to_thread(
+            parse_legacy_id_document, text, [r["label"] for r in RANKS])
         if not parsed:
             return await interaction.followup.send("❌ 파일에서 아무 항목도 인식하지 못했어요. 형식을 확인해주세요.", ephemeral=True)
+
+        # 👥 한 번에 받을 인원도 끊습니다. 수천 명이 들어오면 명단 게시가 수백 개 메세지로
+        #    나뉘어 몇 시간씩 걸려요. 잘라낸 건 조용히 버리지 않고 화면에 적습니다.
+        skipped_people = 0
+        if len(parsed) > MAX_IMPORT_PEOPLE:
+            skipped_people = len(parsed) - MAX_IMPORT_PEOPLE
+            parsed = dict(list(parsed.items())[:MAX_IMPORT_PEOPLE])
 
         guild = interaction.guild
         matched = []    # (name, member, id_dict)
@@ -677,6 +974,9 @@ class ChunsikIds(commands.Cog):
             f"⚠️ 서버 멤버와 매칭 안 된 이름: **{len(unmatched)}명**\n\n"
             f"바로 **[확정]** 하시거나, **[🔗 매칭 안 된 이름 연결하기]**로 직접 서버 멤버를 골라 연결할 수 있어요. (5분 내 미클릭 시 자동 취소)"
         )
+        if skipped_people:
+            desc = (f"⚠️ 파일에 사람이 너무 많아 **앞 {MAX_IMPORT_PEOPLE}명만** 읽었어요. "
+                    f"({skipped_people}명 남음 — 나눠서 다시 올려주세요)\n\n") + desc
         if unmatched:
             names_text = ", ".join(n for n, _ in unmatched[:30])
             if len(unmatched) > 30:
@@ -851,7 +1151,7 @@ class ChunsikIds(commands.Cog):
             f"{message.author.mention} 님이 확인 답변을 거쳐 {member_label}님의 아이디 {verb}했어요.",
             guild=guild,
         )
-        await self._refresh_id_roster(guild)
+        await self.queue_roster_refresh(guild)
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
@@ -922,6 +1222,10 @@ class ChunsikIds(commands.Cog):
         raw_segments = [seg.strip() for chunk in content.split("\n") for seg in chunk.split(",") if seg.strip()]
         if not raw_segments:
             return
+
+        # ✂️ 한 번에 처리할 조각 수를 끊습니다. (위 MAX_SEGMENTS_PER_MESSAGE 주석 참고)
+        skipped_segments = max(0, len(raw_segments) - MAX_SEGMENTS_PER_MESSAGE)
+        raw_segments = raw_segments[:MAX_SEGMENTS_PER_MESSAGE]
 
         registered = []
         pending_data = self._load_id_pending()
@@ -1000,35 +1304,90 @@ class ChunsikIds(commands.Cog):
             # 이 메세지 전체가 아이디 시도로 안 보이면, 삭제도 DM도 없이 완전히 그냥 넘어가요.
             return
 
+        roster_now = True
         if registered:
             state.save()
-            await self._refresh_id_roster(message.guild)
+            # 🕐 사람이 몰리면 명단 다시 그리기를 모읍니다(ROSTER_COALESCE_SECONDS).
+            #    미뤄졌으면 아래 결과 안내에 그렇게 적어요 — "등록됐다는데 명단엔 없네"가
+            #    제일 헷갈리는 자리거든요.
+            roster_now = await self.queue_roster_refresh(message.guild)
             # 🐛 [버그 수정] 수동 /아이디 등록은 로그가 남는데, 자동등록 채널은 이 로그 전송이
             # 아예 빠져있었어요. 이제 자동등록도 똑같이 id_log 채널에 기록이 남아요.
+            # ✂️ 한 메세지로 여러 개를 등록할 수 있어서 이 칸이 1024자를 넘길 수 있어요.
+            #    넘으면 로그가 통째로 안 올라가서, 등록은 됐는데 기록만 사라집니다.
             await send_log_embed(
                 self.bot, "id_log",
                 f"{message.author.mention} 님이 아이디 자동등록 채널에서 등록했어요.",
-                fields=[("등록 내역", "\n".join(registered), False)],
+                fields=[("등록 내역", clip("\n".join(registered), EMBED_FIELD_LIMIT), False)],
                 guild=message.guild,
             )
 
-        for request_id, req in new_pending:
+        # 🚧 확인 요청은 **관리자를 멘션해서 로그 채널에 올라가는** 메세지예요. 한 메세지가
+        #    만들 수 있는 개수를 끊고, 대기열 전체 크기도 봅니다.
+        room = max(0, MAX_PENDING_TOTAL - len(pending_data.get("requests", {})))
+        allowed = min(len(new_pending), MAX_PENDING_PER_MESSAGE, room)
+        dropped_pending = len(new_pending) - allowed
+        if room == 0 and new_pending:
+            print(f"⚠️ [아이디] 확인 대기열이 {MAX_PENDING_TOTAL}건으로 꽉 찼어요. "
+                  f"`/아이디 대기열정리`로 비워주세요.")
+        for request_id, req in new_pending[:allowed]:
             await self._notify_admins_for_clarification(message.guild, message.author, request_id, req)
             pending_data["requests"][request_id] = req
-        if new_pending:
+        if allowed:
             self._save_id_pending(pending_data)
 
-        # 📨 처리 결과를 본인에게 DM으로 짧게 알려드려요 (실패해도 조용히 넘어감)
-        try:
-            lines = []
-            if registered:
-                lines.append("✅ **바로 등록됐어요**\n" + "\n".join(registered))
-            if new_pending:
-                lines.append(f"🔍 플랫폼/형식이 불명확한 항목 {len(new_pending)}개는 관리자 확인 후 등록될 예정이에요.")
-            if lines:
-                await message.author.send(f"({message.guild.name}) 아이디 등록 처리 결과예요.\n\n" + "\n\n".join(lines))
-        except Exception:
-            pass
+        # 📨 처리 결과를 본인에게 알려드려요.
+        #
+        # 🐛 [버그] 예전엔 DM만 보내고 실패하면 **조용히 넘어갔어요.** 그런데 바로 아래에서
+        #    원본 메세지를 지웁니다. DM을 막아둔 사람에겐(서버 멤버 DM 차단은 흔한 설정이에요)
+        #    "아이디를 적었더니 글이 사라지고 아무 일도 안 일어났다"가 됩니다. 등록이 됐는지도
+        #    모르고, 건너뛴 항목이 있었다는 안내까지 같이 사라져요.
+        #
+        # ✂️ 그리고 한 메세지로 MAX_SEGMENTS_PER_MESSAGE 줄까지 받으니, 아이디가 길면 결과
+        #    문구가 본문 한도(2,000자)를 넘길 수 있어요. 그러면 DM을 열어둔 사람도 전송이
+        #    거부돼서 아무것도 못 받습니다. 그래서 나눠 보냅니다.
+        lines = []
+        if registered:
+            lines.append("✅ **바로 등록됐어요**\n" + "\n".join(registered))
+            if not roster_now:
+                lines.append("🕐 명단 채널은 **잠시 뒤** 한 번에 갱신돼요. (지금 여러 명이 등록 중이라 모아서 그립니다)")
+        if allowed:
+            lines.append(f"🔍 플랫폼/형식이 불명확한 항목 {allowed}개는 관리자 확인 후 등록될 예정이에요.")
+        # 🙇 잘라낸 게 있으면 반드시 알려요. 조용히 버리면 "올렸는데 왜 없지"가 됩니다.
+        if skipped_segments or dropped_pending:
+            lines.append(
+                f"⚠️ 한 번에 처리할 수 있는 양을 넘어서 **{skipped_segments + dropped_pending}개는 건너뛰었어요.**\n"
+                f"└ 한 메세지에 {MAX_SEGMENTS_PER_MESSAGE}줄까지, 확인이 필요한 항목은 "
+                f"{MAX_PENDING_PER_MESSAGE}개까지만 받아요. 나눠서 다시 올려주세요.\n"
+                f"└ 예전 목록을 통째로 옮기는 거라면 관리자에게 `/아이디 가져오기`를 부탁하세요.")
+
+        if lines:
+            body = f"({message.guild.name}) 아이디 등록 처리 결과예요.\n\n" + "\n\n".join(lines)
+            dm_ok = True
+            try:
+                for part in split_message(body):
+                    await message.author.send(part)
+            except Exception as e:
+                dm_ok = False
+                print(f"⚠️ [아이디] 결과 DM 전송 실패 (유저 {message.author.id}): "
+                      f"{type(e).__name__}: {e}")
+            if not dm_ok:
+                # 📢 DM이 막혀 있으면 채널에 짧게 남깁니다. 개수만 알려요 — 아이디를 그대로
+                #    다시 적으면 방금 지운 원본을 되살리는 꼴이니까요. 자동등록 채널은 깨끗하게
+                #    두는 자리라 잠시 뒤 사라지게 합니다.
+                counts = [f"등록 {len(registered)}건"]
+                if allowed:
+                    counts.append(f"관리자 확인 대기 {allowed}건")
+                if skipped_segments or dropped_pending:
+                    counts.append(f"**건너뜀 {skipped_segments + dropped_pending}건**")
+                try:
+                    schedule_delete(await message.channel.send(
+                        f"📬 {message.author.mention} DM이 막혀 있어서 여기로 알려드려요 — "
+                        f"{' · '.join(counts)}.\n"
+                        f"└ 자세한 내역은 `/아이디 조회`로 확인하실 수 있어요. "
+                        f"(이 안내는 잠시 뒤 사라져요)"), 60)
+                except Exception as e:
+                    print(f"⚠️ [아이디] 결과 채널 안내도 실패: {type(e).__name__}: {e}")
 
         # 🧹 원본 메세지는 처리 후 삭제 (채널을 깔끔하게 유지)
         try:
@@ -1090,12 +1449,16 @@ class ChunsikIds(commands.Cog):
             fields=[("등록 결과", summary, False)],
             guild=interaction.guild,
         )
-        await self._refresh_id_roster(interaction.guild)
+        await self.queue_roster_refresh(interaction.guild)
 
     @id_group.command(name="수정", description="[관리자] 등록된 아이디를 수정해요")
     @app_commands.describe(user="수정할 유저", platform=f"플랫폼명 (비워두면 {bot_name()}{josa(bot_name(), '이가')} 목록 보여줘, 자동완성으로 이 유저가 등록해둔 플랫폼이 힌트로 떠요)", game_id="새 아이디")
     @app_commands.guild_only()
-    async def modify_id(self, interaction: discord.Interaction, user: discord.User, platform: Optional[str] = None, game_id: str = ""):
+    # ℹ️ platform은 찾는 값이라 상한을 안 겁니다. 상한이 생기기 전에 등록된 긴 플랫폼명도
+    #    고칠 수 있어야 하니까요. game_id는 새로 저장되는 값이라 막습니다.
+    async def modify_id(self, interaction: discord.Interaction, user: discord.User,
+                        platform: Optional[str] = None,
+                        game_id: app_commands.Range[str, None, MAX_ID_LENGTH] = ""):
         if await feature_gate(interaction, "id", "아이디"):
             return
         # 3초 초과(애플리케이션이 응답하지 않습니다) 에러 방지 선언
@@ -1115,7 +1478,14 @@ class ChunsikIds(commands.Cog):
                 await interaction.followup.send(f"❌ {user.mention}님은 등록된 아이디가 없어요!", ephemeral=True)
                 return
             lines = [f"• {k}: {state.user_ids[gid][uid][k]}" for k in sorted(keys)]
-            embed = discord.Embed(title="🔧 수정 가능한 항목", description="\n".join(lines) + "\n\n수정할 플랫폼명을 다시 입력해 주세요.", color=discord.Color.orange())
+            # ✂️ 한 사람이 등록할 수 있는 플랫폼 개수에는 상한이 없어요(아이디 길이만 막습니다).
+            #    많이 등록해둔 사람에게 이 화면을 열면 설명이 4096자를 넘겨 **무엇을 고칠 수
+            #    있는지 보여주는 화면 자체가 안 뜹니다.**
+            guide = "\n\n수정할 플랫폼명을 다시 입력해 주세요."
+            embed = discord.Embed(
+                title="🔧 수정 가능한 항목",
+                description=clip("\n".join(lines), EMBED_DESC_LIMIT - len(guide)) + guide,
+                color=discord.Color.orange())
             await interaction.followup.send(embed=embed, ephemeral=True)
             return
 
@@ -1166,12 +1536,12 @@ class ChunsikIds(commands.Cog):
             
             await respond_modify(interaction, user, target, old, game_id, is_misc=True)
             await notify_log(interaction, user, target, old, game_id)
-            await self._refresh_id_roster(interaction.guild)
+            await self.queue_roster_refresh(interaction.guild)
             return
 
         candidates = get_platform_candidates(state.user_ids[gid][uid], platform)
         if not candidates:
-            await interaction.followup.send(f"❌ {user.mention}님의 `{platform}` 아이디가 등록되어 있지 않아요!", ephemeral=True)
+            await interaction.followup.send(f"❌ {user.mention}님의 `{clip(platform, INPUT_ECHO_LIMIT)}` 아이디가 등록되어 있지 않아요!", ephemeral=True)
             return
 
         if len(candidates) == 1:
@@ -1180,7 +1550,7 @@ class ChunsikIds(commands.Cog):
             state.save()
             await respond_modify(interaction, user, target, old, game_id, is_misc=False)
             await notify_log(interaction, user, target, old, game_id)
-            await self._refresh_id_roster(interaction.guild)
+            await self.queue_roster_refresh(interaction.guild)
             return
 
         text = "\n".join(f"{i+1}. {k}: {v}" for i, (k, v) in enumerate(candidates))
@@ -1207,7 +1577,7 @@ class ChunsikIds(commands.Cog):
         state.save()
         await respond_modify(interaction, user, target, old, game_id, is_misc=False)
         await notify_log(interaction, user, target, old, game_id)
-        await self._refresh_id_roster(interaction.guild)
+        await self.queue_roster_refresh(interaction.guild)
 
     # 🐛 [버그 수정] 예전엔 platform이 고정된 10개짜리 드롭다운이라, "닌텐도"·"GTA"·"군번" 같은
     # 자유롭게 등록된 플랫폼은 목록에 없어서 수정 자체가 불가능했어요. 이제는 자유 텍스트 +
@@ -1278,7 +1648,7 @@ class ChunsikIds(commands.Cog):
                     f"{interaction.user.mention} 님이 탈퇴자 {len(leavers)}명을 삭제했어요.",
                     guild=interaction.guild,
                 )
-                await self._refresh_id_roster(interaction.guild)
+                await self.queue_roster_refresh(interaction.guild)
             else:
                 await interaction.followup.send("취소했어요! 😊")
             return
@@ -1325,7 +1695,7 @@ class ChunsikIds(commands.Cog):
                 f"{interaction.user.mention} 님이 <@{uid}>님의 `{target}` 아이디를 삭제했어요.",
                 guild=interaction.guild,
             )
-            await self._refresh_id_roster(interaction.guild)
+            await self.queue_roster_refresh(interaction.guild)
             return
 
         candidates = get_platform_candidates(state.user_ids.get(gid, {}).get(uid, {}), platform)
@@ -1338,7 +1708,7 @@ class ChunsikIds(commands.Cog):
             del state.user_ids[gid][uid][target]
             state.save()
             await interaction.followup.send(f"✅ <@{uid}>님의 `{target}` 아이디가 삭제되었어요.")
-            await self._refresh_id_roster(interaction.guild)
+            await self.queue_roster_refresh(interaction.guild)
             return
 
         text = "\n".join(f"{i+1}. {k}: {v}" for i, (k, v) in enumerate(candidates))
@@ -1364,7 +1734,7 @@ class ChunsikIds(commands.Cog):
         del state.user_ids[gid][uid][target]
         state.save()
         await interaction.followup.send(f"✅ <@{uid}>님의 `{target}` 아이디가 삭제되었어요.")
-        await self._refresh_id_roster(interaction.guild)
+        await self.queue_roster_refresh(interaction.guild)
 
     # 🐛 [버그 수정] user 파라미터가 일반 텍스트라 디스코드 클라이언트가 채널에 캐싱된
     # 사람만 멘션 힌트로 보여주고 있었어요. 자동완성을 직접 붙여서 서버 전체 멤버를

@@ -12,9 +12,25 @@ from discord.ext import commands, tasks
 from chunsik_config import KST
 from chunsik_alerts import report_loop_error
 from chunsik_state import record_ledger
-from chunsik_utils import chunk_lines
-from chunsik_settings import has_admin_or_role, load_settings, save_settings, send_log_embed
+from chunsik_utils import MAX_AMOUNT, chunk_lines, mention_lines
+from chunsik_settings import has_admin_or_role, is_feature_enabled, load_settings, save_settings, send_log_embed
 from chunsik_names import bot_name, currency, event_name, josa
+
+# ⏳ 이벤트 창이 열려 있을 수 있는 최대 시간. 12시간이에요.
+#
+# 🐛 [버그 수정] 예전엔 `지속시간초 <= 0`만 막고 위쪽은 아무 상한이 없었어요.
+#    큰 숫자를 넣으면 `now + dt.timedelta(seconds=값)`이 **OverflowError**를 냅니다.
+#    그 계산이 하필 **하루 두 번 도는 루프 안**이라, 그때부터 이벤트가 열릴 때마다
+#    루프가 죽어요 — 즉 **그 뒤로 이벤트가 영영 안 열립니다.**
+#    (스누즈·주가 변동값에서 겪은 것과 같은 부류 — 큰 숫자가 안내 대신 예외로 샙니다)
+#
+# 12시간인 이유: 이벤트는 00:21과 12:21에 열려요. 그보다 길게 잡으면 창이 다음 회차와
+# 겹쳐서, 앞 회차를 닫는 예약이 뒤 회차의 참가자까지 같이 마감해 버립니다.
+#
+# 📌 클래스 속성이 아니라 **모듈 수준**에 두는 이유: 슬래시 명령의 `Range`는 데코레이터라
+#    클래스 본문이 만들어지는 시점에 읽히는데, 그때는 클래스 속성을 못 봅니다.
+MAX_WINDOW_SECONDS = 12 * 60 * 60
+
 
 class ChunsikGames(commands.Cog):
     """하이로우 등 미니게임 시스템"""
@@ -56,6 +72,13 @@ class ChunsikGames(commands.Cog):
         evashi = settings.get("evashi", {})
         for k, v in defaults.items():
             evashi.setdefault(k, v)
+        # 🛡️ 상한이 생기기 전에 저장된 값(또는 손으로 고친 값) 대비. 읽는 자리에서 조입니다.
+        #    여기서 막지 않으면 루프가 매 회차 죽어요.
+        try:
+            seconds = int(evashi["window_seconds"])
+        except (TypeError, ValueError):
+            seconds = defaults["window_seconds"]
+        evashi["window_seconds"] = max(1, min(seconds, MAX_WINDOW_SECONDS))
         return evashi
 
     def _save_evashi_settings(self, evashi: dict):
@@ -111,6 +134,11 @@ class ChunsikGames(commands.Cog):
         """🐛 [버그 수정] 예전엔 60초마다 폴링해서 시(hour)/분(minute)이 맞는지 확인하는 방식이라,
         타이밍에 따라 최대 59초까지 늦게 열릴 수 있었어요. 이제는 discord.py의 time= 스케줄링을 써서
         00:21, 12:21(KST) 정각에 정확하게 실행돼요."""
+        # 🚧 관리자가 `/기능제어`로 정지해뒀으면 창을 아예 열지 않아요. 여기서 막지 않으면
+        #    공지가 나가고 지갑에 돈이 들어갑니다 — 정지의 뜻이 그게 아니에요.
+        if not is_feature_enabled("evashi"):
+            return
+
         # 🛡️ 설정 파일이 손상되면 load_settings()가 예외를 던져요. 그게 밖으로 새면
         # 루프가 영구히 멈춰서 선착순 이벤트가 다시는 안 열립니다. 이번 회차만 포기해요.
         try:
@@ -165,15 +193,25 @@ class ChunsikGames(commands.Cog):
 
         # 📢 [버그 수정] 예전엔 사람이 몰릴 때마다 개인별로 로그가 따로 남아서 도배됐었어요.
         # 이제는 창이 닫히는 시점에 딱 한 번, 참가자 전원(선착순+나머지)을 모아서 공지해요.
+        # 🚨 [버그 수정] 멘션을 **한 줄에 몰아넣으면 안 됩니다.** 아래 _send_evashi_announce가
+        #    chunk_lines로 나눠 보내는데, 그건 줄과 줄 **사이**에서만 나눠요. 한 줄이 혼자
+        #    2000자를 넘으면 나눠도 그대로라 발송이 통째로 실패합니다.
+        #    (실측: 참가 100명이면 제일 긴 조각이 2,211자. 90명쯤부터 걸린다고 적어두고
+        #     고쳤다고 생각했지만, 정작 그 인원에서 여전히 안 나가고 있었어요)
+        #    mention_lines가 40명 안팎씩 줄을 끊어줍니다.
         lines = [f"🎉 **{event_name()} 이벤트 결과** (총 {len(self.evashi_participants)}명 참여)"]
         if self.evashi_first_winners:
-            mentions = " ".join(f"<@{uid}>" for uid in self.evashi_first_winners)
-            lines.append(f"🥇 선착순 {len(self.evashi_first_winners)}명: {mentions}\n└ 각 {evashi['first_amount']:,} {currency()} 지급")
+            lines.append("")
+            lines.append(f"🥇 선착순 {len(self.evashi_first_winners)}명 · 각 {evashi['first_amount']:,} {currency()} 지급")
+            lines.extend(mention_lines(self.evashi_first_winners))
         if rest_ids:
-            mentions = " ".join(f"<@{uid}>" for uid in rest_ids)
-            lines.append(f"🎊 참가 {len(rest_ids)}명: {mentions}\n└ 각 {evashi['rest_amount']:,} {currency()} 지급")
+            lines.append("")
+            lines.append(f"🎊 참가 {len(rest_ids)}명 · 각 {evashi['rest_amount']:,} {currency()} 지급")
+            lines.extend(mention_lines(rest_ids))
 
-        await self._send_evashi_announce(self.evashi_guild, "\n\n".join(lines))
+        # 줄 사이를 비우는 건 위에서 넣은 빈 줄이 맡아요. 여기서 "\n\n"로 이으면
+        # 멘션 줄 사이사이에도 빈 줄이 끼어서 발표가 세로로 길어집니다.
+        await self._send_evashi_announce(self.evashi_guild, "\n".join(lines))
 
         await send_log_embed(
             self.bot, "economy_log", f"{event_name()} 이벤트 전체 결과 기록이에요.",
@@ -192,6 +230,10 @@ class ChunsikGames(commands.Cog):
         if self.evashi_window_open_until is None:
             return
         if message.content.strip() != event_name():
+            return
+        # 🚧 창이 열려 있는 **도중에** 정지시킬 수도 있어요. 그때부터는 더 주지 않습니다.
+        #    (이미 받은 사람 것을 되돌리지는 않아요 — 그건 `/회수`가 할 일입니다)
+        if not is_feature_enabled("evashi"):
             return
 
         now = dt.datetime.now(KST)
@@ -239,9 +281,9 @@ class ChunsikGames(commands.Cog):
         self,
         interaction: discord.Interaction,
         선착순인원: Optional[int] = None,
-        선착순금액: Optional[int] = None,
-        나머지금액: Optional[int] = None,
-        지속시간초: Optional[int] = None,
+        선착순금액: Optional[app_commands.Range[int, 0, MAX_AMOUNT]] = None,
+        나머지금액: Optional[app_commands.Range[int, 0, MAX_AMOUNT]] = None,
+        지속시간초: Optional[app_commands.Range[int, 1, MAX_WINDOW_SECONDS]] = None,
     ):
         if not self._is_evashi_admin(interaction):
             return await interaction.response.send_message(f"⛔ 권한이 없어요. {event_name()} 관리자만 설정할 수 있어요.", ephemeral=True)
@@ -272,7 +314,10 @@ class ChunsikGames(commands.Cog):
             evashi["rest_amount"] = 나머지금액
             logs.append(f"나머지 금액: {나머지금액:,} {currency()}")
         if 지속시간초 is not None:
-            if 지속시간초 <= 0: return await interaction.response.send_message("❌ 지속시간초는 1 이상이어야 해요.", ephemeral=True)
+            # Range가 입력창에서 이미 막지만, 옛 클라이언트·마이그레이션 대비로 한 번 더 봅니다.
+            if not (1 <= 지속시간초 <= MAX_WINDOW_SECONDS):
+                return await interaction.response.send_message(
+                    f"❌ 지속시간초는 1 ~ {MAX_WINDOW_SECONDS:,}초(12시간) 사이여야 해요.", ephemeral=True)
             evashi["window_seconds"] = 지속시간초
             logs.append(f"지속시간: {지속시간초}초")
 

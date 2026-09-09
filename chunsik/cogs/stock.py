@@ -3,7 +3,9 @@
 import asyncio
 import os
 import io
+import math
 import datetime as dt
+import traceback
 from typing import Optional
 import holidays
 import discord
@@ -19,8 +21,12 @@ from chunsik_config import CHART_BG, CHART_DOWN, CHART_GRID, CHART_INK, CHART_IN
 from chunsik_storage import atomic_json_save, atomic_json_save_or_raise, safe_json_load
 from chunsik_settings import LOG_STYLES, build_log_embed, feature_gate, has_admin_or_role, load_settings
 from chunsik_state import record_ledger
-from chunsik_utils import (ChunsikView, chunk_lines, holding_avg_price, holding_shares,
-                        portfolio_value, report_broken_transaction)
+from chunsik_utils import (MAX_AMOUNT, EMBED_DESC_LIMIT, EMBED_FIELD_LIMIT, EMBED_TITLE_LIMIT,
+                          INPUT_ECHO_LIMIT,
+                          ChunsikView, chunk_lines,
+                          clip, describe_user_error, fit_embed, holding_avg_price,
+                          holding_shares, name_choices,
+                          portfolio_value, report_broken_transaction)
 from chunsik_names import currency, josa, server_name
 
 # [UI 뷰 클래스] 종가 게시 승인용 버튼 뷰
@@ -54,7 +60,7 @@ class ClosingPriceView(ChunsikView):
                 # 🚨 손상 파일을 조용히 넘기지 않고, 원본을 백업한 뒤 중단시켜요.
                 data = safe_json_load(self.stock_cog.STOCKS_FILE, {})
             except Exception as e:
-                return await interaction.followup.send(f"❌ 데이터 로드 오류: {e}")
+                return await interaction.followup.send(describe_user_error(e))
 
             stocks_data = data.get("stocks", {})
             user_shares = data.get("user_shares", {})
@@ -235,6 +241,17 @@ class ClosingPriceView(ChunsikView):
                 print(f"⚠️ 종가게시판 전송 실패: {e}")
 
 
+# ✂️ 관리자가 손으로 적는 글자 수 상한.
+# 종목 이름과 찌라시(사유)는 손대지 않은 채로 `/주식 목록`·실시간 전광판의 임베드 필드와
+# 자동완성 항목에 들어가요. 디스코드 한도(필드 이름 256·값 1024, 자동완성 항목 100)를
+# 넘기면 **그 줄만 잘리는 게 아니라 목록·전광판 메세지와 자동완성 응답이 통째로 400으로
+# 실패합니다.** 아래 MAX_STOCKS와 똑같은 사고예요 — 찌라시에 긴 글을 한 번 붙여넣으면
+# 그때부터 아무도 주식 목록을 못 봅니다.
+# 화면 쪽에서도 clip으로 한 번 더 자르지만(옛 데이터 대비), 애초에 못 넣게 여기서 막아요.
+MAX_STOCK_NAME = 40
+MAX_STOCK_REASON = 200
+
+
 class ChunsikStock(commands.Cog):
     """개선된 주식 시스템 (경제 코그 연동, 문자열 기반 종목, 실시간 포폴 생성)"""
 
@@ -251,6 +268,16 @@ class ChunsikStock(commands.Cog):
 
     def __init__(self, bot):
         self.bot = bot
+        # 🎨 그래프는 한 번에 하나씩만 그립니다.
+        #
+        # 🐛 [버그] 렌더링은 `asyncio.to_thread`로 넘겨서 이벤트 루프를 안 막는데(그건 맞아요),
+        #    그 스레드 풀은 **워커가 여럿**입니다. 그런데 matplotlib의 `pyplot`은
+        #    **전역 상태를 공유하고 스레드 안전하지 않아요** — `plt.rcParams`(폰트),
+        #    `plt.subplots()`, `plt.close()`가 전부 같은 전역 그림 관리자를 건드립니다.
+        #    두 사람이 거의 동시에 `/주식 그래프`를 부르면 서로의 그림에 끼어들어서
+        #    엉뚱한 그래프가 나가거나 그리다 터질 수 있어요.
+        #    그림 한 장은 금방 그려지니, 줄을 세우는 게 제일 싸고 확실한 해결입니다.
+        self._chart_lock = asyncio.Lock()
         self.market_open = True
         self.stocks = {}
         self.STOCKS_FILE = STOCKS_FILE
@@ -407,7 +434,7 @@ class ChunsikStock(commands.Cog):
 
         if not os.path.exists(self.STOCKS_FILE):
             if atomic_json_save(self.STOCKS_FILE, default_structure, indent=4):
-                print(f"📁 [자동 생성] 표준 주식 데이터베이스 파일 생성 완료")
+                print("📁 [자동 생성] 표준 주식 데이터베이스 파일 생성 완료")
             return default_structure
 
         # ⚠️ 파일이 있는데 손상되어 있으면 safe_json_load가 예외를 던져서 여기서 멈춥니다.
@@ -448,7 +475,15 @@ class ChunsikStock(commands.Cog):
                     embed.color = style["color"]
                     if not embed.title:
                         embed.title = f"{style['emoji']} {style['title']}"
-                    await channel.send(embed=embed)
+                    # ✂️ 이 갈래만 build_log_embed을 안 지나가서 **한도 처리를 비켜 갔어요.**
+                    #    칸에 종목 이름이 들어가는데 상한이 생기기 전 긴 이름이 남아 있으면
+                    #    1024자를 넘겨 로그가 통째로 거부됩니다(그리고 조용히 사라져요).
+                    #    부르는 쪽마다 자르지 않고 여기서 한 번에 맞춥니다.
+                    for i, field in enumerate(embed.fields):
+                        embed.set_field_at(i, name=clip(str(field.name), EMBED_TITLE_LIMIT),
+                                           value=clip(str(field.value), EMBED_FIELD_LIMIT) or "-",
+                                           inline=field.inline)
+                    await channel.send(embed=fit_embed(embed))
                 elif text:
                     await channel.send(embed=build_log_embed("stock_log", text))
         except Exception as e:
@@ -458,11 +493,9 @@ class ChunsikStock(commands.Cog):
         try:
             stock_data = self._load_stocks()
             stocks_dict = stock_data.get("stocks", {})
-            return [
-                app_commands.Choice(name=name, value=name)
-                for name in stocks_dict.keys()
-                if current.lower() in name.lower()
-            ][:25]  
+            # ✂️ 100자를 넘는 종목이 하나만 섞여도 자동완성 응답이 통째로 거부돼서
+            #    목록이 아예 안 뜹니다. name_choices가 그런 항목만 빼줘요.
+            return name_choices(stocks_dict, current)
         except Exception as e:
             print(f"자동완성 오류 발생: {e}")
             return []
@@ -472,7 +505,8 @@ class ChunsikStock(commands.Cog):
     @stock_group.command(name="매수", description="현재가로 주식을 매수합니다.")
     @app_commands.describe(stock="매수할 주식 선택", amount="매수할 주 수")
     @app_commands.autocomplete(stock=stock_autocomplete)
-    async def buy_stock(self, interaction: discord.Interaction, stock: str, amount: int):
+    async def buy_stock(self, interaction: discord.Interaction, stock: str,
+                        amount: app_commands.Range[int, 1, MAX_AMOUNT]):
         if await feature_gate(interaction, "stock", "주식"):
             return
         # ⏱️ 3초 응답 제한 방지: 락 대기/파일 IO 전에 선제적으로 defer
@@ -516,7 +550,8 @@ class ChunsikStock(commands.Cog):
                         break
 
                 if not found_stock or "price" not in stocks_dict[found_stock]:
-                    error_message = f"❌ 상장되지 않았거나 주가 정보가 없는 종목이에요: {stock_name}"
+                    error_message = ("❌ 상장되지 않았거나 주가 정보가 없는 종목이에요: "
+                                     f"{clip(stock_name, INPUT_ECHO_LIMIT)}")
                 else:
                     stock_name = found_stock
                     current_price = int(stocks_dict[stock_name]["price"])
@@ -573,8 +608,14 @@ class ChunsikStock(commands.Cog):
                                           "주식 매수", f"{stock_name} {amount}주 @{current_price:,}")
                             result = (stock_name, current_price, total_cost, economy_data[user_id])
         except Exception as e:
-            print(f"매수 중 내부 예외 발생: {e}")
-            err_text = f"❗ 매수 처리 도중 내부 오류가 터졌어요: {type(e).__name__} - {e}"
+            # 🚨 [버그 수정] 예전엔 예외 **원문**을 그대로 실어 보냈어요. `/주식 매수`는
+            #    아무나 쓰는 명령이라, 저장이 실패하면 납품 서버의 유저 화면에
+            #    `'E:\\폴더\\...\\chunsik_stocks.json'` 같은 개발 PC 폴더 구조가 그대로 뜹니다.
+            #    `/주식 포폴`에서 같은 걸 고치면서 여기 형제 명령 둘은 빠졌어요.
+            #    원문은 콘솔로만 보내고, 화면에는 공용 오류 문구를 씁니다.
+            print(f"❗ 매수 중 내부 예외 발생: {type(e).__name__}: {e}")
+            traceback.print_exception(type(e), e, e.__traceback__)
+            err_text = describe_user_error(e)
             if interaction.response.is_done():
                 await interaction.followup.send(err_text, ephemeral=True)
             else:
@@ -600,7 +641,8 @@ class ChunsikStock(commands.Cog):
     @stock_group.command(name="매도", description="현재가로 주식을 매도합니다. (거래채널 전용)")
     @app_commands.describe(stock="매도할 주식 선택", amount="매도할 주 수")
     @app_commands.autocomplete(stock=stock_autocomplete)
-    async def sell_stock(self, interaction: discord.Interaction, stock: str, amount: int):
+    async def sell_stock(self, interaction: discord.Interaction, stock: str,
+                         amount: app_commands.Range[int, 1, MAX_AMOUNT]):
         if await feature_gate(interaction, "stock", "주식"):
             return
         # ⏱️ 3초 응답 제한 방지: 락 대기/파일 IO 전에 선제적으로 defer
@@ -641,7 +683,7 @@ class ChunsikStock(commands.Cog):
                         break
 
                 if not found_stock:
-                    error_message = f"❌ 상장되지 않은 종목이에요: {stock_name}"
+                    error_message = f"❌ 상장되지 않은 종목이에요: {clip(stock_name, INPUT_ECHO_LIMIT)}"
                 else:
                     stock_name = found_stock
                     user_id = str(interaction.user.id)
@@ -696,8 +738,14 @@ class ChunsikStock(commands.Cog):
                                           "주식 매도", f"{stock_name} {amount}주 @{current_price:,}")
                             result = (stock_name, current_price, total_earning, economy_data[user_id])
         except Exception as e:
-            print(f"매도 중 내부 예외 발생: {e}")
-            err_text = f"❗ 매도 처리 도중 내부 오류가 터졌어요: {type(e).__name__} - {e}"
+            # 🚨 [버그 수정] 예전엔 예외 **원문**을 그대로 실어 보냈어요. `/주식 매도`는
+            #    아무나 쓰는 명령이라, 저장이 실패하면 납품 서버의 유저 화면에
+            #    `'E:\\폴더\\...\\chunsik_stocks.json'` 같은 개발 PC 폴더 구조가 그대로 뜹니다.
+            #    `/주식 포폴`에서 같은 걸 고치면서 여기 형제 명령 둘은 빠졌어요.
+            #    원문은 콘솔로만 보내고, 화면에는 공용 오류 문구를 씁니다.
+            print(f"❗ 매도 중 내부 예외 발생: {type(e).__name__}: {e}")
+            traceback.print_exception(type(e), e, e.__traceback__)
+            err_text = describe_user_error(e)
             if interaction.response.is_done():
                 await interaction.followup.send(err_text, ephemeral=True)
             else:
@@ -795,7 +843,10 @@ class ChunsikStock(commands.Cog):
                     )
                 
                 if table_lines:
-                    embed.description = "\n\n".join(table_lines)
+                    # ✂️ 종목 이름 상한(MAX_STOCK_NAME)이 생기기 전에 등록된 긴 이름이 남아
+                    #    있으면 설명이 4096자를 넘겨 **포트폴리오가 통째로 안 뜹니다.**
+                    #    아무나 쓰는 명령이라 그 사람은 자기 주식을 영영 못 봐요.
+                    embed.description = clip("\n\n".join(table_lines), EMBED_DESC_LIMIT)
                 else:
                     embed.description = "현재 보유 중인 주식이 없어요."
                 
@@ -812,11 +863,18 @@ class ChunsikStock(commands.Cog):
                         inline=False
                     )
 
-            await interaction.followup.send(embed=embed)
-            
+            # 🧮 설명을 맞춰도 요약 칸까지 쌓이면 전체 6000자를 넘을 수 있어요.
+            await interaction.followup.send(embed=fit_embed(embed))
+
         except Exception as e:
             print(f"❌ [포폴 명령어 오류] {e}")
-            await interaction.followup.send(f"❗ 포트폴리오를 불러오는 중 오류가 발생했어요: `{e}`\n관리자(콘솔)를 확인해주세요.", ephemeral=True)
+            # 🔒 예외 원문을 그대로 보여주면 파일 경로가 딸려 나갑니다. 파일이 깨졌을 때
+            #    나오는 메세지가 "E:\...\chunsik\data\chunsik_stocks.json 이(가) 손상되어…"
+            #    같은 식이라, 남의 서버 유저에게 우리 폴더 구조가 그대로 보여요.
+            #    describe_user_error가 저장 실패·파일 손상만 골라 안전한 문구로 바꿔줍니다.
+            #    (슬래시 명령·버튼의 공용 오류 처리가 이미 쓰는 함수예요)
+            await interaction.followup.send(
+                f"{describe_user_error(e)}\n관리자(콘솔)를 확인해주세요.", ephemeral=True)
 
         # 🗑️ [제거] 예전엔 여기서 자산 추세 그래프를 이미지로 만들어 함께 보냈어요.
         # 포폴은 텍스트 요약만으로 충분하다는 판단으로 뺐습니다.
@@ -827,7 +885,8 @@ class ChunsikStock(commands.Cog):
 
     @stock_group.command(name="변동", description="[관리자] 특정 종목의 주가 변동 및 찌라시를 예약합니다.")
     @app_commands.describe(주식명="변동할 주식 이름", 변동값="예: 5000, +500, +10%, -5%, 또는 유지 입력", 찌라시="사유 (유지 입력 시 생략 가능)")
-    async def 주식변동(self, interaction: discord.Interaction, 주식명: str, 변동값: str, 찌라시: Optional[str] = None):
+    async def 주식변동(self, interaction: discord.Interaction, 주식명: str, 변동값: str,
+                    찌라시: Optional[app_commands.Range[str, 1, MAX_STOCK_REASON]] = None):
         if not self._has_admin_permissive(interaction):
             return await interaction.response.send_message("❌ 관리자 또는 상점주인 권한이 필요합니다.", ephemeral=True)
 
@@ -843,7 +902,7 @@ class ChunsikStock(commands.Cog):
                 break
 
         if not target_stock:
-            return await interaction.followup.send(f"❌ 존재하지 않는 종목이에요: {주식명}", ephemeral=True)
+            return await interaction.followup.send(f"❌ 존재하지 않는 종목이에요: {clip(주식명, INPUT_ECHO_LIMIT)}", ephemeral=True)
 
         stock_info = stocks_dict[target_stock]
         current_price = stock_info.get("price", 0)
@@ -865,6 +924,13 @@ class ChunsikStock(commands.Cog):
                         percent_val = -float(raw_percent[1:])
                     else:
                         percent_val = float(raw_percent)
+                    # 🔢 float은 ValueError 없이 무한대를 만들어냅니다. "inf%"는 물론
+                    #    "1e308%"나 자릿수만 많은 오타("999…9%")도 곱하는 순간 inf가 되고,
+                    #    int(inf)는 ValueError가 아니라 **OverflowError**로 터져요.
+                    #    아래 except가 ValueError만 잡고 있어서 안내 대신 "예상치 못한 오류"가
+                    #    떴습니다. 숫자가 아닌 값은 여기서 형식 오류로 돌려보내요.
+                    if not math.isfinite(percent_val):
+                        raise ValueError("퍼센트가 너무 크거나 숫자가 아니에요")
                     pending_price = int(current_price * (1 + percent_val / 100))
                 else:
                     if input_val.startswith("+"):
@@ -879,7 +945,8 @@ class ChunsikStock(commands.Cog):
                 if not pending_reason:
                     pending_reason = "시장의 흐름 반영"
 
-            except ValueError:
+            except (ValueError, OverflowError):
+                # OverflowError까지 잡는 이유는 위 isfinite 주석 참고. 두 겹으로 막아둡니다.
                 return await interaction.followup.send("❌ 올바른 형식의 금액, 퍼센트(%), 또는 '유지'를 입력해 주세요.", ephemeral=True)
 
         stock_info["pending_price"] = pending_price
@@ -908,18 +975,18 @@ class ChunsikStock(commands.Cog):
         try:
             data = safe_json_load(self.STOCKS_FILE, {})
             stocks_data = data.get("stocks", {})
-            return [
-                app_commands.Choice(name=stock, value=stock)
-                for stock in stocks_data.keys()
-                if current.lower() in stock.lower()
-            ][:25]
+            # ✂️ 100자를 넘는 종목이 하나만 섞여도 자동완성 응답이 통째로 거부돼서
+            #    목록이 아예 안 뜹니다. name_choices가 그런 항목만 빼줘요.
+            return name_choices(stocks_data, current)
         except Exception as e:
             print(f"⚠️ 주식변동 자동완성 조회 실패: {e}")
             return []
 
     @stock_group.command(name="생성", description="[관리자] 신규 주식 종목을 상장합니다.")
     @app_commands.describe(종목="신규 종목으로 등록할 주식 이름 입력", price="상장 기준 가격")
-    async def create_stock(self, interaction: discord.Interaction, 종목: str, price: int):
+    async def create_stock(self, interaction: discord.Interaction,
+                           종목: app_commands.Range[str, 1, MAX_STOCK_NAME],
+                           price: app_commands.Range[int, 0, MAX_AMOUNT]):
         stock_name = 종목.strip()
         if not self._has_admin_permissive(interaction):
             return await interaction.response.send_message("❌ 관리자 또는 상점주인 권한이 필요합니다.", ephemeral=True)
@@ -976,10 +1043,14 @@ class ChunsikStock(commands.Cog):
         del stock_data["stocks"][stock_name]
         self._save_stocks(stock_data)
         
-        await interaction.response.send_message(f"🔥 **{stock_name}** 종목이 전면 상장 폐지(삭제)됐어요.", ephemeral=True)
-        
+        # ✂️ `종목`은 찾는 값이라 상한을 안 겁니다(상한이 생기기 전에 등록된 긴 이름을
+        #    지울 수 있어야 하니까요). 그런데 삭제는 이미 저장된 뒤라, 이 안내가 본문
+        #    한도를 넘으면 "예상치 못한 오류"만 뜨고 다시 해보면 "존재하지 않는 종목"이 떠요.
+        shown = clip(stock_name, INPUT_ECHO_LIMIT)
+        await interaction.response.send_message(f"🔥 **{shown}** 종목이 전면 상장 폐지(삭제)됐어요.", ephemeral=True)
+
         # 상장 폐지 로그 연동
-        await self._log_to_channel(text=f"💥 **{interaction.user.mention}** 관리자가 **[{stock_name}]** 종목을 전면 상장 폐지(삭제) 처리함.")
+        await self._log_to_channel(text=f"💥 **{interaction.user.mention}** 관리자가 **[{shown}]** 종목을 전면 상장 폐지(삭제) 처리함.")
             
         await self.update_stock_board_smart()
 
@@ -1005,12 +1076,14 @@ class ChunsikStock(commands.Cog):
             color=0xffcc00
         )
         if held_stocks:
+            # ✂️ 종목 이름 상한(MAX_STOCK_NAME)이 생기기 전에 등록된 긴 이름이 남아 있을 수 있어요.
+            #    그러면 이 칸이 1024자를 넘겨 **종가 승인 화면 자체가 안 뜹니다.**
             embed.add_field(
                 name="🔹 변동 없이 '유지'로 자동 처리될 종목",
-                value=", ".join(f"`{s}`" for s in held_stocks),
+                value=clip(", ".join(f"`{s}`" for s in held_stocks), EMBED_FIELD_LIMIT),
                 inline=False,
             )
-        await interaction.response.send_message(embed=embed, view=view)
+        await interaction.response.send_message(embed=fit_embed(embed), view=view)
         
         # 종가게시 요청 트리거 로그 기록
         await self._log_to_channel(text=f"🔔 {interaction.user.mention} 관리자가 **종가 게시 정산 승인 절차**를 시작했어요. (승인 패널 대기 중)")
@@ -1032,12 +1105,21 @@ class ChunsikStock(commands.Cog):
             reason = info.get("reason", "정보 없음")
             last_changed = info.get("last_changed_date")
             date_text = f" (`{last_changed}` 변동)" if last_changed else ""
-            embed.add_field(name=f"🔹 {name}", value=f"현재가: `{price:,}` {currency()}\n💡 사유: {reason}{date_text}", inline=False)
+            # ✂️ 상한이 생기기 전에 저장된 종목·찌라시가 있으면 목록이 통째로 안 보이게 돼요.
+            embed.add_field(name=clip(f"🔹 {name}", EMBED_TITLE_LIMIT),
+                            value=clip(f"현재가: `{price:,}` {currency()}\n💡 사유: {reason}{date_text}",
+                                       EMBED_FIELD_LIMIT),
+                            inline=False)
 
         hidden = len(stocks_dict) - self.MAX_STOCKS
         if hidden > 0:
             embed.set_footer(text=f"⚠️ 종목이 {len(stocks_dict)}개라 {self.MAX_STOCKS}개만 보여요 (숨은 종목 {hidden}개)")
 
+        # 🧮 [순서 주의] 푸터까지 다 붙인 **맨 마지막**에 불러야 해요. 임베드 총량에는
+        #    푸터도 들어가서, 줄인 뒤에 푸터를 붙이면 그만큼 다시 넘칩니다.
+        #    필드를 하나씩 잘라도 25개가 쌓이면 합이 6000자를 넘어 메세지가 통째로 거부돼요.
+        #    (찌라시 상한을 지킨 입력만으로도 7,214자였어요)
+        fit_embed(embed)
         await interaction.response.send_message(embed=embed)
 
     @stock_group.command(name="그래프", description="특정 종목의 최근 가격 변동 추이를 그래프로 보여줍니다.")
@@ -1047,7 +1129,7 @@ class ChunsikStock(commands.Cog):
         stocks_dict = stock_data.get("stocks", {})
         info = stocks_dict.get(주식명)
         if not info:
-            return await interaction.response.send_message(f"❌ `{주식명}` 종목을 찾을 수 없어요.", ephemeral=True)
+            return await interaction.response.send_message(f"❌ `{clip(주식명, INPUT_ECHO_LIMIT)}` 종목을 찾을 수 없어요.", ephemeral=True)
 
         history = info.get("price_history", [])
         if len(history) < 2:
@@ -1058,16 +1140,20 @@ class ChunsikStock(commands.Cog):
         prices = [h["price"] for h in history]
         trend_color = CHART_UP if prices[-1] >= prices[0] else CHART_DOWN
         # 🖼️ 렌더링은 스레드로 분리 (이벤트 루프 블로킹 방지)
-        buf = await asyncio.to_thread(
-            self._make_line_chart, dates, prices, f"📈 {주식명} 가격 추이", f"가격 ({currency()})", trend_color
-        )
+        async with self._chart_lock:
+            buf = await asyncio.to_thread(
+                self._make_line_chart, dates, prices, f"📈 {주식명} 가격 추이",
+                f"가격 ({currency()})", trend_color
+            )
         await interaction.followup.send(file=discord.File(buf, filename="stock_graph.png"))
 
     @stock_graph.autocomplete('주식명')
     async def stock_graph_autocomplete(self, interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
         try:
             stocks_dict = self._load_stocks().get("stocks", {})
-            return [app_commands.Choice(name=s, value=s) for s in stocks_dict if current.lower() in s.lower()][:25]
+            # ✂️ 100자를 넘는 종목이 하나만 섞여도 자동완성 응답이 통째로 거부돼서
+            #    목록이 아예 안 뜹니다. name_choices가 그런 항목만 빼줘요.
+            return name_choices(stocks_dict, current)
         except Exception:
             return []
 
@@ -1110,14 +1196,17 @@ class ChunsikStock(commands.Cog):
                         status = "➖ `변동 없음`"
 
                     embed.add_field(
-                        name=f"**🔹 {name}**",
-                        value=f"> 현재가: **`{price:,}` {currency()}**\n"
-                              f"> 직전 대비: {status}\n"
-                              f"> 💡 사유: {reason}{date_text}",
+                        name=clip(f"**🔹 {name}**", EMBED_TITLE_LIMIT),
+                        value=clip(f"> 현재가: **`{price:,}` {currency()}**\n"
+                                   f"> 직전 대비: {status}\n"
+                                   f"> 💡 사유: {reason}{date_text}", EMBED_FIELD_LIMIT),
                         inline=False
                     )
                     
+            # 🧮 `/주식 목록`과 같은 이유예요. 종목이 차면 합이 6000자를 넘어 전광판이 통째로 안 그려져요.
             embed.set_footer(text="⚠️ 주식 투자는 신중하게 결정하세요.")
+            # 🧮 `/주식 목록`과 같은 이유예요. 푸터까지 붙인 뒤 마지막에 줄입니다.
+            fit_embed(embed)
 
             # 🔔 [변경] 예전엔 전광판이 채널의 마지막 메시지일 때 조용히 edit(수정)만 해서
             # 사람들이 갱신된 걸 못 알아채는 경우가 많았어요. 이제는 항상 기존 메시지를
@@ -1148,7 +1237,8 @@ class ChunsikStock(commands.Cog):
 
     @stock_group.command(name="지급", description="[관리자] 특정 멤버에게 주식을 지급합니다.")
     @app_commands.describe(멤버="주식을 지급할 대상 유저", 주식명="지급할 주식 종목 이름", 갯수="지급할 주식 수량 (기본값: 1)")
-    async def stock_give(self, interaction: discord.Interaction, 멤버: discord.Member, 주식명: str, 갯수: Optional[int] = 1):
+    async def stock_give(self, interaction: discord.Interaction, 멤버: discord.Member, 주식명: str,
+                         갯수: Optional[app_commands.Range[int, 1, MAX_AMOUNT]] = 1):
         # 🐛 [버그 수정] 여기만 shop_admin(상점 관리자)을 보고 있었어요. 짝인 /주식 회수는 물론
         # /주식 변동·생성·삭제까지 전부 stock_admin(주식 관리자) 기준이라, 주식 관리자는 회수만
         # 되고 지급은 안 되는 반쪽 권한이었습니다. 같은 그룹의 대칭 명령어끼리 기준을 맞춰요.
@@ -1171,7 +1261,7 @@ class ChunsikStock(commands.Cog):
                     break
                     
             if not target_stock:
-                return await interaction.followup.send(f"❌ 상장되지 않았거나 존재하지 않는 주식 종목이에요: `{주식명}`")
+                return await interaction.followup.send(f"❌ 상장되지 않았거나 존재하지 않는 주식 종목이에요: `{clip(주식명, INPUT_ECHO_LIMIT)}`")
                 
             stock_name = target_stock
             current_price = stocks_dict[stock_name].get("price", 0)
@@ -1216,7 +1306,8 @@ class ChunsikStock(commands.Cog):
 
     @stock_group.command(name="회수", description="[관리자] 특정 멤버의 주식을 회수합니다.")
     @app_commands.describe(멤버="주식을 회수할 대상 유저", 주식명="회수할 주식 종목 이름", 갯수="회수할 주식 수량 (기본값: 1)")
-    async def stock_take(self, interaction: discord.Interaction, 멤버: discord.Member, 주식명: str, 갯수: Optional[int] = 1):
+    async def stock_take(self, interaction: discord.Interaction, 멤버: discord.Member, 주식명: str,
+                         갯수: Optional[app_commands.Range[int, 1, MAX_AMOUNT]] = 1):
         if not self._has_admin_permissive(interaction):
             return await interaction.response.send_message("⛔ 권한이 없어요.", ephemeral=True)
             
@@ -1236,7 +1327,7 @@ class ChunsikStock(commands.Cog):
                     break
                     
             if not target_stock:
-                return await interaction.followup.send(f"❌ 상장되지 않았거나 존재하지 않는 주식 종목이에요: `{주식명}`")
+                return await interaction.followup.send(f"❌ 상장되지 않았거나 존재하지 않는 주식 종목이에요: `{clip(주식명, INPUT_ECHO_LIMIT)}`")
                 
             stock_name = target_stock
             user_shares = data.get("user_shares", {})
@@ -1289,11 +1380,9 @@ class ChunsikStock(commands.Cog):
         try:
             data = safe_json_load(self.STOCKS_FILE, {})
             stocks_data = data.get("stocks", {})
-            return [
-                app_commands.Choice(name=stock, value=stock)
-                for stock in stocks_data.keys()
-                if current.lower() in stock.lower()
-            ][:25]
+            # ✂️ 100자를 넘는 종목이 하나만 섞여도 자동완성 응답이 통째로 거부돼서
+            #    목록이 아예 안 뜹니다. name_choices가 그런 항목만 빼줘요.
+            return name_choices(stocks_data, current)
         except (RuntimeError, AttributeError) as e:
             # RuntimeError: safe_json_load가 파일 손상을 감지한 경우 / AttributeError: 데이터 구조가 dict가 아닌 경우
             print(f"⚠️ 주식지급 자동완성 조회 실패: {e}")
@@ -1304,11 +1393,9 @@ class ChunsikStock(commands.Cog):
         try:
             data = safe_json_load(self.STOCKS_FILE, {})
             stocks_data = data.get("stocks", {})
-            return [
-                app_commands.Choice(name=stock, value=stock)
-                for stock in stocks_data.keys()
-                if current.lower() in stock.lower()
-            ][:25]
+            # ✂️ 100자를 넘는 종목이 하나만 섞여도 자동완성 응답이 통째로 거부돼서
+            #    목록이 아예 안 뜹니다. name_choices가 그런 항목만 빼줘요.
+            return name_choices(stocks_data, current)
         except (RuntimeError, AttributeError) as e:
             print(f"⚠️ 주식회수 자동완성 조회 실패: {e}")
             return []
@@ -1345,7 +1432,7 @@ class ChunsikStock(commands.Cog):
         
         embed = discord.Embed(
             title="🟢 [주식 시장 강제 개장]",
-            description=f"관리자에 의해 주식 거래가 **임시 개장** 됐어요.\n이 개장 상태는 오늘 장 마감(자정) 시까지 유지되며 이후 자연스럽게 종료됩니다.",
+            description="관리자에 의해 주식 거래가 **임시 개장** 됐어요.\n이 개장 상태는 오늘 장 마감(자정) 시까지 유지되며 이후 자연스럽게 종료됩니다.",
             color=0x00ff00,
             timestamp=dt.datetime.now(KST)
         )

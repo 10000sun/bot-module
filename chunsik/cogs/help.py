@@ -5,6 +5,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from chunsik_config import module_active
+from modules import owners
 from chunsik_settings import FEATURE_LIST_TEXT, _get_role_ids, load_settings
 from chunsik_utils import ChunsikView
 from chunsik_names import bot_name, currency, event_name, josa
@@ -60,7 +61,14 @@ class ChunsikHelp(commands.Cog):
 
     # 🚧 /기능제어는 정지할 기능이 하나도 없으면 명령 자체가 사라져요.
     #    (cogs/setting.py의 _prune_module_commands) 기능 키를 데려오는 모듈들입니다.
-    _FEATURE_OWNERS = ("id", "economy", "stock", "wiki", "shop", "birthday", "snooze", "selfrole", "welcome", "levels", "party", "scrim")
+    #
+    # 🐛 [버그 수정] 예전엔 이 목록을 **손으로 적어뒀어요.** 그래서 AI 대화에 킬 스위치를
+    #    붙였을 때 여기가 안 따라왔습니다. 그 서버 구성에서는 `/기능제어`가 실제로는 있는데
+    #    `/도움말`에서만 안 보이는 상태가 돼요 — 있는 기능을 광고하지 않는 셈이라 조용합니다.
+    #    (도움말이 **없는 명령을 광고하던** 반대쪽 문제를 고치면서 만든 표인데, 같은 표가
+    #     이번엔 반대 방향으로 어긋났어요)
+    #    이제 modules.py의 소유 표에서 만듭니다. 기능 키를 새로 붙이면 자동으로 따라와요.
+    _FEATURE_OWNERS = tuple(sorted(set(owners("features").values())))
 
     def _visible(self, categories: dict) -> dict:
         """모듈 구성에 맞춰 걸러낸 `{이름: (이모지, 본문)}`.
@@ -191,7 +199,7 @@ class ChunsikHelp(commands.Cog):
             ]),
             # 🧪 진단은 코어라 명령 자체는 항상 등록돼요. 다만 없는 기능을 점검하는
             #    하위 명령까지 안내할 필요는 없어서 여기서 가립니다.
-            #    (명령 자체를 빼는 건 cogs/diagnostics.py가 할 일 — NEXT.md에 적어뒀어요)
+            #    (명령 자체를 빼는 건 cogs/diagnostics.py가 할 일이에요)
             "테스트/진단 도구": ("🧪", [
                 (None, "`/설정 관리자 테스트` - 아래 명령어들을 쓸 수 있는 '테스트 관리자' 역할 지정 (서버 관리자는 항상 사용 가능)"),
                 (None, "`/테스트 채널점검` - 설정된 채널 전체에 테스트 발송, 문제 있는 채널 리포트"),

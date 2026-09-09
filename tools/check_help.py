@@ -26,8 +26,8 @@
 🏷️ **낱말 검사도 같이 합니다.** 명령 이름이 아니라 *설명 문구*에 안 담은 기능이 섞이는
    사고가 따로 있어요. 카테고리 제목이 "지갑 및 상점"으로 남거나, `/감사로그` 설명이
    "경제·상점·아이디·역할·주식·생일"이라고 나열하는 식입니다. 명령은 전부 제대로
-   걸러졌는데 글자만 남는 거라 위의 명령 대조로는 절대 안 걸려요. (NEXT.md에 "검사
-   도구는 명령만 대조해서 이 종류를 못 잡는다"고 적어뒀던 구멍입니다)
+   걸러졌는데 글자만 남는 거라 위의 명령 대조로는 절대 안 걸려요.
+   (명령만 대조하는 검사로는 못 잡는 종류라, 낱말 검사를 따로 붙였습니다)
 
 📌 백틱은 "지금 칠 수 있는 명령"이라는 뜻으로 씁니다. 없어진 명령을 설명에 언급할 때는
    백틱을 씌우지 마세요 — 여기서 안내 중인 명령으로 잡히기도 하지만, 그보다 유저가
@@ -36,6 +36,8 @@
 
 import asyncio
 import json
+import ast
+import io
 import os
 import re
 import sys
@@ -44,6 +46,13 @@ import tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 CHUNSIK = os.path.join(os.path.dirname(HERE), "chunsik")
 sys.path.insert(0, CHUNSIK)
+
+# 🇰🇷 한국어 윈도우 콘솔(cp949)에서 이모지를 찍으면 UnicodeEncodeError로 죽습니다.
+#    납품 절차에서 클라이언트가 직접 돌리는 도구라 콘솔을 고르게 할 수 없어요.
+#    아래 chunsik 모듈들은 import되는 순간 이모지를 찍으므로 반드시 그보다 먼저 불러야 합니다.
+from chunsik_console import force_utf8_console  # noqa: E402  (경로를 먼저 꽂아야 해서)
+
+force_utf8_console()
 
 # 🧩 검사할 조합들. 납품에서 실제로 나올 법한 모양으로 골랐어요.
 # (None은 "설정 파일 없음" = 전부 켜짐. 코어만 담은 구성은 유저용 카테고리가 통째로
@@ -94,6 +103,11 @@ LEAK_WORDS = {
 }
 
 
+# `/명령 …` 꼴을 백틱 안에서 찾습니다. 백틱은 "지금 칠 수 있는 명령"이라는 뜻이에요.
+_REF = re.compile(r"`/([^`\n]+)`")
+_WORD = re.compile(r"^[가-힣A-Za-z0-9_]+$")
+
+
 def _use_config(mods):
     """이 조합으로 guild.json을 임시로 만들고 경로를 환경변수에 꽂습니다.
 
@@ -113,22 +127,116 @@ def _use_config(mods):
         del sys.modules[name]
 
 
-def _registered_command_paths(bot) -> set:
-    """등록된 명령을 "아이디 등록" 같은 경로 문자열 집합으로 모읍니다."""
+def _registered_command_paths(bot):
+    """등록된 명령을 "아이디 등록" 같은 경로 문자열 집합으로 모읍니다.
+
+    📌 그룹(하위 명령을 가진 것)의 경로도 따로 돌려줘요. 안내문에는 명령 뒤에 **옵션 값**이
+       붙는 일이 흔한데(`/기능제어 정지 주식`), 그걸 하위 명령으로 오해하면 안 되거든요.
+       뒤에 붙은 낱말을 "없는 하위 명령"으로 볼 수 있는 건 **앞이 그룹일 때뿐**입니다.
+    """
     from discord import app_commands
 
-    paths = set()
+    paths, groups = set(), set()
 
     def walk(cmd, prefix=""):
         name = f"{prefix}{cmd.name}"
         paths.add(name)
         if isinstance(cmd, app_commands.Group):
+            groups.add(name)
             for sub in cmd.commands:
                 walk(sub, name + " ")
 
     for cmd in bot.tree.get_commands():
         walk(cmd)
-    return paths
+    return paths, groups
+
+
+def _split_ref(text):
+    """`/...` 한 덩어리에서 명령 이름으로 볼 낱말만 잘라냅니다."""
+    parts = []
+    for token in text.split():
+        if ":" in token:
+            break        # 여기부터는 옵션이라 명령 이름이 아니에요
+        if not _WORD.match(token):
+            break        # `<유저>`·`…` 같은 자리표시자
+        parts.append(token)
+    return parts
+
+
+def _missing_refs(mentioned, real, groups):
+    """안내 중인 경로 가운데 **실제로 못 부르는 것**만 골라냅니다."""
+    missing = []
+    for name in sorted(mentioned):
+        tokens = name.split()
+        depth = 0
+        for i in range(len(tokens), 0, -1):
+            if " ".join(tokens[:i]) in real:
+                depth = i
+                break
+        if depth == 0:
+            missing.append((name, "최상위 명령이 없어요"))
+        elif depth < len(tokens) and " ".join(tokens[:depth]) in groups:
+            # 앞이 그룹인데 그 다음 낱말이 하위 명령에 없어요. 옵션 값일 수가 없습니다.
+            missing.append((name, f"'{tokens[depth]}' 하위 명령이 없어요"))
+    return missing
+
+
+def _cog_source_refs(bot, help_cog):
+    """올라간 코그들의 **유저에게 보이는 문구**에서 `/명령 ...` 꼴을 긁어옵니다.
+
+    🐛 예전엔 도움말(cogs/help.py)만 봤어요. 그런데 안내 문구는 코그마다 흩어져 있고,
+       거기 적힌 명령 이름도 똑같이 낡습니다. 실제로 `/아이디공지 내용:...`(띄어쓰기가
+       빠져 있었어요)와 `/아이디 목록`(그런 명령이 없습니다) 두 개가 남아 있었어요.
+       유저는 그걸 그대로 쳐보고 "명령을 못 찾았어요"를 만납니다.
+
+    📝 **문자열만** 봅니다. 주석과 독스트링은 없어진 명령(`/랭킹`)이나 아직 안 만든
+       명령(`/선물`)을 일부러 이야기하는 자리라 빼요.
+
+    📦 올라간 코그의 파일만 봅니다. 그 기능을 빼고 납품하면 그 파일의 문구도 같이
+       사라지니까요.
+
+    🚫 도움말 코그는 여기서 빼요. help.py **소스**에는 모든 기능의 줄이 다 들어 있고,
+       실제로 보여줄 줄은 모듈 태그로 **돌 때** 걸러집니다. 소스를 그대로 읽으면 빼고
+       납품한 기능의 명령까지 "없는 명령"으로 쏟아져요. 도움말은 위 _mentioned_command_paths가
+       걸러진 결과로 따로 봅니다.
+    """
+    files = set()
+    for cog in bot.cogs.values():
+        if cog is help_cog:
+            continue
+        module = sys.modules.get(type(cog).__module__)
+        path = getattr(module, "__file__", None)
+        if path:
+            files.add(os.path.abspath(path))
+
+    refs = {}
+    for path in sorted(files):
+        try:
+            source = io.open(path, encoding="utf-8").read()
+            tree = ast.parse(source)
+        except Exception:
+            continue
+
+        docstrings = set()
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+                body = getattr(node, "body", None) or []
+                if (body and isinstance(body[0], ast.Expr)
+                        and isinstance(body[0].value, ast.Constant)
+                        and isinstance(body[0].value.value, str)):
+                    docstrings.add(id(body[0].value))
+
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Constant) and isinstance(node.value, str)):
+                continue
+            if id(node) in docstrings:
+                continue
+            for text in _REF.findall(node.value):
+                parts = _split_ref(text)
+                if parts:
+                    refs.setdefault(" ".join(parts),
+                                    f"{os.path.basename(path)}:{node.lineno}")
+    return refs
 
 
 def _mentioned_command_paths(help_cog) -> set:
@@ -143,13 +251,9 @@ def _mentioned_command_paths(help_cog) -> set:
     )
 
     mentioned = set()
-    for text in re.findall(r"`/([^`]+)`", blob):
+    for text in _REF.findall(blob):
         # `/아이디 등록`, `/설정 채널 아이디등록`, `/지갑 전체:True` 같은 형태를 받아요.
-        parts = []
-        for token in text.split():
-            if ":" in token:
-                break        # 여기부터는 옵션이라 명령 이름이 아니에요
-            parts.append(token)
+        parts = _split_ref(text)
         if parts:
             mentioned.add(" ".join(parts))
     return mentioned
@@ -210,7 +314,7 @@ async def check_one(mods, label) -> int:
     bot = ChunsikBotClient(command_prefix="/", intents=cfg.intents)
     await bot.load_modules()
 
-    real = _registered_command_paths(bot)
+    real, groups = _registered_command_paths(bot)
     help_cog = bot.get_cog("ChunsikHelp")
     if help_cog is None:
         print("🚨 도움말 모듈(ChunsikHelp)이 올라오지 않았어요. 대조할 수가 없습니다.")
@@ -219,14 +323,22 @@ async def check_one(mods, label) -> int:
 
     mentioned = _mentioned_command_paths(help_cog)
 
-    # `/설정 채널 아이디등록`처럼 실제 명령(`/설정 채널`)보다 더 깊은 경로를 안내하는 경우가
-    # 있어요. 옵션 값을 이름처럼 적어둔 안내문이라, 앞에서부터 하나라도 맞으면 통과로 봅니다.
-    missing = []
-    for name in sorted(mentioned):
-        tokens = name.split()
-        if any(" ".join(tokens[:i]) in real for i in range(len(tokens), 0, -1)):
-            continue
-        missing.append(name)
+    # `/설정 채널 아이디등록`처럼 실제 명령보다 깊은 경로를 안내하는 경우가 있어요.
+    # 앞이 그룹이 아니면 뒤 낱말은 옵션 값이라 통과입니다. (_missing_refs 참고)
+    missing = _missing_refs(mentioned, real, groups)
+
+    # 🗣️ 도움말 말고 **다른 코그의 안내 문구**도 같은 눈으로 봅니다.
+    #
+    # 📦 전부 켠 조합에서만 봐요. 부분 납품에서는 코어 코그(setting·wizard·diagnostics)의
+    #    문구가 안 담긴 기능의 명령을 가리키는 게 **정상**입니다 — 그 문구를 달고 있던
+    #    명령 자체가 같이 빠지거든요(_prune_module_commands). 전부 켠 상태에서 없는 이름은
+    #    구성과 상관없이 낡은 이름이라, 거기서 잡으면 충분합니다.
+    #    (안 담은 기능을 **말로** 언급하는 사고는 아래 _feature_leaks가 따로 봅니다)
+    cog_refs, cog_missing = {}, []
+    if mods is None:
+        cog_refs = _cog_source_refs(bot, help_cog)
+        cog_missing = [(name, why, cog_refs[name])
+                       for name, why in _missing_refs(set(cog_refs), real, groups)]
 
     admin = help_cog._admin_categories()
     user = help_cog._user_categories()
@@ -239,11 +351,24 @@ async def check_one(mods, label) -> int:
     print(f"  카테고리         : 관리자 {len(admin)}개 / 유저 {len(user)}개")
     if missing:
         print(f"\n  🚨 도움말에만 있고 실제로는 없는 명령 {len(missing)}개:")
-        for name in missing:
-            print(f"     /{name}")
+        for name, why in missing:
+            print(f"     /{name} — {why}")
         print("\n  cogs/help.py에서 그 줄의 모듈 태그를 확인해주세요. (_visible 설명 참고)")
     else:
         print("  ✅ 도움말의 모든 명령이 실제로 등록됩니다.")
+
+    if mods is not None:
+        print("  코그 문구        : (전부 켠 조합에서만 봅니다)")
+    else:
+        print(f"  코그 문구가 언급 : {len(cog_refs)}개")
+    if cog_missing:
+        print(f"\n  🚨 안내 문구가 **없는 명령**을 알려주고 있어요 {len(cog_missing)}개:")
+        for name, why, where in cog_missing:
+            print(f"     /{name} — {why}  ({where})")
+        print("\n  유저는 그대로 쳐보고 '명령을 못 찾았어요'를 만납니다.")
+        print("  없어진 명령을 일부러 이야기하는 거라면 주석이나 독스트링으로 옮기세요.")
+    elif mods is None:
+        print("  ✅ 코그 안내 문구의 명령도 전부 실제로 등록됩니다.")
 
     if leaks:
         print(f"\n  🚨 안 담은 기능의 이름이 보이는 글자에 남아 있어요 {len(leaks)}건:")
@@ -257,7 +382,7 @@ async def check_one(mods, label) -> int:
         print("  ✅ 안 담은 기능을 언급하는 문구가 없습니다.")
 
     await bot.close()
-    return len(missing) + len(leaks)
+    return len(missing) + len(cog_missing) + len(leaks)
 
 
 async def main(argv):

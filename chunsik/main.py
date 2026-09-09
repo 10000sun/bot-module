@@ -3,39 +3,19 @@
 실행: python main.py
 """
 
-import sys
-
-
 # 🖥️ [안전장치] 콘솔 출력 인코딩을 UTF-8로 고정합니다.
 #
-# ⚠️ 이 블록은 **다른 봇 모듈을 import하기 전에** 실행돼야 해요. 아래 설명 참고.
-#
-# 한국어 윈도우에서 파이썬은 콘솔 코드페이지(cp949)를 그대로 출력 인코딩으로 씁니다.
-# 그런데 이 프로젝트는 로그에 이모지를 잔뜩 쓰기 때문에, cp949 콘솔에서는 print 한 줄이
-# UnicodeEncodeError로 터져요. (cp949에는 이모지 글리프가 아예 없어요)
-#
-# 제일 위험한 건 chunsik_storage.init_json_files()입니다. 이건 **모듈을 import하는 순간**
-# 실행되면서 "📦 빈 데이터 파일이 자동 생성됐어요"를 찍어요. 여기서 터지면 아래 try/except나
-# 다운 알림 웹훅에 닿기도 전에 죽어서, 봇이 왜 안 켜졌는지 아무도 모르는 상태가 됩니다.
-# (main() 안에서 state.load()를 감싸둔 것과 똑같은 이유예요)
-#
-# 지금 서버 콘솔은 UTF-8이라 잘 돌지만, 작업 스케줄러나 cmd.exe로 실행 방식이 바뀌면 걸립니다.
-# errors="replace"까지 붙여서, 혹시 UTF-8로 못 바꾸는 환경이어도 글자가 물음표로 바뀔지언정
-# 봇이 죽지는 않게 했어요.
-def _force_utf8_console() -> None:
-    for stream in (sys.stdout, sys.stderr):
-        try:
-            stream.reconfigure(encoding="utf-8", errors="replace")
-        except Exception:
-            # pythonw처럼 stdout이 아예 없거나(None) 바꿀 수 없는 스트림인 경우예요.
-            # 출력 인코딩을 못 바꾼다고 봇을 못 켤 이유는 없으니 조용히 넘어갑니다.
-            pass
+# ⚠️ 이 두 줄은 **다른 봇 모듈을 import하기 전에** 실행돼야 해요. import하는 순간
+#    이모지를 찍는 모듈이 있어서, 순서가 밀리면 봇이 왜 안 켜졌는지 모를게 죽습니다.
+#    상세한 이유는 chunsik_console.py 안에 적어두었어요.
+#    (chunsik_console은 sys만 쓰는 잎사귀 모듈이라 여기서 먼저 import해도 안전합니다)
+from chunsik_console import force_utf8_console
 
-
-_force_utf8_console()
+force_utf8_console()
 
 import asyncio      # noqa: E402  (위 인코딩 설정이 반드시 먼저 실행돼야 해요)
 import os
+import sys
 import traceback
 import discord
 
@@ -46,6 +26,19 @@ from chunsik_state import state
 from chunsik_names import bot_name, josa
 
 bot = ChunsikBotClient(command_prefix="/", intents=intents)
+
+# 🔢 [종료 코드] 사람이 고치기 전에는 다시 켜봐야 소용없는 실패는 **2번**으로 끝냅니다.
+#    (설정 파일이 깨짐 · 토큰이 없음 · 토큰이 무효 · 아이디 데이터가 깨짐)
+#
+# 왜 0이 아니냐 — systemd·도커는 0을 "할 일을 마치고 정상 종료"로 읽어요. 서비스가
+# `active (exited)` 로 보이고 실패 표시도, 재시작도 없습니다. 켰는데 아무 일도 안
+# 일어나고 아무 데도 빨간 불이 안 들어오는 게 제일 나쁜 상태예요.
+#
+# 왜 1도 아니냐 — 1은 "예상 못한 사고"라 다시 켜보는 게 맞지만, 위 넷은 그대로 켜면
+# 똑같이 죽습니다. `Restart=always`면 100ms마다 되살아나며 알림만 쌓여요.
+# systemd 유닛에 `RestartPreventExitStatus=2` 한 줄을 넣으면 그 자리에서 멈춥니다.
+# (README 11번에 적어뒀어요. 그 줄이 없어도 지금까지와 똑같이 동작하니 안전합니다)
+EXIT_NEEDS_FIXING = 2
 
 # ========== 🚀 봇 구동부 ==========
 async def main():
@@ -67,7 +60,7 @@ async def main():
             f"```\n{GUILD_CONFIG_FATAL}\n```",
         )
         # ⚙️ 0이 아닌 코드로 끝내야 systemd/도커가 "실패"로 인식해요.
-        sys.exit(1)
+        sys.exit(EXIT_NEEDS_FIXING)
 
     # 🔐 [변경] 토큰은 더 이상 코드에 없어요. 같은 폴더의 .env 파일에서 읽어옵니다.
     if not DISCORD_TOKEN:
@@ -79,7 +72,7 @@ async def main():
         #    그냥 return하면 systemd·도커가 "할 일을 마치고 정상 종료했다"로 읽어서
         #    재시작도, 실패 표시도 안 해요. 토큰을 안 넣은 채 서비스로 올린 첫 배포에서
         #    "켰는데 아무 일도 안 일어난다"가 되는 게 이 경로입니다.
-        sys.exit(1)
+        sys.exit(EXIT_NEEDS_FIXING)
 
     # 🗃️ 아이디 DB를 메모리로 읽어옵니다.
     # 예전엔 chunsik_state를 import하는 순간 자동으로 읽혔어요. 그런데 ids.json이 손상되면
@@ -95,7 +88,7 @@ async def main():
         )
         # ⚙️ 여기도 마찬가지예요. 알림 웹훅은 나가지만 프로세스가 0으로 끝나면
         #    자동 재시작이 안 걸려서, 파일을 고쳐도 사람이 직접 켜줘야 합니다.
-        sys.exit(1)
+        sys.exit(EXIT_NEEDS_FIXING)
 
     try:
         await bot.start(DISCORD_TOKEN)
@@ -106,6 +99,13 @@ async def main():
             f"❌ {bot_name()}봇 로그인 실패",
             "봇 토큰이 유효하지 않아요. 토큰이 재발급됐는지 확인하고 .env를 갱신해 주세요.",
         )
+        # 🐛 [버그 수정] 여기만 종료 코드를 안 붙여서 **0(정상 종료)으로 끝났어요.**
+        #    바로 위 세 형제(설정 깨짐·토큰 없음·아이디 데이터 깨짐)는 전부 0이 아닌 코드로
+        #    끝내는데, 정작 **가장 흔한 기동 실패 원인**만 성공처럼 보였습니다.
+        #    서비스는 `active (exited)`, 도커는 exit 0, 감시 도구에는 아무것도 안 뜹니다.
+        #    README 11번이 "예상 못한 종료 시 0이 아닌 코드로 끝난다"고 약속하는데
+        #    그 약속이 깨져 있던 자리예요.
+        sys.exit(EXIT_NEEDS_FIXING)
     except Exception as e:
         print(f"❗예외 발생! {bot_name()}{josa(bot_name(), '이가')} 깜짝 놀랐어요:", e)
         traceback.print_exc()

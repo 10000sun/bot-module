@@ -8,10 +8,10 @@ from discord.ext import commands, tasks
 
 from chunsik_config import ATTENDANCE_FILE, ECONOMY_FILE, KST, LEDGER_FILE, SHOP_FILE, STOCKS_FILE, module_active
 from chunsik_alerts import report_loop_error
-from chunsik_storage import atomic_json_save, atomic_json_save_or_raise, safe_json_load
+from chunsik_storage import atomic_json_save_or_raise, safe_json_load
 from chunsik_settings import feature_gate, has_admin_or_role, load_settings, send_log_embed
-from chunsik_state import load_ledger, record_ledger, record_ledger_many
-from chunsik_utils import ChunsikView, chunk_lines, describe_user_error, portfolio_value
+from chunsik_state import LEDGER_MAX_ENTRIES, load_ledger, record_ledger, record_ledger_many
+from chunsik_utils import MAX_AMOUNT, ChunsikView, chunk_lines, describe_user_error, portfolio_value
 from chunsik_names import currency, josa
 
 # 🧩 [정리] 예전엔 여기 `from cogs.shop import WalletGiftView`가 있었어요. /지갑에 붙는
@@ -33,7 +33,14 @@ class UndoGiveSelect(discord.ui.Select):
             when = b["ts"][5:16].replace("T", " ")
             icon = "📤" if b["kind"] == "관리자 지급" else "📥"
             label = f"{icon} {when} · {total:,} {currency()}"
-            desc = f"{b['kind']} · 대상 {len(b['rows'])}명 · {b['detail'][:50]}"
+            # ✂️ 원장이 잘려 앞부분이 사라진 묶음이면 **되돌려도 반쪽**이에요.
+            #    고르기 전에 알려야 합니다. (고른 뒤엔 이미 늦어요)
+            lost = b["size"] - len(b["rows"]) if b.get("size") else 0
+            if lost > 0:
+                desc = (f"⚠️ {b['size']}명 중 {len(b['rows'])}명만 되돌릴 수 있어요 "
+                        f"(기록 {lost}줄이 잘림) · {b['kind']}")
+            else:
+                desc = f"{b['kind']} · 대상 {len(b['rows'])}명 · {b['detail'][:50]}"
             options.append(discord.SelectOption(label=label[:100], description=desc[:100], value=b["id"]))
 
         super().__init__(placeholder="되돌릴 기록을 선택하세요", options=options, min_values=1, max_values=1)
@@ -160,6 +167,72 @@ class TransferAmountModal(discord.ui.Modal, title="💸 송금"):
             print(f"❗ [우클릭 송금] 오류 안내 전송 실패: {e}")
 
 
+def roll_attendance_day(data: dict, today: str) -> bool:
+    """날짜가 바뀌었으면 오늘 명단을 비웁니다. 실제로 비웠으면 True.
+
+    🐛 [버그 수정] 오늘 명단을 지우는 건 **자정 00:00 루프뿐**이었어요. 그런데 그 시각에
+    봇이 꺼져 있으면(재시작, PC 종료, 정전) 그 회차는 그냥 지나갑니다. tasks.loop은
+    놓친 회차를 나중에 따라잡지 않아요.
+
+    그러면 `today_users`에 **어제 명단이 그대로 남습니다.** 어제 출석한 사람 전원이
+    하루 종일 "❌ 이미 오늘 출석 체크를 하셨어요"를 보게 돼요. 매일 도는 다른 루프들과
+    달리 이건 **못 받은 사람이 생기는** 쪽이라 문의로 돌아옵니다. 게다가 봇을 껐다 켜는
+    건 납품한 서버에서 가장 흔한 일이에요.
+
+    이제 파일에 날짜를 같이 적고, 읽을 때마다 오늘 것인지 봅니다. 루프는 그대로 두되
+    (자정에 바로 비워지는 게 보기 좋으니까) 루프가 못 돌아도 첫 `/출석`에서 넘어가요.
+
+    📌 날짜 칸이 아예 없는 **옛 파일**은 비우지 않고 날짜만 박습니다. 언제 쓰인 명단인지
+       알 수 없는데 지워버리면, 오늘 이미 출석한 사람이 한 번 더 받을 수 있어요.
+       이 프로젝트는 그런 자리에서 **재화가 복사되지 않는 쪽**으로 기울입니다.
+       (한 번 손해 보는 쪽이 한 번 복사되는 쪽보다 낫습니다)
+    """
+    if "date" not in data:
+        data["date"] = today
+        return False
+    if data["date"] == today:
+        return False
+    data["date"] = today
+    data["today_count"] = 0
+    data["today_users"] = []
+    return True
+
+
+# 🧊 멤버 목록이 충분히 채워졌다고 볼 최소 비율.
+#    디스코드는 서버 멤버를 기동할 때 통째로 받아오는데(chunking), 그게 끝나기 전이나
+#    재연결 직후에는 캐시가 덜 찬 상태일 수 있어요.
+MEMBER_CACHE_READY_RATIO = 0.9
+
+
+def member_cache_incomplete(guild) -> bool:
+    """멤버 목록이 아직 덜 불러와진 것 같으면 True.
+
+    🚨 [왜 필요한가] `/지갑청소`는 **`guild.get_member(id)`가 None이면 "서버를 나간 사람"**
+    으로 보고 그 지갑을 지웁니다. 그런데 그 판단의 근거가 **캐시**예요. 캐시가 덜 찬
+    순간에 이 명령을 쓰면 **멀쩡히 서버에 있는 사람들의 지갑이 통째로 지워집니다.**
+    되돌릴 방법은 백업 복원뿐이고요.
+
+    실제로 밟기 쉬운 길은 아니에요(멤버 인텐트가 켜져 있으면 기동할 때 한 번에 받아옵니다).
+    다만 **틀렸을 때 치르는 대가가 너무 큰** 자리라, 싸게 막을 수 있으면 막습니다.
+    `member_count`(서버가 알려주는 진짜 인원)와 캐시에 들어온 수를 비교해요.
+    """
+    total = getattr(guild, "member_count", None)
+    if not total:
+        return False        # 서버가 인원을 안 알려주면 판단할 근거가 없어요. 막지 않습니다.
+    return len(guild.members) < total * MEMBER_CACHE_READY_RATIO
+
+
+ROLE_CACHE_WARNING = (
+    "❌ 서버 멤버 목록이 아직 다 안 불러와졌어요. 지금 하면 **역할을 가진 사람 일부에게만**"
+    " 처리돼서 멈췄습니다.\n└ 잠시 뒤(보통 1분 안에) 다시 시도해 주세요."
+)
+
+CACHE_WARNING = (
+    "❌ 서버 멤버 목록이 아직 다 안 불러와졌어요. 지금 지우면 **서버에 있는 사람의 지갑까지**"
+    " 지워질 수 있어서 멈췄습니다.\n└ 잠시 뒤(보통 1분 안에) 다시 시도해 주세요."
+)
+
+
 class ChunsikEconomy(commands.Cog):
     """JSON 자동 생성, 상점주인 ID 검증, 매일 자정 리셋이 포함된 경제 및 출석 시스템"""
     
@@ -265,6 +338,7 @@ class ChunsikEconomy(commands.Cog):
         data.setdefault("today_users", [])
         data.setdefault("reward_amount", 200)
         data.setdefault("user_stats", {})
+        roll_attendance_day(data, dt.datetime.now(KST).date().isoformat())
         return data
 
     def _save_attendance(self, data: dict):
@@ -299,11 +373,14 @@ class ChunsikEconomy(commands.Cog):
             data = self._load_attendance()
 
             # 오늘 출석한 인원수와 명단을 초기화 (누적 횟수 및 보상 설정값은 보존)
+            # 📅 날짜도 같이 박습니다. 이게 있어야 이 루프를 놓친 날에도 첫 `/출석`이
+            #    스스로 넘어가요. (roll_attendance_day 설명 참고)
+            data["date"] = dt.datetime.now(KST).date().isoformat()
             data["today_count"] = 0
             data["today_users"] = []
 
             self._save_attendance(data)
-            print(f"⏰ [시스템 알림] 자정이 되어 오늘 하루 출석체크 명단이 정상적으로 초기화됐어요.")
+            print("⏰ [시스템 알림] 자정이 되어 오늘 하루 출석체크 명단이 정상적으로 초기화됐어요.")
         except Exception as e:
             print(f"❗ [자정 초기화 실패] {type(e).__name__}: {e}")
 
@@ -400,8 +477,13 @@ class ChunsikEconomy(commands.Cog):
             b = batches.setdefault(bid, {
                 "id": bid, "kind": e["kind"], "detail": e.get("detail", ""),
                 "ts": e["ts"], "actor": e.get("actor"), "rows": [], "reverted": False,
+                "size": None,
             })
             b["rows"].append(e)
+            # 🧮 이 묶음의 **원래 인원**. 원장이 잘려서 앞부분이 사라졌으면
+            #    지금 남은 줄 수보다 큽니다. (예전 기록에는 없어요 → None = 모름)
+            if b["size"] is None and e.get("batch_size"):
+                b["size"] = int(e["batch_size"])
             if e.get("reverted"):
                 b["reverted"] = True
         return sorted(batches.values(), key=lambda b: b["ts"], reverse=True)[:limit]
@@ -438,37 +520,70 @@ class ChunsikEconomy(commands.Cog):
             return await interaction.followup.send("❌ 이미 되돌렸거나 기록을 찾을 수 없어요.", ephemeral=True)
 
         undo_rows = []
+        mark_failed = None
         async with self.bot.economy_lock:
-            economy = self._load_raw_economy()
-            for e in rows:
-                uid = e["user"]
-                economy[uid] = economy.get(uid, 0) - e["delta"]   # 부호를 뒤집어 원복
-                undo_rows.append((uid, -e["delta"], economy[uid]))
-            self._save_raw_economy(economy)
-
-            # 원본 기록에 취소 표시 (같은 건을 두 번 되돌리지 못하게)
+            # 🚨 [순서 주의] '되돌림' 표시를 **돈보다 먼저** 박습니다.
+            #
+            # 예전엔 돈을 먼저 옮기고 표시를 나중에 저장했어요. 그런데 그 저장이 실패하면
+            # 돈은 이미 원복됐는데 목록에는 "아직 안 되돌림"으로 남습니다. 관리자가 한 번 더
+            # 누르면 **같은 금액이 두 번 빠져요.** 50명에게 준 10,000을 두 번 되돌리면
+            # 한 사람당 20,000이 사라집니다.
+            #
+            # 게다가 그 저장은 atomic_json_save라 실패해도 **예외를 안 던지고 False를 돌려줍니다.**
+            # 반환값을 안 보고 있었으니 try/except가 잡을 것도 없었어요. 콘솔 경고조차 안 떴습니다.
+            #
+            # 순서를 뒤집으면 최악이 "표시는 됐는데 돈은 안 옮겨진" 상태인데, 그건 화면에
+            # 그대로 알려주고 관리자가 `/지급`으로 손수 맞출 수 있어요. 돈이 두 번 빠지는 것보다
+            # 훨씬 낫습니다. (되돌릴 수 없는 쪽으로 기울지 않게)
             for e in ledger["entries"]:
                 if e.get("batch") == batch_id:
                     e["reverted"] = True
             try:
-                atomic_json_save(LEDGER_FILE, ledger, indent=2)
+                atomic_json_save_or_raise(LEDGER_FILE, ledger, indent=2)
             except Exception as ex:
-                print(f"⚠️ 원장 취소 표시 저장 실패: {type(ex).__name__}: {ex}")
+                mark_failed = f"{type(ex).__name__}: {ex}"
+            else:
+                economy = self._load_raw_economy()
+                for e in rows:
+                    uid = e["user"]
+                    economy[uid] = economy.get(uid, 0) - e["delta"]   # 부호를 뒤집어 원복
+                    undo_rows.append((uid, -e["delta"], economy[uid]))
+                self._save_raw_economy(economy)
+
+        if mark_failed:
+            # 아무것도 안 옮겼어요. 다시 눌러도 안전합니다.
+            print(f"❗ [되돌리기] 취소 표시를 저장하지 못해 중단했어요: {mark_failed}")
+            return await interaction.followup.send(
+                "❌ 되돌리기를 **시작하지 않았어요.** 기록 파일에 저장을 못 했습니다.\n"
+                "└ 돈은 하나도 움직이지 않았으니 잠시 후 다시 시도해 주세요.\n"
+                f"└ ({mark_failed})", ephemeral=True)
 
         kind = rows[0].get("kind", "관리자 지급")
         record_ledger_many(undo_rows, f"{kind} 취소", rows[0].get("detail", ""),
                            actor_id=interaction.user.id)
 
         total = sum(abs(e["delta"]) for e in rows)
+        # ⚠️ 원장이 잘려서 **일부만** 되돌린 건지 봅니다. "되돌렸어요"만 보면
+        #    다 원복된 줄 알고 넘어가요. (예전 기록엔 batch_size가 없어요 → 모름)
+        size = next((int(e["batch_size"]) for e in rows if e.get("batch_size")), None)
+        lost = size - len(rows) if size else 0
         await send_log_embed(
             self.bot, "economy_log", "지급/회수 되돌리기가 실행됐어요.",
             fields=[
                 ("원래 처리", f"{kind} · {rows[0].get('detail','')}", False),
-                ("대상 인원", f"{len(rows)}명", True),
+                ("대상 인원", (f"{len(rows)}명"
+                              + (f" ⚠️ (원래 {size}명 — 기록이 잘려 {size - len(rows)}명은 못 되돌림)"
+                                 if size and size > len(rows) else "")), True),
                 ("되돌린 총액", f"{total:,} {currency()}", True),
                 ("처리 관리자", interaction.user.mention, True),
             ],
         )
+        if lost > 0:
+            return await interaction.followup.send(
+                f"⚠️ `{kind}` 건을 **일부만** 되돌렸어요.\n"
+                f"└ {size}명 중 **{len(rows)}명**만 되돌아갔습니다. (총 {total:,} {currency()})\n"
+                f"└ 오래된 기록 {lost}줄이 원장 상한({LEDGER_MAX_ENTRIES:,}건)에 밀려 잘려나갔어요. "
+                f"나머지 {lost}명은 `/회수`로 직접 맞춰주세요.", ephemeral=True)
         await interaction.followup.send(
             f"✅ `{kind}` 건을 되돌렸어요. (대상 {len(rows)}명 · 총 {total:,} {currency()})", ephemeral=True
         )
@@ -641,7 +756,7 @@ class ChunsikEconomy(commands.Cog):
         # 타인 지갑 무단 조회 방어선 (상점주인이나 본인만 가능)
         if target.id != interaction.user.id and not self._is_shop_owner(interaction):
             await interaction.response.send_message(
-                "🙅‍♀️ 떽! 다른 사람의 지갑은 상점주인이나 관리자만 열어볼 수 있다구!", 
+                "🙅‍♀️ 다른 사람의 지갑은 상점주인이나 관리자만 열어볼 수 있어요.",
                 ephemeral=True
             )
             return
@@ -838,7 +953,8 @@ class ChunsikEconomy(commands.Cog):
 
     @app_commands.command(name="송금", description=f"다른 사람에게 {currency()}{josa(currency(), '을를')} 송금해요!")
     @app_commands.describe(member="돈을 받을 멤버 선택", amount=f"보낼 {currency()} 수량")
-    async def transfer_money_slash(self, interaction: discord.Interaction, member: discord.Member, amount: int):
+    async def transfer_money_slash(self, interaction: discord.Interaction, member: discord.Member,
+                                   amount: app_commands.Range[int, 1, MAX_AMOUNT]):
         if await feature_gate(interaction, "transfer", "송금"):
             return
         await self.perform_transfer(interaction, member, amount)
@@ -909,7 +1025,7 @@ class ChunsikEconomy(commands.Cog):
 
     @app_commands.command(name="지급", description=f"[관리자] 특정 유저 또는 특정 역할을 가진 모든 유저에게 {currency()}{josa(currency(), '을를')} 지급합니다.")
     @app_commands.guild_only()
-    async def give_money(self, interaction: discord.Interaction, 금액: int, 유저: Optional[discord.Member] = None, 역할: Optional[discord.Role] = None):
+    async def give_money(self, interaction: discord.Interaction, 금액: app_commands.Range[int, 1, MAX_AMOUNT], 유저: Optional[discord.Member] = None, 역할: Optional[discord.Role] = None):
         # 1. 관리자 권한 확인 (/지갑청소·/랭킹 등과 같은 기준을 쓰도록 공용 헬퍼에 위임)
         if not self._is_shop_owner(interaction):
             return await interaction.response.send_message("❌ 권한이 없어요.", ephemeral=True)
@@ -935,6 +1051,11 @@ class ChunsikEconomy(commands.Cog):
             targets = [유저]
             target_mention_str = 유저.mention
         else:
+            # 🧊 `역할.members`는 **캐시**를 훑어요. 캐시가 덜 찼으면 역할을 가진 사람 중
+            #    일부만 잡힙니다. 그대로 진행하면 나머지는 못 받고, 관리자는 그 사실을
+            #    모른 채 다시 한 번 실행해서 **이미 받은 사람에게 두 번** 주게 돼요.
+            if member_cache_incomplete(interaction.guild):
+                return await interaction.followup.send(ROLE_CACHE_WARNING)
             # 봇을 제외하고 해당 역할을 보유한 실제 서버 멤버만 필터링
             targets = [m for m in 역할.members if not m.bot]
             target_mention_str = f"{역할.mention} 역할 인원 전체 ({len(targets)}명)"
@@ -971,7 +1092,7 @@ class ChunsikEconomy(commands.Cog):
 
     @app_commands.command(name="회수", description=f"[관리자] 특정 유저 또는 특정 역할을 가진 모든 유저에게서 {currency()}{josa(currency(), '을를')} 회수합니다.")
     @app_commands.guild_only()
-    async def take_money(self, interaction: discord.Interaction, 금액: int, 유저: Optional[discord.Member] = None, 역할: Optional[discord.Role] = None):
+    async def take_money(self, interaction: discord.Interaction, 금액: app_commands.Range[int, 1, MAX_AMOUNT], 유저: Optional[discord.Member] = None, 역할: Optional[discord.Role] = None):
         # 1. 관리자 권한 확인 (/지갑청소·/랭킹 등과 같은 기준을 쓰도록 공용 헬퍼에 위임)
         if not self._is_shop_owner(interaction):
             return await interaction.response.send_message("❌ 권한이 없어요.", ephemeral=True)
@@ -997,6 +1118,11 @@ class ChunsikEconomy(commands.Cog):
             targets = [유저]
             target_mention_str = 유저.mention
         else:
+            # 🧊 `역할.members`는 **캐시**를 훑어요. 캐시가 덜 찼으면 역할을 가진 사람 중
+            #    일부만 잡힙니다. 그대로 진행하면 나머지는 못 받고, 관리자는 그 사실을
+            #    모른 채 다시 한 번 실행해서 **이미 받은 사람에게 두 번** 주게 돼요.
+            if member_cache_incomplete(interaction.guild):
+                return await interaction.followup.send(ROLE_CACHE_WARNING)
             # 봇을 제외하고 해당 역할을 보유한 실제 서버 멤버만 필터링
             targets = [m for m in 역할.members if not m.bot]
             target_mention_str = f"{역할.mention} 역할 인원 전체 ({len(targets)}명)"
@@ -1038,6 +1164,10 @@ class ChunsikEconomy(commands.Cog):
             return
 
         await interaction.response.defer(ephemeral=False)
+
+        # 🧊 "나간 사람"을 캐시로 판단하기 때문에, 캐시가 덜 찼으면 아예 시작하지 않아요.
+        if member_cache_incomplete(interaction.guild):
+            return await interaction.followup.send(CACHE_WARNING)
 
         # 1️⃣ 미리보기 단계 — 여기서는 파일을 절대 건드리지 않고 대상만 추립니다.
         # 지갑 삭제는 되돌릴 방법이 백업 복원밖에 없어서, 뭘 지우는지 먼저 보여줘야 해요.
@@ -1089,6 +1219,10 @@ class ChunsikEconomy(commands.Cog):
         미리보기와 확인 사이에는 시간이 있어요. 그 사이에 서버로 돌아온 사람이 있을 수 있어서,
         지우기 직전에 멤버 여부를 한 번 더 확인하고 파일도 새로 읽습니다.
         """
+        # 🧊 미리보기와 확인 사이에 재연결이 있었을 수도 있어요. 지우기 직전에 한 번 더 봅니다.
+        if member_cache_incomplete(interaction.guild):
+            return await interaction.followup.send(CACHE_WARNING, ephemeral=True)
+
         target_ids = {uid for uid, _ in targets}
         cleaned_count = 0
         recovered_eva = 0
@@ -1150,7 +1284,7 @@ class ChunsikEconomy(commands.Cog):
     @app_commands.command(name="출석보상설정", description=f"[관리자] 하루 출석체크 시 지급할 기본 {currency()} 보상 액수를 조정합니다.")
     @app_commands.describe(amount=f"새로 지정할 출석 {currency()} 보상 액수")
     @app_commands.guild_only()
-    async def set_attendance_reward_slash(self, interaction: discord.Interaction, amount: int):
+    async def set_attendance_reward_slash(self, interaction: discord.Interaction, amount: app_commands.Range[int, 0, MAX_AMOUNT]):
         if not self._is_shop_owner(interaction):
             await interaction.response.send_message("🙅‍♀️ 출석 보상을 수정할 수 있는 권한이 없어요!", ephemeral=True)
             return

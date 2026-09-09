@@ -67,7 +67,7 @@ class ChunsikRoster(commands.Cog):
     # 닉네임에 이 단어가 포함되면 부계정으로 간주하여 명단에서 제외합니다.
     ALT_ACCOUNT_KEYWORD = "부계정"
 
-    # 🗑️ [정리] 예전엔 여기 SHOP_ADMIN_ROLE_ID = <원본 서버 역할 ID> 이 하드코딩돼 있었어요.
+    # 🗑️ [정리] 예전엔 여기 SHOP_ADMIN_ROLE_ID 에 원본 서버의 역할 ID가 하드코딩돼 있었어요.
     # 다른 코그는 전부 settings.json의 roles.shop_admin을 보는데 여기만 코드에 박아둬서,
     # `/설정 관리자 상점`으로 역할을 바꿔도 /명단은 안 따라갔습니다. (그 역할을 지우면
     # 서버 관리자 말고는 아무도 /명단을 못 쓰게 되는 상태였어요) 이제 설정을 그대로 따릅니다.
@@ -217,7 +217,7 @@ class ChunsikRoster(commands.Cog):
             formatted_description = f"```ansi\n{chunk.rstrip()}\n```"
 
             embed = discord.Embed(
-                title=f"📋 [서버 조건부 인원 명단]" + (f" ({idx + 1}/{len(chunks)})" if len(chunks) > 1 else ""),
+                title="📋 [서버 조건부 인원 명단]" + (f" ({idx + 1}/{len(chunks)})" if len(chunks) > 1 else ""),
                 description=formatted_description,
                 color=0x2ecc71,
                 timestamp=dt.datetime.now(KST)

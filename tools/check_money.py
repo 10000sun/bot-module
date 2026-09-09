@@ -32,14 +32,21 @@
 """
 
 import io
-import json
 import os
 import sys
 import tempfile
+import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CHUNSIK = os.path.join(os.path.dirname(HERE), "chunsik")
 sys.path.insert(0, CHUNSIK)
+
+# 🇰🇷 한국어 윈도우 콘솔(cp949)에서 이모지를 찍으면 UnicodeEncodeError로 죽습니다.
+#    납품 절차에서 클라이언트가 직접 돌리는 도구라 콘솔을 고르게 할 수 없어요.
+#    아래 chunsik 모듈들은 import되는 순간 이모지를 찍으므로 반드시 그보다 먼저 불러야 합니다.
+from chunsik_console import force_utf8_console  # noqa: E402  (경로를 먼저 꽂아야 해서)
+
+force_utf8_console()
 
 # 설정을 읽기 전에 임시 데이터 폴더를 꽂아둡니다. (import 시점에 굳어요)
 os.environ["CHUNSIK_GUILD_CONFIG"] = os.path.join(tempfile.gettempdir(), "no-such-guild.json")
@@ -101,6 +108,34 @@ def test_storage():
     check_raises("깨진 파일은 RuntimeError", lambda: safe_json_load(p, {}), RuntimeError)
     backups = [f for f in os.listdir(os.path.dirname(p)) if ".corrupt_" in f]
     check("원본을 .corrupt_ 로 백업해둠", len(backups), 1)
+
+    # 🚨 손상은 저절로 낫지 않아요. 그 파일을 읽는 모든 길(1분 tick·명령·다시 그리기)이
+    #    계속 여기로 옵니다. 읽을 때마다 사본이 새로 생기면 하루에 수백 개가 쌓여서
+    #    데이터 폴더가 파묻히고 어느 게 원본인지 알아보기 어려워져요.
+    # 이름을 "지금 시각"으로 만들면 초가 바뀌는 순간부터 사본이 계속 늘어나요.
+    # 그래서 1초 이상 벌려서도 읽어봅니다. (같은 초 안에서만 재보면 옛 코드도 통과해요)
+    for _ in range(20):
+        try:
+            safe_json_load(p, {})
+        except RuntimeError:
+            pass
+    time.sleep(1.1)
+    try:
+        safe_json_load(p, {})
+    except RuntimeError:
+        pass
+    backups = [f for f in os.listdir(os.path.dirname(p)) if ".corrupt_" in f]
+    check("여러 번, 시간을 벌려서 읽어도 사본은 그대로 1개", len(backups), 1)
+
+    # 파일이 **또 바뀌어서** 다시 깨진 건 새 사고예요. 그건 따로 남아야 합니다.
+    time.sleep(1.1)     # 수정 시각이 실제로 달라지도록 (초 단위 이름이라)
+    io.open(p, "w", encoding="utf-8").write("{또 깨진 내용")
+    try:
+        safe_json_load(p, {})
+    except RuntimeError:
+        pass
+    backups = [f for f in os.listdir(os.path.dirname(p)) if ".corrupt_" in f]
+    check("파일이 또 깨지면 그건 따로 남김", len(backups), 2)
 
     print("\n[4] 🚨 저장이 실패하면 예외를 던져야 해요")
     # 폴더 경로에 저장을 시도하면 실패합니다. (조용히 넘어가면 "성공 메세지 + 잔액 그대로")
@@ -216,12 +251,140 @@ def test_wallet():
                       ("reward_amount", 200), ("user_stats", {})):
         check(f"{key} 기본값", a[key], want)
 
+    print("\n[14] 🚨 자정 루프를 놓쳐도 다음 날 출석이 막히면 안 돼요")
+    # 오늘 명단을 지우는 건 자정 00:00 루프뿐이었어요. 그 시각에 봇이 꺼져 있으면
+    # (재시작·PC 종료·정전) 그 회차는 그냥 지나가고, tasks.loop은 따라잡지 않습니다.
+    # 그러면 어제 출석한 사람 전원이 하루 종일 "이미 출석하셨어요"를 봅니다.
+    from cogs.economy import roll_attendance_day
+
+    yesterday = {"date": "2026-09-07", "today_count": 3, "today_users": ["1", "2", "3"],
+                 "user_stats": {"1": 10}}
+    rolled = roll_attendance_day(yesterday, "2026-09-08")
+    check("날짜가 지났으면 명단을 비움", (rolled, yesterday["today_users"], yesterday["today_count"]),
+          (True, [], 0))
+    check("누적 기록은 건드리지 않음", yesterday["user_stats"], {"1": 10})
+
+    same = {"date": "2026-09-08", "today_count": 2, "today_users": ["1", "2"]}
+    check("같은 날이면 그대로", (roll_attendance_day(same, "2026-09-08"), same["today_users"]),
+          (False, ["1", "2"]))
+
+    # 📌 날짜 칸이 없는 옛 파일을 비워버리면, 오늘 이미 출석한 사람이 한 번 더 받아요.
+    #    재화가 복사되는 쪽으로는 기울이지 않습니다.
+    legacy = {"today_count": 2, "today_users": ["1", "2"]}
+    check("옛 파일은 비우지 않고 날짜만 박음",
+          (roll_attendance_day(legacy, "2026-09-08"), legacy["today_users"], legacy["date"]),
+          (False, ["1", "2"], "2026-09-08"))
+
+    # 실제 로더도 같은 일을 하는지. (규칙만 맞고 로더가 안 부르면 소용없어요)
+    atomic_json_save(cfg.ATTENDANCE_FILE,
+                     {"date": "2000-01-01", "today_count": 5, "today_users": ["9"],
+                      "reward_amount": 200, "user_stats": {}})
+    check("_load_attendance가 실제로 넘겨줌", eco._load_attendance()["today_users"], [])
+
+
+# ============================================================
+def test_loader_shapes():
+    """데이터 로더가 **빈 파일에서도 약속한 모양**을 돌려주는지."""
+    import chunsik_config as cfg
+    import chunsik_state as st
+    from chunsik_storage import atomic_json_save
+
+    print("\n[15] 🚨 빈 파일에서도 약속한 모양이 나와야 해요")
+    # 로더에 적어둔 기본값은 **파일이 아예 없을 때만** 쓰입니다. 그런데 init_json_files가
+    # 봇이 뜰 때 데이터 파일을 전부 빈 {} 로 미리 만들어둬요. 그래서 새로 설치한 환경에서는
+    # 그 기본값이 한 번도 안 쓰이고 언제나 {} 가 넘어옵니다.
+    #
+    # 지금 부르는 쪽이 .get()으로 조심하고 있어도, 나중에 누가 load_selfroles()["panels"]
+    # 라고 쓰면 **개발 PC에서는 멀쩡하고 새로 납품한 서버에서만** 죽어요.
+    # (출석 데이터가 실제로 그 사고를 냈습니다)
+    cases = [
+        (cfg.PARTY_FILE, st.load_party, {"parties": dict}),
+        (cfg.SCRIM_FILE, st.load_scrim, {"matches": dict, "records": dict}),
+        (cfg.LEVELS_FILE, st.load_levels, {"users": dict, "rewards": dict, "config": dict}),
+        (cfg.WELCOME_FILE, st.load_welcome, {"auto_roles": list, "message": str}),
+        (cfg.SELFROLE_FILE, st.load_selfroles, {"panels": dict}),
+        (cfg.WIKI_FILE, st.load_wiki, {"wiki": dict}),
+        (cfg.LEDGER_FILE, st.load_ledger, {"entries": list}),
+    ]
+    for path, loader, shape in cases:
+        name = os.path.basename(path)
+        for label, written in (("빈 파일", {}), ("칸 타입이 어긋남", {k: 0 for k in shape})):
+            atomic_json_save(path, written)
+            try:
+                data = loader()
+                missing = [k for k, t in shape.items() if not isinstance(data.get(k), t)]
+            except Exception as e:
+                missing = [f"{type(e).__name__}: {e}"]
+            check(f"{name} ({label})", missing, [])
+
+
+def test_birthday_catch_up():
+    print("\n[16] 🎂 자정을 놓쳐도 생일 축하가 사라지면 안 돼요")
+    # 출석([14])·백업과 같은 이유예요. tasks.loop(time=...)은 놓친 회차를 따라잡지
+    # 않아서, 새벽에 PC를 꺼두는 서버는 그날 생일인 사람이 **영영** 축하를 못 받습니다.
+    #
+    # ⚖️ 다만 무한정 거슬러 올라가면 안 돼요. 사흘 전 생일을 이제 와서 축하하면
+    #    오히려 어색합니다. **어제까지만** 따라잡고, 그때는 문구도 달라야 해요.
+    import asyncio, datetime as dt, types
+    import chunsik_config as cfg
+    import cogs.birthday as B
+
+    cog = object.__new__(B.ChunsikBirthday)
+    store = {}
+    cog.load_global_settings = lambda: dict(store)
+
+    real_save, real_gate, real_dt = B.save_settings, B.is_feature_enabled, B.dt
+    B.save_settings = lambda d: (store.clear(), store.update(d))
+    B.is_feature_enabled = lambda key: store.get("_on", True)
+    # 2026-09-09 오전 9시에 켠 것으로 두고 봅니다. (자정은 이미 지났어요)
+    B.dt = types.SimpleNamespace(
+        datetime=types.SimpleNamespace(
+            now=lambda tz=None: dt.datetime(2026, 9, 9, 9, 0, tzinfo=cfg.KST)),
+        date=dt.date, timedelta=dt.timedelta, time=dt.time)
+
+    done = []
+
+    async def spy(target_date, late=False):
+        done.append((target_date.isoformat(), late))
+    cog._announce_for = spy
+
+    def run(last, on=True):
+        done.clear()
+        store.clear()
+        store["_on"] = on
+        if last is not None:
+            store[B.LAST_RUN_KEY] = last
+        asyncio.run(cog.catch_up())
+        return list(done)
+
+    try:
+        check("처음 켜는 서버는 어제까지 안 뒤짐", run(None), [("2026-09-09", False)])
+        check("오늘 이미 했으면 안 함", run("2026-09-09"), [])
+        check("자정만 놓쳤으면 오늘 것만", run("2026-09-08"), [("2026-09-09", False)])
+        check("하루를 건너뛰면 어제 것도 (늦었지만 문구)",
+              run("2026-09-07"), [("2026-09-08", True), ("2026-09-09", False)])
+        check("일주일 꺼져 있어도 어제까지만",
+              run("2026-09-02"), [("2026-09-08", True), ("2026-09-09", False)])
+        check("기록이 깨져 있으면 오늘 것만", run("이상한값"), [("2026-09-09", False)])
+        check("기능이 정지 상태면 아무것도 안 함", run("2026-09-07", on=False), [])
+
+        # 하루에 두 번 켜도 두 번 가면 안 돼요.
+        run("2026-09-07")
+        done.clear()
+        asyncio.run(cog.catch_up())
+        check("같은 날 두 번 켜도 한 번만", done, [])
+        check("마지막 실행 날짜를 적어둠", store.get(B.LAST_RUN_KEY), "2026-09-09")
+    finally:
+        B.save_settings, B.is_feature_enabled, B.dt = real_save, real_gate, real_dt
+
 
 # ============================================================
 if __name__ == "__main__":
     test_storage()
     test_ledger()
     test_wallet()
+    test_loader_shapes()
+    test_birthday_catch_up()
     print()
     if _fails:
         print(f"🚨 {len(_fails)}건 실패: {', '.join(_fails)}")

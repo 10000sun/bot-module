@@ -30,7 +30,7 @@ from chunsik_config import KST, SNOOZE_FILE
 from chunsik_alerts import report_loop_error
 from chunsik_settings import feature_gate, is_feature_enabled
 from chunsik_storage import atomic_json_save_or_raise, safe_json_load
-from chunsik_utils import parse_datetime_text
+from chunsik_utils import INPUT_ECHO_LIMIT, clip, parse_datetime_text, stored_start
 from chunsik_utils import ChunsikView
 
 # 🕘 "내일 아침" 같은 말이 실제로 몇 시인지. 하루 중 그 시각이 이미 지났으면 다음 날로 넘어가요.
@@ -251,7 +251,14 @@ class ChunsikSnooze(commands.Cog):
             amount = int(rel.group(1))
             if amount <= 0:
                 return None, "❌ 시간은 1 이상으로 넣어주세요."
-            wake_at = now + dt.timedelta(**{_REL_UNITS[rel.group(2)]: amount})
+            # 🔢 자릿수가 큰 숫자를 넣으면 timedelta가 OverflowError로 터집니다.
+            #    ("9999999999999분 뒤") 이 함수의 약속은 "(값, 오류문구) 중 하나를 돌려준다"인데
+            #    예외를 던져버리면 부르는 쪽은 안내 대신 "예상치 못한 오류"만 보여줘요.
+            #    어차피 그 정도 숫자는 아래 MAX_DAYS 검사에서 걸릴 값이라, 같은 안내로 돌려줍니다.
+            try:
+                wake_at = now + dt.timedelta(**{_REL_UNITS[rel.group(2)]: amount})
+            except (OverflowError, ValueError):
+                return None, f"❌ 너무 먼 미래예요. 최대 {MAX_DAYS}일 뒤까지만 미뤄둘 수 있어요."
         else:
             wake_at = self._parse_absolute(raw.replace("/", "-").replace(".", "-"), now)
 
@@ -391,12 +398,12 @@ class ChunsikSnooze(commands.Cog):
     # ========== ⏰ 깨우기 ==========
     @staticmethod
     def _wake_at(row: dict) -> Optional[dt.datetime]:
-        """예약 한 줄의 '깨울 시각'. 값이 깨져 있으면 None을 돌려줍니다."""
-        try:
-            parsed = dt.datetime.fromisoformat(row.get("wake_at", ""))
-        except (TypeError, ValueError):
-            return None
-        return parsed.replace(tzinfo=KST) if parsed.tzinfo is None else parsed
+        """예약 한 줄의 '깨울 시각'. 값이 깨져 있으면 None을 돌려줍니다.
+
+        🔁 이 방식(깨진 줄은 None → 부르는 쪽이 건너뜀)을 파티·내전도 쓰게 되면서
+           chunsik_utils.stored_start로 옮겼어요. 두 벌로 두면 한쪽만 고쳐집니다.
+        """
+        return stored_start(row, "wake_at")
 
     @tasks.loop(minutes=1)
     async def snooze_loop(self):
@@ -523,7 +530,16 @@ class ChunsikSnooze(commands.Cog):
                 ephemeral=True,
             )
 
-        mine.sort(key=lambda r: r.get("wake_at", ""))
+        await interaction.response.send_message(embed=self.build_list_embed(mine), ephemeral=True)
+
+    def build_list_embed(self, mine: list) -> discord.Embed:
+        """미뤄둔 예약 목록 임베드를 만듭니다.
+
+        (명령 안쪽에 있던 걸 밖으로 뺐어요. tools/check_embeds.py가 이 함수를 그대로 불러서
+         "예약이 꽉 찼을 때도 한도 안에 들어오는가"를 검사합니다. 안쪽에 두면 검사 도구가
+         같은 코드를 베껴 써야 하고, 그러면 여기가 바뀌어도 검사는 옛 코드를 계속 통과시켜요)
+        """
+        mine = sorted(mine, key=lambda r: r.get("wake_at", ""))
         embed = discord.Embed(title="⏰ 미뤄둔 메시지", color=0x5CE6B4)
 
         # 개수뿐 아니라 **글자 수 총합**도 같이 셉니다. (위 EMBED_TOTAL_LIMIT 주석 참고)
@@ -564,12 +580,13 @@ class ChunsikSnooze(commands.Cog):
             )
         else:
             embed.set_footer(text="취소하려면 /스누즈 취소 에 번호를 넣어주세요")
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        return embed
 
     @스누즈.command(name="취소", description="미뤄둔 메시지 알림을 취소합니다. (번호는 /스누즈 목록의 #숫자)")
     @app_commands.describe(번호="취소할 예약 번호 (예: 7 또는 #7)")
     async def cancel(self, interaction: discord.Interaction, 번호: str):
-        target = 번호.strip().lstrip("#")
+        # ✂️ 번호는 짧은 숫자예요. 여기서 한 번 자르면 아래 안내 문구가 전부 안전해집니다.
+        target = clip(번호.strip().lstrip("#"), INPUT_ECHO_LIMIT)
         data = self._load()
 
         # 🔒 남의 예약은 건드릴 수 없어요. 번호만 알면 지워지면 안 되니까 소유자까지 확인합니다.

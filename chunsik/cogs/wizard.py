@@ -13,7 +13,9 @@
    돌아갑니다. 그래서 빈 역할이면 충분하고, 그래야 안전해요.
 
 ⚠️ 채널·역할을 만들려면 봇에게 **채널 관리**와 **역할 관리** 권한이 있어야 해요.
-   없으면 무엇이 없어서 실패했는지 그대로 알려줍니다. (README 3번 초대 URL 참고)
+   시작하기 전에 먼저 확인하고(`_permission_problem`), 없으면 아무것도 만들지 않은 채
+   무엇을 켜야 하는지 알려줍니다. 만들다가 중간에 막히면 서버에 쓰다 만 카테고리가
+   남거든요. (README 3번 초대 URL 참고)
 """
 
 import discord
@@ -45,6 +47,9 @@ CATEGORY_BY_CHANNEL = {
     "stock_log": "📋 로그",
     "birthday_log": "📋 로그",
     "scrim_log": "📋 로그",
+    "party_log": "📋 로그",
+    "level_log": "📋 로그",
+    "wiki_log": "📋 로그",
     "member_log": "📋 로그",
 
     # 🆔 아이디 등록부 — 유저가 올리는 채널과 명단이 나란히 있어야 편해요.
@@ -101,12 +106,17 @@ CHANNEL_PURPOSE = {
     "welcome":           ("새로 들어온 사람에게 인사하는 곳이에요.", SEEN_BY_USERS),
     "member_log":        ("누가 들어오고 나갔는지 남습니다.", SEEN_BY_STAFF),
     "scrim_log":         ("내전 결과가 쌓입니다. 누가 어느 팀으로 이겼는지요.", SEEN_BY_USERS),
+    "party_log":         ("끝난 모집을 누가 정리했는지 남습니다.", SEEN_BY_STAFF),
+    "level_log":         ("관리자가 남의 경험치를 조정한 기록이 남습니다.", SEEN_BY_STAFF),
+    "wiki_log":          ("위키를 누가 고치고 지웠는지 남습니다.", SEEN_BY_STAFF),
     "level_announce":    ("레벨업 축하를 모아서 올리는 곳이에요.", SEEN_BY_USERS),
 }
 
 # 🎭 관리자 역할이 **무엇을 할 수 있게 되는지.**
 #    이걸 안 적어두면 "아이디 관리자"를 누구에게 줘야 하는지 판단할 수가 없어요.
 ROLE_PURPOSE = {
+    "settings_admin": "채널·관리자 역할 지정 등 `/설정` 명령 전체를 쓸 수 있어요. "
+                      "봇 설정을 통째로 만지는 역할이라 아무에게나 주면 안 됩니다.",
     "ids_admin":      "남의 아이디를 고치고 중복을 정리할 수 있어요.",
     "shop_admin":     "물건을 넣고 빼고 값을 정합니다.",
     "stock_admin":    "종목을 만들고 종가를 게시합니다.",
@@ -119,6 +129,23 @@ ROLE_PURPOSE = {
     "party_admin":    "남이 연 모집도 마감하고, 끝난 기록을 정리합니다.",
     "scrim_admin":    "남이 연 내전도 팀을 짜고 결과를 남길 수 있어요.",
 }
+
+
+# 🚫 `/설치`가 **만들지 않는** 역할.
+#
+#    `settings_admin`은 다른 관리자 역할들과 무게가 달라요. 받은 사람이
+#    `/설정 관리자 상점`으로 **자기에게 상점 관리자를 달 수 있고**, 그러면 `/지급`으로
+#    재화를 무제한 찍습니다. "관리자 역할을 나눠줄 수 있다"가 이 역할의 정의라서
+#    구멍이 아니라 성질이에요.
+#
+#    안내문에 ⚠️ 경고를 적어두는 것만으로는 부족합니다 — 클라이언트는 `/설치`가 만든
+#    역할 열두 개를 "담당자에게 나눠주는 것"으로 읽어서, 경고를 읽어도 손이 먼저 가요.
+#    필요한 서버만 `/설정 관리자 설정`으로 한 줄 더 치게 합니다.
+#    (👑 대장을 `/설치`에서 뺀 것과 같은 방식이에요 — 선례가 있습니다)
+#
+#    ⚠️ ROLE_PURPOSE에서는 빼지 마세요. 그 표는 `/설정 관리자 설정`으로 지정할 때
+#       무슨 역할인지 설명하는 데도 쓰이고, check_modules가 빈칸을 잡습니다.
+WIZARD_SKIP_ROLES = {"settings_admin"}
 
 
 def channel_purpose(key: str) -> tuple:
@@ -141,9 +168,20 @@ def _category_order(channel_key: str) -> int:
     return _category_order_by_name(_category_of(channel_key))
 
 
+# ✂️ 접두사 상한. 디스코드 카테고리 이름은 100자인데, 접두사가 그걸 다 먹으면 안 돼요.
+#
+# 🐛 [버그] 예전엔 상한이 없어서 `_prefixed`가 100자로 자르는 게 전부였습니다. 접두사를
+#    100자 넘게 넣으면 **모든 카테고리 이름이 잘린 접두사 하나로 똑같아져요.** 그러면
+#    `discord.utils.get(guild.categories, name=...)`이 전부 같은 카테고리를 찾아내서,
+#    로그·아이디·주식·상점이 **한 카테고리에 다 들어갑니다.** 성격별로 나눠 담는다는
+#    이 기능의 취지가 통째로 사라지는데 오류는 하나도 안 나요.
+MAX_PREFIX_LENGTH = 20
+
+
 def _prefixed(category: str, prefix: str) -> str:
     """카테고리 이름 앞에 접두사를 붙입니다. 디스코드 상한(100자)을 넘지 않게 잘라요."""
-    name = f"{prefix.strip()} {category}" if prefix.strip() else category
+    prefix = (prefix or "").strip()[:MAX_PREFIX_LENGTH]
+    name = f"{prefix} {category}" if prefix else category
     return name[:100]
 
 
@@ -449,6 +487,39 @@ class ChunsikWizard(commands.Cog):
             return {}, {}
         return cog._CHANNEL_COMMANDS, cog._ROLE_COMMANDS
 
+    # ---------- 만들기 전에 권한부터 ----------
+
+    @staticmethod
+    def _permission_problem(guild, need_channels: bool, need_roles: bool):
+        """지금 상태로 만들기를 시작하면 중간에 막히는지 미리 봅니다. 괜찮으면 None.
+
+        🚧 [왜 미리 보는가] apply()는 Forbidden을 만나면 그 자리에서 멈추는데, 그때는 이미
+           카테고리 한두 개가 만들어진 뒤예요. 클라이언트 서버에 쓰다 만 카테고리가 남고,
+           다시 돌리면 그건 재사용되지만 "왜 반만 됐지"를 먼저 겪게 됩니다.
+           초대 링크의 권한 숫자를 빼먹는 건 README가 제일 자주 빠뜨린다고 적어둔 자리예요.
+
+        먼저 걸러내면 아무것도 안 건드리고 "이걸 켜주세요" 한 줄로 끝납니다.
+        """
+        me = guild.me
+        if me is None:          # 캐시가 아직 안 찼을 때. 막을 근거가 없으니 통과시켜요.
+            return None
+        perms = me.guild_permissions
+        if perms.administrator:
+            return None
+
+        missing = []
+        if need_channels and not perms.manage_channels:
+            missing.append("**채널 관리**(Manage Channels) — 카테고리와 채널을 만들려면 필요해요")
+        if need_roles and not perms.manage_roles:
+            missing.append("**역할 관리**(Manage Roles) — 관리자 표식 역할을 만들려면 필요해요")
+        if not missing:
+            return None
+
+        lines = "\n".join(f"└ {item}" for item in missing)
+        return ("⛔ 봇에게 권한이 모자라서 시작하지 않았어요. **아무것도 만들지 않았습니다.**\n"
+                f"{lines}\n\n"
+                "서버 설정 → 역할에서 봇 역할에 켜주시거나, README의 초대 링크로 다시 초대해 주세요.")
+
     def _missing(self):
         """아직 지정되지 않은 (채널, 역할) 목록. 담긴 기능 것만 봅니다."""
         channel_table, role_table = self._tables()
@@ -462,7 +533,8 @@ class ChunsikWizard(commands.Cog):
         #    (표를 고치면 서버에 생기는 순서도 같이 바뀌어요)
         channels.sort(key=lambda item: (_category_order(item[1]), item[0]))
         roles = [(label, key) for label, key in role_table.items()
-                 if is_active("roles", key, ENABLED_MODULE_KEYS) and not set_roles.get(key)]
+                 if is_active("roles", key, ENABLED_MODULE_KEYS) and not set_roles.get(key)
+                 and key not in WIZARD_SKIP_ROLES]
         return channels, roles
 
     @staticmethod
@@ -486,6 +558,11 @@ class ChunsikWizard(commands.Cog):
                 "✅ 이미 전부 지정돼 있어요. 더 할 게 없습니다! 🎉\n"
                 "바꾸고 싶은 게 있으면 `/설정 채널`·`/설정 관리자`로 하나씩 고칠 수 있어요.",
                 ephemeral=True)
+
+        # 🚧 안내를 다 따라가게 해놓고 마지막에 권한이 없어서 멈추면 제일 허탈해요.
+        problem = self._permission_problem(interaction.guild, bool(channels), bool(roles))
+        if problem:
+            return await interaction.response.send_message(problem, ephemeral=True)
 
         view = GuidedSetup(self, interaction.user.id, channels, roles)
         view._rebuild()
@@ -513,13 +590,22 @@ class ChunsikWizard(commands.Cog):
         if roles:
             embed.add_field(name=f"🎭 관리자 역할 {len(roles)}개",
                             value=", ".join(f"`{label}`" for label, _ in roles), inline=False)
+        # 🔑 이 명령의 일이 "아직 뭐가 준비 안 됐나"를 알려주는 거예요. 만들 게 남았는데
+        #    만들 권한이 없다면, 그게 지금 제일 먼저 알아야 할 사실입니다.
+        problem = self._permission_problem(interaction.guild, bool(channels), bool(roles))
+        if problem:
+            embed.add_field(name="⛔ 봇 권한이 모자라요", value=problem, inline=False)
+            embed.color = 0xE74C3C
+
         embed.set_footer(text="담지 않은 기능의 채널·역할은 여기 나오지 않아요.")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @설치.command(name="자동생성", description="[관리자] 빠져 있는 채널과 관리자 역할을 만들어서 곧바로 지정해요.")
     @app_commands.describe(접두사="카테고리 이름 앞에 붙일 말 (예: `봇` → `봇 📋 로그`). 생략하면 안 붙여요",
                            역할도="관리자 역할까지 만들지 (기본값: True)")
-    async def auto(self, interaction: discord.Interaction, 접두사: str = "", 역할도: bool = True):
+    async def auto(self, interaction: discord.Interaction,
+                   접두사: app_commands.Range[str, None, MAX_PREFIX_LENGTH] = "",
+                   역할도: bool = True):
         if not interaction.user.guild_permissions.administrator:
             return await interaction.response.send_message("❌ 서버 관리자만 쓸 수 있어요!", ephemeral=True)
 
@@ -529,6 +615,12 @@ class ChunsikWizard(commands.Cog):
         if not channels and not roles:
             return await interaction.response.send_message(
                 "✅ 이미 전부 지정돼 있어요. 만들 게 없습니다.", ephemeral=True)
+
+        # 🚧 권한부터 봅니다. 미리보기를 보여주고 "만들기"까지 누르게 한 다음 권한이 없어서
+        #    반만 만들고 멈추면, 클라이언트 서버에 쓰다 만 카테고리가 남아요.
+        problem = self._permission_problem(interaction.guild, bool(channels), bool(roles))
+        if problem:
+            return await interaction.response.send_message(problem, ephemeral=True)
 
         # 🚧 만들기 전에 무엇이 생길지 그대로 보여줍니다. 채널·역할을 만드는 건 되돌리기가
         #    번거로운 일이라, 확인 없이 진행하지 않아요.
@@ -650,8 +742,16 @@ class ChunsikWizard(commands.Cog):
 
         # 💾 만든 것부터 먼저 저장합니다. 여기서 실패하면 채널은 생겼는데 지정이 안 된
         #    상태라, 그때는 `/설정 채널 …`로 손으로 이어 붙일 수 있게 그대로 알려줘요.
+        #
+        # 🔒 위에서 읽어둔 settings는 **낡았어요.** 카테고리·채널·역할을 만드느라 수십 번
+        #    네트워크를 오갔습니다(서버가 크면 몇 초씩 걸려요). 그동안 다른 관리자가
+        #    `/설정 …`이나 `/기능제어`를 썼다면 옛 snapshot을 덮어쓰면서 **그 변경이 조용히
+        #    되돌아갑니다.** 우리가 정한 칸만 지금 파일에 얹어요.
         try:
-            save_settings(settings)
+            fresh = load_settings()
+            fresh.setdefault("channels", {}).update(settings["channels"])
+            fresh.setdefault("roles", {}).update(settings["roles"])
+            save_settings(fresh)
             saved = True
         except Exception as e:
             saved = False
@@ -682,5 +782,15 @@ class ChunsikWizard(commands.Cog):
                 note="*…외 {count}개*")
         if failed:
             add_lines_field(result, "🚨 못 만든 것", failed[:10], note="*…외 {count}개*")
+        # 🚫 `설정 관리자`는 일부러 안 만들어요(WIZARD_SKIP_ROLES). 그런데 아무 말도 없으면
+        #    "빠뜨렸나?" 싶습니다. 왜 없는지와, 정말 필요할 때 어떻게 하는지를 같이 적어요.
+        if made_roles or reuse_roles:
+            result.add_field(
+                name="🔐 `설정 관리자` 역할은 일부러 안 만들었어요",
+                value=("이 역할을 받은 사람은 `/설정` 전체를 쓸 수 있어서 **다른 관리자 역할도 "
+                       "스스로에게 달 수 있어요.** 서버 관리자는 원래부터 `/설정`을 다 쓸 수 있으니 "
+                       "대부분은 필요 없습니다.\n"
+                       "꼭 필요하시면 역할을 하나 만들고 `/설정 관리자 설정`으로 지정해 주세요."),
+                inline=False)
         result.set_footer(text="남은 설정은 /설치 점검으로 다시 확인할 수 있어요.")
         return result

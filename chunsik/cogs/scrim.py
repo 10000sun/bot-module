@@ -31,15 +31,24 @@ import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 
+from chunsik_alerts import report_loop_error
 from chunsik_config import KST, module_active
 from chunsik_settings import (feature_gate, has_admin_or_role, is_feature_enabled,
                               send_log_embed)
 from chunsik_state import load_scrim, save_scrim, state
 from chunsik_utils import (EMBED_DESC_LIMIT, EMBED_TITLE_LIMIT, MESSAGE_LIMIT,
-                           ChunsikView, add_lines_field, clip, mention_list,
-                           parse_datetime_text)
+                           ChunsikView, add_lines_field, clip, fit_embed, mention_list,
+                           parse_datetime_text, repaint_note, stored_start)
 
 REMIND_BEFORE_MINUTES = 10
+
+# ✍️ 주최자가 손으로 적는 칸의 글자 수 상한.
+# 제목은 임베드 제목, 설명은 임베드 설명으로 그대로 들어갑니다. 칸마다 자르고는
+# 있었지만 **합계(6000자)를 보는 데가 없어서**, 길게 적으면 모집글이 통째로 거부돼요.
+# 그러면 글이 안 올라가는 데서 그치지 않고, 참가 버튼을 눌러도 모집글을 다시 그릴 수
+# 없어서 명단이 그 시점에 얼어붙습니다. (실측: 파티 6,056자 · 내전 6,505자)
+TITLE_LIMIT = 100
+NOTE_LIMIT = 500
 MAX_OPEN_SCRIMS = 25
 MAX_TEAM_SIZE = 20          # 한 팀 인원 상한 (모드가 커봐야 이 정도예요)
 
@@ -174,7 +183,8 @@ class ChunsikScrim(commands.Cog):
     # ---------- 화면 ----------
 
     def _embed(self, scrim: dict, records: dict) -> discord.Embed:
-        start = dt.datetime.fromisoformat(scrim["start"])
+        # ⏰ 시각이 깨져 있어도 모집글은 그려져야 해요. (파티와 같은 이유)
+        start = stored_start(scrim)
         joined = scrim.get("members", [])
         size = scrim["size"]
         need = size * 2
@@ -184,6 +194,12 @@ class ChunsikScrim(commands.Cog):
 
         if result:
             head = "🏁 **끝났어요** — " + ("🤝 무승부" if result == "draw" else f"{TEAMS[result][0]} 승리")
+            color = 0x99AAB5
+        elif scrim.get("closed"):
+            # 🐛 [버그] 이 갈래가 통째로 없었어요. 결과 없이 마감하면 버튼은 전부 사라지는데
+            #    글은 여전히 **"팀 짜기를 누르세요"** 라고 말하고 있었습니다. 누를 게 없는데요.
+            #    (파티 모집글은 "🔒 마감됐어요"를 맨 앞에서 보고 있어요 — 여기만 빠졌습니다)
+            head = "🔒 **마감했어요** — 결과를 남기지 않고 끝난 내전이에요."
             color = 0x99AAB5
         elif teams:
             head = "⚔️ **팀이 나뉘었어요.** 경기가 끝나면 아래 버튼으로 결과를 남겨주세요."
@@ -200,7 +216,11 @@ class ChunsikScrim(commands.Cog):
             description=clip((scrim.get("note") or "") + f"\n\n{head}", EMBED_DESC_LIMIT),
             color=color,
         )
-        embed.add_field(name="시작", value=f"<t:{int(start.timestamp())}:F>\n<t:{int(start.timestamp())}:R>", inline=True)
+        embed.add_field(
+            name="시작",
+            value=(f"<t:{int(start.timestamp())}:F>\n<t:{int(start.timestamp())}:R>" if start
+                   else "⚠️ 시각을 알 수 없어요 (기록이 깨졌어요)"),
+            inline=True)
         embed.add_field(name="형식", value=f"**{size} : {size}**", inline=True)
         embed.add_field(name="주최", value=f"<@{scrim['host']}>", inline=True)
 
@@ -225,7 +245,8 @@ class ChunsikScrim(commands.Cog):
 
         if not result:
             embed.set_footer(text="참가를 누르면 자리를 잡아요. 못 오게 되면 취소를 눌러주세요.")
-        return embed
+        # 🧮 상한이 생기기 전에 올라간 모집글 대비. (푸터까지 붙인 맨 마지막에 불러야 해요)
+        return fit_embed(embed)
 
     @staticmethod
     def _record_tag(records: dict, uid) -> str:
@@ -277,7 +298,13 @@ class ChunsikScrim(commands.Cog):
             if not host_or_admin:
                 return "⛔ 내전을 연 사람이나 내전 관리자만 마감할 수 있어요.", False
             scrim["closed"] = True
-            return None, True
+            # 🔒 마감은 **되돌릴 수 없고**, 팀 짜기·결과 기록까지 같이 끝냅니다.
+            #    아무 말 없이 버튼만 사라지면 "잘못 눌렀나?" 싶어요. 무슨 일이 일어났는지 알립니다.
+            #    (파티 마감과 무게가 달라요. 파티는 마감이 자연스러운 끝이지만, 내전은
+            #     결과를 남기기 전에 마감하면 전적이 아예 안 쌓입니다)
+            if not scrim.get("teams"):
+                return "🔒 마감했어요. 팀을 나누기 전이라 **전적은 쌓이지 않아요.**", True
+            return "🔒 마감했어요. 결과를 남기지 않아서 **전적은 쌓이지 않아요.**", True
 
         if action == "draft":
             if not host_or_admin:
@@ -341,9 +368,13 @@ class ChunsikScrim(commands.Cog):
             await interaction.response.send_message(reply, ephemeral=True)
 
         if changed is not None:
-            await self._repaint(scrim_id, *changed)
+            # 🏁 그림이 실패해도 결과 발표는 반드시 나가야 해요. 예전엔 repaint가 던지면
+            #    승패는 전적에 박힌 채 발표만 통째로 건너뛰었습니다.
+            note = await repaint_note(self._repaint(scrim_id, *changed), "내전 모집글")
             if action.startswith("win:"):
                 await self._announce_result(scrim_id, changed[0])
+            if note:
+                await interaction.followup.send(note.strip(), ephemeral=True)
 
     async def _announce_result(self, scrim_id: str, scrim: dict):
         """결과를 기록 채널에 남깁니다. (채널을 안 정했으면 조용히 건너뜁니다)"""
@@ -370,7 +401,11 @@ class ChunsikScrim(commands.Cog):
             for sid, scrim in list(data["matches"].items()):
                 if scrim.get("closed") or scrim.get("reminded"):
                     continue
-                start = dt.datetime.fromisoformat(scrim["start"])
+                start = stored_start(scrim)
+                if start is None:
+                    # 🛡️ 깨진 줄 하나가 나머지 내전 전부의 알림을 멈추게 두지 않아요.
+                    print(f"⚠️ [내전] 시작 시각이 깨진 모집글을 건너뛰었어요: {sid} -> {scrim.get('start')!r}")
+                    continue
                 if 0 < (start - now).total_seconds() <= REMIND_BEFORE_MINUTES * 60:
                     scrim["reminded"] = True
                     changed = True
@@ -392,6 +427,12 @@ class ChunsikScrim(commands.Cog):
     async def _before_tick(self):
         await self.bot.wait_until_ready()
 
+    @tick.error
+    async def tick_error(self, error: BaseException):
+        # ⏰ 이 루프가 죽으면 내전 시작 알림이 조용히 영영 안 옵니다.
+        #    scrim.json이 손상되거나 start 값이 깨져 fromisoformat이 던지면 여기로 와요.
+        await report_loop_error(self.tick, "내전 알림", error)
+
     # ---------- 명령 ----------
 
     내전 = app_commands.Group(name="내전", description="사람을 모아 팀으로 나누고 승패를 기록합니다.")
@@ -406,8 +447,10 @@ class ChunsikScrim(commands.Cog):
         app_commands.Choice(name="전적을 보고 (기본)", value="balanced"),
         app_commands.Choice(name="완전 무작위", value="random"),
     ])
-    async def open_scrim(self, interaction: discord.Interaction, 제목: str, 한팀인원: int, 시각: str,
-                         팀짜기: app_commands.Choice[str] = None, 설명: str = ""):
+    async def open_scrim(self, interaction: discord.Interaction,
+                         제목: app_commands.Range[str, 1, TITLE_LIMIT], 한팀인원: int, 시각: str,
+                         팀짜기: app_commands.Choice[str] = None,
+                         설명: app_commands.Range[str, None, NOTE_LIMIT] = ""):
         if await feature_gate(interaction, "scrim", "내전"):
             return
         if not 1 <= 한팀인원 <= MAX_TEAM_SIZE:
@@ -512,6 +555,15 @@ class ChunsikScrim(commands.Cog):
             for sid in closed:
                 data["matches"].pop(sid, None)
             self._save(data)
+        # 🧾 [신규] 지난 기록을 지우는 명령인데 흔적이 없었어요.
+        #    내전은 이미 결과 로그 채널이 있어서 새로 만들지 않고 거기 얹습니다.
+        if closed:
+            await send_log_embed(
+                self.bot, "scrim_log", "끝난 내전 기록을 정리했어요.",
+                fields=[("지운 건수", f"{len(closed)}건", True),
+                        ("처리 관리자", interaction.user.mention, True)],
+                guild=interaction.guild,
+            )
         await interaction.response.send_message(
             f"🧹 끝난 내전 {len(closed)}건을 지웠어요.\n"
             "**전적과 순위는 그대로예요.** 올라간 메시지도 남아 있습니다.", ephemeral=True)
