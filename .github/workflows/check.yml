@@ -1,0 +1,26 @@
+name: check
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: chunsik/requirements.txt
+      - run: pip install -r chunsik/requirements.txt
+      - run: python -m compileall -q chunsik tools
+      # 토큰·guild.json 없이 돌아갑니다 (디스코드에 접속하지 않음)
+      - name: tools/check_*.py
+        run: |
+          for f in tools/check_*.py; do
+            echo "::group::$f"
+            python "$f" || exit 1
+            echo "::endgroup::"
+          done

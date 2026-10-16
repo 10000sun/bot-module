@@ -1,13 +1,136 @@
-# 디스코드 봇 (주문제작용 모듈 봇)
+# bot-module — 주문제작용 모듈형 디스코드 봇 프레임워크
 
-기능을 **골라 담아** 서버마다 다르게 납품하는 디스코드 봇입니다.
-지갑·상점·주식·아이디 등록부·생일·AI 대화 같은 기능을 주문에 맞춰 켜고 끕니다.
+[![check](https://github.com/10000sun/bot-module/actions/workflows/check.yml/badge.svg)](https://github.com/10000sun/bot-module/actions/workflows/check.yml)
 
-- 무엇을 담을지는 `chunsik/guild.json`의 `modules`가 정합니다
-- 재화·봇·이벤트·서버 **이름**은 클라이언트가 `/초기설정`으로 직접 넣습니다
-- 안 담은 기능은 명령·설정·데이터 파일까지 통째로 안 따라옵니다
+프리랜서로 디스코드 봇을 **주문받아 납품**하면서 만든 모듈형 프레임워크입니다.
+서버마다 필요한 기능이 달라서, 기능을 코그(cog) 단위 모듈로 나누고 `guild.json` 한 파일로
+**골라 담아** 납품합니다. 안 담은 기능은 슬래시 명령·설정·도움말·데이터 파일까지 통째로 따라오지 않습니다.
 
-이 문서는 **납품 절차와 구조**를 다룹니다.
+- Python 3.10+ / discord.py 2.x (슬래시 명령·버튼·드롭다운) / Gemini API(AI 대화, 선택)
+- 데이터는 JSON 파일에 저장 — 임시 파일에 쓴 뒤 교체하는 방식이라 저장 도중 죽어도 원본이 반쯤 쓰인 채 남지 않습니다
+- 디스코드에 접속하지 않고 돌리는 검증 스크립트(`tools/check_*.py`)와 GitHub Actions CI 포함
+- 이 저장소에는 **실제 서버 ID·토큰·유저 데이터가 없습니다.** `.env`, `guild.json`, `data/`는 `.gitignore` 대상이고
+  예시 파일(`.env.example`, `guild.example.json`)만 올라가 있습니다
+
+> 스크린샷은 아직 없습니다.
+
+## 기능 모듈
+
+`guild.json`의 `modules`에 아래 **키**를 적으면 켜집니다. 목록은 `chunsik/modules.py`의 `MODULE_SPECS`가
+정의하며, 아래 명령어는 `chunsik/cogs/` 코드에서 확인한 것입니다. (재화·봇 이름은 `/초기설정`으로 바뀌는 값이라 `재화`로 적었습니다)
+
+| 키 | 기능 | 주요 슬래시 명령 |
+|---|---|---|
+| `economy` | 지갑·출석·송금·지급/회수·거래내역·서버 통계 | `/지갑` `/출석` `/송금` `/지급` `/회수` `/지갑내역 조회` `/통계` |
+| `shop` | 채널별 상점 매대, 구매/되팔기, 인벤토리, 월별 정산 (지갑 필요) | `/상점 생성` `/상점 항목추가` `/상점 사용` `/상점 정산` |
+| `stock` | 모의 주식: 매수·매도·포트폴리오·그래프·종가게시·개폐장 (지갑 필요) | `/주식 매수` `/주식 매도` `/주식 포폴` `/주식 그래프` `/주식 종가게시` |
+| `id` | 게임 아이디 등록부: 등록·수정·조회, 메시지에서 자동등록, 명단 자동 게시 | `/아이디 등록` `/아이디 조회` `/아이디 전체조회` `/아이디 가져오기` |
+| `birthday` | 생일 등록, 자정에 축하 알림·스레드 | `/생일 등록` `/생일 변경` `/생일 확인` `/생일 삭제` |
+| `gpt` | Gemini 기반 AI 대화, 유저별 장기 기억, 채팅 통계 (`GEMINI_API_KEY` 필요) | `/기억 목록` `/기억 삭제` `/기억 초기화` (대화는 봇 멘션 또는 호출 역할 멘션) |
+| `games` | 하이로우, 선착순 이벤트 (지갑 필요) | `/하이로우` `/이벤트설정` |
+| `levels` | 채팅 활동으로 쌓는 레벨·순위, 레벨업 보상 역할(지갑이 있으면 재화도) | `/레벨 확인` `/레벨 순위` `/레벨 보상설정` |
+| `wiki` | 멤버 위키(소개·취미·MBTI 등) | `/위키 등록` `/위키 조회` `/위키 목록` |
+| `welcome` | 입장 자동 역할·인사말·규칙 패널 | `/입장 자동역할` `/입장 인사말` `/입장 규칙패널` |
+| `selfrole` | 버튼식 셀프 역할 패널 | `/셀프역할 만들기` `/셀프역할 역할추가` |
+| `party` · `scrim` | 파티 모집(정원·대기열) · 내전(팀 분할·전적) | `/파티 모집` · `/내전 열기` `/내전 전적` |
+| `snooze` | 메시지 우클릭으로 "나중에 답장" 예약, 정한 시각에 DM으로 재알림 | `/스누즈 목록` `/스누즈 취소` |
+| `chronicle` | 서버 연대기(날짜순 사건 기록) | `/연대기 기록` `/연대기 보기` |
+
+코어(끌 수 없음): `setting`(`/설정` `/기능제어`) · `help`(`/도움말`) · `wizard`(`/설치 시작`) ·
+`diagnostics`(`/테스트`) · `backup`(매일 03:00 자동 백업).
+
+## 동작 방식
+
+```
+guild.json ─┐
+            ├─ chunsik_config.py ── modules.resolve_modules() ─ 켤 모듈 확정(의존 모듈 자동 추가 + 경고)
+.env ───────┘                                   │
+main.py → chunsik_client.py: setup_hook → load_modules(): 모듈마다 importlib로 cog를 import → add_cog
+                                                │ (한 모듈이 실패해도 나머지는 계속 올라가고 로그에 남김)
+                                                └→ 슬래시 명령 동기화
+```
+
+- **cog 로딩/토글**: `modules.py`의 `ModuleSpec`이 모듈의 신원(import 경로·cog 클래스·의존 모듈·소유한 채널/역할/기능 스위치/데이터 파일)을
+  한 곳에 모아 둡니다. `guild.json`의 `modules`가 켤 목록을 정합니다. 항목을 지우거나 빈 목록이면 전부 켜지므로(빈 목록은 경고를 남깁니다) 골라 담을 땐 꼭 적으세요. 도움말·설정 명령·데이터 파일 생성도 이 "소유 표"를 보고 걸러냅니다.
+- **데이터 저장**: `chunsik/data/*.json` (경로는 `chunsik_config.py`). 저장은 `chunsik_storage.atomic_json_save`
+  (임시 파일 → fsync → 교체, 잠금 충돌 시 짧게 재시도), 읽기는 `safe_json_load`(파일이 깨졌으면 빈 값으로 덮어쓰지 않고 멈춤).
+- **런타임 설정**: 채널·관리자 역할 지정은 `/설정`·`/설치`로 하고 `data/chunsik_settings.json`에 저장됩니다.
+  서버 잠금·역할 사다리 같은 배포 단위 값은 `guild.json`에 둡니다.
+
+### 폴더 구조
+
+```
+chunsik/
+  main.py               진입점
+  chunsik_client.py        봇 클라이언트 (모듈 로딩, 명령 동기화)
+  chunsik_config.py        경로·.env·guild.json 읽기
+  chunsik_settings.py      채널/역할 지정 저장소 (/설정)
+  chunsik_storage.py       JSON 원자적 저장·안전한 읽기
+  chunsik_names.py         재화·봇·이벤트·서버 이름 (/초기설정으로 입력)
+  chunsik_utils.py · chunsik_alerts.py · chunsik_state.py · chunsik_console.py   공용 유틸·다운 알림·상태·콘솔
+  modules.py            모듈 레지스트리 (MODULE_SPECS, 판매 라인 TIER_SPECS)
+  cogs/                 기능별 코그
+  parked/               떼어내 보관 중인 코드 (봇이 import하지 않음, 자세한 건 parked/README.md)
+  .env.example · guild.example.json · requirements.txt
+  data/                 실행 중 생기는 데이터 (깃 제외)
+tools/
+  check_*.py            디스코드 없이 도는 검증 스크립트 (아래 참고)
+  package.py            납품용 폴더 만들기
+.github/workflows/check.yml   CI
+NEXT.md                 개발 인계 문서 (설계 결정·이력)
+설치안내문.md / .html     클라이언트용 설치 안내
+```
+
+## 검증 도구와 CI
+
+`tools/check_*.py`는 토큰 없이, 디스코드에 접속하지 않고 돌아갑니다. 하나라도 틀리면 종료 코드 1입니다.
+
+| 스크립트 | 보는 것 |
+|---|---|
+| `check_modules.py` | 모듈 조합별로 코그가 로딩되는지, 슬래시 명령이 디스코드 규격(이름·설명 길이 등)에 맞는지, 소유 표가 코드와 일치하는지 |
+| `check_help.py` | `/도움말`이 없는 명령을 안내하지 않는지, 안 담은 기능 이름이 문구에 남지 않는지 (11개 조합) |
+| `check_guild.py` | `guild.json` 파싱, 깨진 설정에서 기동을 막는지 |
+| `check_money.py` | 저장 실패·파일 손상 시 잔액이 사라지지 않는지 (임시 폴더에서 실행) |
+| `check_embeds.py` | 가장 나쁜 입력에서도 임베드·메시지가 디스코드 글자 한도 안인지 |
+| `check_tiers.py` | 판매 라인(에센셜/스탠다드/프리미엄) 정의와 `guild.example.json` 프리셋이 일치하는지 |
+
+GitHub Actions(`.github/workflows/check.yml`)가 push/PR마다 의존성을 설치하고
+`python -m compileall chunsik tools` 와 위 여섯 스크립트를 순서대로 실행합니다. 로컬에서도 같은 명령입니다.
+
+```bash
+pip install -r chunsik/requirements.txt
+python -m compileall -q chunsik tools
+for f in tools/check_*.py; do python "$f" || exit 1; done
+```
+
+> `check_money.py`가 보는 건 저장 계층(바닥)까지입니다. 동시성과 명령 흐름 전체는 자동으로 검증하지 않습니다.
+
+## 새 기능(cog) 추가하기
+
+1. `chunsik/cogs/새기능.py`에 `commands.Cog` 클래스를 만듭니다. (생성자는 `bot` 하나를 받습니다 — 기존 코그를 참고하세요)
+2. `chunsik/modules.py`의 `MODULE_SPECS`에 `ModuleSpec("키", "이름", "cogs.새기능", "클래스이름", ...)`를 추가합니다.
+   필요한 모듈은 `requires`, 쓰는 채널·역할·킬스위치·데이터 파일 이름은 `channels`/`roles`/`features`/`data_files`에 적습니다.
+3. 데이터 파일을 쓴다면 `chunsik_config.py`에 경로를 선언하고 `chunsik_storage`의 저장/읽기 함수를 씁니다.
+4. `cogs/help.py`에 도움말 항목을 추가하고, `guild.example.json`의 `_modules설명`에 설명을 적습니다.
+5. `python tools/check_modules.py 새기능키` 와 `python tools/check_help.py`, `python tools/check_tiers.py`로 확인합니다.
+   (소유 표 누락, 명령 규격 위반, 도움말 불일치를 여기서 잡습니다)
+6. 판매 라인에 넣을 거면 `TIER_SPECS`와 `guild.example.json`의 `_티어프리셋`을 같이 고칩니다.
+
+## 빠른 실행 (개발용)
+
+```bash
+python -m venv .venv && source .venv/bin/activate     # 윈도우: .venv\Scripts\activate
+pip install -r chunsik/requirements.txt
+cp chunsik/.env.example chunsik/.env                  # DISCORD_TOKEN 입력
+cp chunsik/guild.example.json chunsik/guild.json      # modules 목록 편집
+cd chunsik && python main.py
+```
+
+봇 생성·Privileged Intent·초대·설정 절차는 아래 "납품 순서"에 자세히 있습니다.
+
+## 라이선스
+
+[LICENSE](LICENSE) — 소스 공개 상태이지만 사용 범위가 제한된 라이선스입니다. 사용 전에 읽어 주세요.
 
 ---
 
@@ -114,7 +237,7 @@ python -m venv .venv
   제일 흔하고 제일 쉬운 새어나감을 막는 장치입니다
 
 고를 수 있는 기능과 의존 관계는 `guild.example.json`의 `_modules설명`에 전부 적혀
-있어요. `setting`·`help`·`diagnostics`·`backup` 네 개는 안 적어도 항상 켜집니다.
+있어요. `setting`·`help`·`wizard`·`diagnostics`·`backup` 다섯 개는 안 적어도 항상 켜집니다.
 
 > 💡 `modules` 항목을 통째로 지우면 **전부 켜기**가 됩니다. 골라 담을 거면 꼭 적으세요.
 
@@ -124,7 +247,7 @@ python -m venv .venv
 |---|---|---|
 | **에센셜** | 서버 관리 기본 | `id` `wiki` `birthday` `snooze` `selfrole` `welcome` |
 | **스탠다드** | ＋ 활동과 보상 | ＋ `economy` `shop` `games` `levels` |
-| **프리미엄** | ＋ 운영 콘텐츠·AI | ＋ `stock` `gpt` `chronicle` `party` |
+| **프리미엄** | ＋ 운영 콘텐츠·AI | ＋ `stock` `gpt` `chronicle` `party` `scrim` |
 
 전 라인 공통(코어, 끌 수 없음): `setting` `help` `diagnostics` `backup` `wizard`
 
@@ -325,23 +448,7 @@ cd chunsik
 
 ---
 
-## 🗂️ 폴더 구조
-
-```
-chunsik/
-  main.py              진입점
-  chunsik_config.py       경로·비밀값·guild.json 읽기
-  chunsik_names.py        재화·봇·이벤트·서버 이름 (클라이언트가 /초기설정으로 입력)
-  modules.py           어떤 기능이 무엇을 데려오는지 (소유 표)
-  cogs/                기능별 코그 (담긴 목록은 기동 로그와 check_modules가 보여줘요)
-  data/                실시간 데이터 (깃에 안 올라감)
-tools/
-  check_modules.py     코그 로딩·명령 규격·소유 표
-  check_help.py        도움말 ↔ 실제 명령 대조 + 안 담은 기능 언급 검사
-  check_guild.py       guild.json 읽기
-  check_money.py       돈 계층의 약속 (저장 실패·파일 손상 시 돈이 안 사라지는지)
-  check_embeds.py      화면이 디스코드 길이 한도 안에 들어오는지 (넘으면 통째로 안 보여요)
-```
+## 🗂️ 데이터와 커밋 규칙
 
 `chunsik/guild.json`, `chunsik/.env`, `chunsik/data/` 는 `.gitignore` 대상이에요.
-**클라이언트 데이터라 절대 커밋하지 마세요.**
+**클라이언트 데이터라 절대 커밋하지 마세요.** (폴더 구조는 위 "동작 방식" 참고)

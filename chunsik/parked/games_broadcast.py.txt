@@ -3,7 +3,7 @@
 # 상점에서 산 '확성기' 아이템 1개를 소모해서, 전용 채널에 큰 글씨(# 헤딩)로 방송을 쏘고
 # 지정된 역할을 함께 멘션하는 기능이에요.
 #
-# 왜 뺐나 — 원본 서버(에바스타운)에서는 "시민권" 역할 전원을 태그해 서버 전체에 알리는
+# 왜 뺐나 — 원본 서버에서는 "시민권" 역할 전원을 태그해 서버 전체에 알리는
 # 제도였어요. 아이템으로 전체 멘션 권한을 사고판다는 구조 자체가 그 서버의 문화라,
 # 다른 서버에 그대로 납품할 수 없습니다.
 #
@@ -24,13 +24,13 @@
 # ============================================================================
 # [1] cogs/games.py — 모듈 docstring과 import
 # ============================================================================
-# 원래 1줄: """ChunsikGames — 하이로우 게임, 에바시 선착순 이벤트, 고성능 확성기."""
-#   → 고확을 빼면서 """ChunsikGames — 하이로우 게임, 에바시 선착순 이벤트.""" 로 줄였어요.
+# 원래 1줄: """ChunsikGames — 하이로우 게임, 이벤트 선착순 이벤트, 고성능 확성기."""
+#   → 고확을 빼면서 """ChunsikGames — 하이로우 게임, 이벤트 선착순 이벤트.""" 로 줄였어요.
 #
 # 아래 import 중 고확만 쓰던 것들은 games.py에서 전부 걷어냈습니다. 도로 붙일 때 같이 살리세요.
 
 import os
-import traceback  # (에바시 쪽에서도 쓰므로 games.py에 그대로 남아 있어요)
+import traceback  # (이벤트 쪽에서도 쓰므로 games.py에 그대로 남아 있어요)
 
 from chunsik_config import GOHWAK_MENTION_ROLE_ID, SHOP_FILE
 from chunsik_alerts import send_alert
@@ -207,7 +207,7 @@ from chunsik_storage import atomic_json_save_or_raise, safe_json_load
 # ============================================================================
 # [4] cogs/setting.py — /설정 채널 고확 (ChunsikSetting 클래스 메서드)
 # ============================================================================
-# @채널.command 들 사이, '에바시' 채널 설정 바로 아래에 있었어요.
+# @채널.command 들 사이, '이벤트' 채널 설정 바로 아래에 있었어요.
 
     @채널.command(name="고확", description="[관리자] 고성능 확성기 사용 채널이에요.")
     async def set_global_broadcast_ch(self, interaction: discord.Interaction, 채널: discord.TextChannel):

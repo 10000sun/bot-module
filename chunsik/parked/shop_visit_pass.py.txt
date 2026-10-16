@@ -1,4 +1,4 @@
-"""[보관] 견학권 구매 처리 — 원본 서버(에바스타운)의 캠프 견학 제도 전용.
+"""[보관] 견학권 구매 처리 — 원본 서버의 캠프 견학 제도 전용.
 
 ⚠️ 이 파일은 봇이 불러오지 않습니다. parked/README.md 를 먼저 읽어주세요.
 
@@ -53,7 +53,7 @@ VISIT_PASS_ASK_FILE 설정을 그 클라이언트 개념에 맞게 새로 만들
 #    날짜는 "8/12"일 수도 "이번 주말"일 수도 있어서 형식을 강제하지 않고 원문 그대로 넘깁니다.
 
 VISIT_PASS_ASK_DAYS = 3                     # 답을 기다리는 기간. 지나면 버튼이 만료돼요.
-VISIT_PASS_CAMPS = tuple(CAMP_ROLE_IDS)     # 악동 / 나래 / 여백 (캠프가 늘면 여기도 자동으로 따라와요)
+VISIT_PASS_CAMPS = tuple(CAMP_ROLE_IDS)     # A / B / C (캠프가 늘면 여기도 자동으로 따라와요)
 
 
 class VisitPassCampButton(discord.ui.Button):

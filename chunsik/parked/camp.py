@@ -99,7 +99,7 @@ class ChunsikCamp(commands.Cog):
         atomic_json_save_or_raise(CAMP_TREASURY_FILE, data, indent=4)
 
     def _is_camp_leader(self, interaction: discord.Interaction) -> bool:
-        """캠프장 역할 보유자, 전율(캠프 관리 기구), 또는 서버 관리자인지 확인합니다."""
+        """캠프장 역할 보유자, 캠프 관리 기구, 또는 서버 관리자인지 확인합니다."""
         if interaction.user.guild_permissions.administrator:
             return True
         if any(r.id == JEONYUL_ROLE_ID for r in interaction.user.roles):
@@ -109,7 +109,7 @@ class ChunsikCamp(commands.Cog):
     def _can_manage_visit(self, interaction: discord.Interaction) -> bool:
         """견학 '보내기'·'복귀'·'조회'를 할 수 있는 사람인지 확인합니다.
 
-        캠프장·전율·서버 관리자에 더해 **상점주인(settings.json의 roles.shop_admin)** 도 허용해요.
+        캠프장·캠프 관리 기구·서버 관리자에 더해 **상점주인(settings.json의 roles.shop_admin)** 도 허용해요.
         (`/설정 관리자 상점` 으로 지정한 역할과 같은 역할이에요)
         견학 '내역'(전체 이동 기록)만 기존대로 캠프장 전용으로 남겨뒀습니다.
         """
@@ -290,9 +290,9 @@ class ChunsikCamp(commands.Cog):
         일수="견학권을 몇 장 쓸지 (기본 1장). 1장=오늘 자정까지, 2장=내일 자정까지. 이미 견학 중이면 마지막 날 뒤에 이어붙어요",
     )
     @app_commands.choices(캠프=[
-        app_commands.Choice(name="악동캠프", value="악동"),
-        app_commands.Choice(name="나래캠프", value="나래"),
-        app_commands.Choice(name="여백캠프", value="여백"),
+        app_commands.Choice(name="A캠프", value="A"),
+        app_commands.Choice(name="B캠프", value="B"),
+        app_commands.Choice(name="C캠프", value="C"),
     ])
     @app_commands.guild_only()
     async def send_visit(self, interaction: discord.Interaction, 유저: discord.Member, 캠프: app_commands.Choice[str],
@@ -301,7 +301,7 @@ class ChunsikCamp(commands.Cog):
             return await interaction.response.send_message("🙅‍♀️ 견학 처리는 캠프장·상점주인(또는 관리자)만 가능해요!", ephemeral=True)
 
         # 🎫 상점주인 자격으로만 통과한 사람이 보내는 건 언제나 일일견학권이에요.
-        # 캠프장·전율·관리자는 직접 고르고, 안 고르면 예전처럼 일반 견학입니다.
+        # 캠프장·캠프 관리 기구·관리자는 직접 고르고, 안 고르면 예전처럼 일반 견학입니다.
         shop_only = not self._is_camp_leader(interaction)
         forced_note = ""
         if shop_only:
@@ -531,9 +531,9 @@ class ChunsikCamp(commands.Cog):
     @visit_group.command(name="복귀", description="[관리자] 견학 중인 인원을 원래 캠프로 복귀시킵니다. 캠프 선택 시 '그 캠프가 원 소속'인 인원만, '전원' 선택 시 견학 중인 모두 복귀해요.")
     @app_commands.describe(캠프="복귀시킬 대상의 원래(원 소속) 캠프. '전원'을 고르면 견학 중인 모든 인원이 한번에 복귀해요.")
     @app_commands.choices(캠프=[
-        app_commands.Choice(name="악동캠프", value="악동"),
-        app_commands.Choice(name="나래캠프", value="나래"),
-        app_commands.Choice(name="여백캠프", value="여백"),
+        app_commands.Choice(name="A캠프", value="A"),
+        app_commands.Choice(name="B캠프", value="B"),
+        app_commands.Choice(name="C캠프", value="C"),
         app_commands.Choice(name="전원", value="전원"),
     ])
     @app_commands.guild_only()
@@ -634,15 +634,15 @@ class ChunsikCamp(commands.Cog):
     # ================== 🧾 캠프별 세금 시스템 ==================
     def _camp_choice_list(self):
         return [
-            app_commands.Choice(name="악동캠프", value="악동"),
-            app_commands.Choice(name="나래캠프", value="나래"),
-            app_commands.Choice(name="여백캠프", value="여백"),
+            app_commands.Choice(name="A캠프", value="A"),
+            app_commands.Choice(name="B캠프", value="B"),
+            app_commands.Choice(name="C캠프", value="C"),
         ]
 
     def _check_camp_leader_scope(self, interaction: discord.Interaction, camp: str) -> Optional[str]:
         """이 사람이 해당 캠프를 다룰 수 있는지 확인합니다. 문제가 있으면 안내 문구를, 없으면 None을 돌려줘요.
 
-        관리자와 전율(캠프 관리 기구)은 모든 캠프를, 캠프장은 본인이 속한 캠프만 다룰 수 있어요.
+        관리자와 캠프 관리 기구은 모든 캠프를, 캠프장은 본인이 속한 캠프만 다룰 수 있어요.
         세금 기준·세금환수와 캠프통장(송금·회수)이 이 함수 하나를 같이 씁니다.
 
         🐛 [버그 수정] 예전엔 이 클래스 안에 같은 이름의 메서드가 **두 개** 있었어요.
@@ -670,9 +670,9 @@ class ChunsikCamp(commands.Cog):
     @camp_treasury_group.command(name="세금기준", description="[캠프장] 우리 캠프의 세금 기준이 지금 어떻게 되어 있는지 확인합니다.")
     @app_commands.describe(캠프="확인할 캠프")
     @app_commands.choices(캠프=[
-        app_commands.Choice(name="악동캠프", value="악동"),
-        app_commands.Choice(name="나래캠프", value="나래"),
-        app_commands.Choice(name="여백캠프", value="여백"),
+        app_commands.Choice(name="A캠프", value="A"),
+        app_commands.Choice(name="B캠프", value="B"),
+        app_commands.Choice(name="C캠프", value="C"),
     ])
     @app_commands.guild_only()
     async def show_tax_rule(self, interaction: discord.Interaction, 캠프: app_commands.Choice[str]):
@@ -699,9 +699,9 @@ class ChunsikCamp(commands.Cog):
     @camp_treasury_group.command(name="세금기준수정", description="[캠프장] 우리 캠프의 세율·구간·확률을 직접 고칩니다.")
     @app_commands.describe(캠프="기준을 고칠 캠프")
     @app_commands.choices(캠프=[
-        app_commands.Choice(name="악동캠프", value="악동"),
-        app_commands.Choice(name="나래캠프", value="나래"),
-        app_commands.Choice(name="여백캠프", value="여백"),
+        app_commands.Choice(name="A캠프", value="A"),
+        app_commands.Choice(name="B캠프", value="B"),
+        app_commands.Choice(name="C캠프", value="C"),
     ])
     @app_commands.guild_only()
     async def edit_tax_rule(self, interaction: discord.Interaction, 캠프: app_commands.Choice[str]):
@@ -716,13 +716,13 @@ class ChunsikCamp(commands.Cog):
     @app_commands.describe(
         캠프="세금을 걷을 캠프",
         실제징수="True로 해야 진짜 걷어요. 비워두면 계산 결과만 보여드립니다.",
-        정률="캠프 기준 대신 전원에게 똑같은 비율(%)을 적용해요. (나래 첫 회 일괄 10% 같은 예외 상황용)",
-        참여자역할="[악동 전용] 세금 룰렛에 참여한 사람들의 역할. 지정하지 않으면 전원 미참여로 최고액을 뭅니다.",
+        정률="캠프 기준 대신 전원에게 똑같은 비율(%)을 적용해요. (B 첫 회 일괄 10% 같은 예외 상황용)",
+        참여자역할="[A 전용] 세금 룰렛에 참여한 사람들의 역할. 지정하지 않으면 전원 미참여로 최고액을 뭅니다.",
     )
     @app_commands.choices(캠프=[
-        app_commands.Choice(name="악동캠프", value="악동"),
-        app_commands.Choice(name="나래캠프", value="나래"),
-        app_commands.Choice(name="여백캠프", value="여백"),
+        app_commands.Choice(name="A캠프", value="A"),
+        app_commands.Choice(name="B캠프", value="B"),
+        app_commands.Choice(name="C캠프", value="C"),
     ])
     @app_commands.guild_only()
     async def collect_tax(self, interaction: discord.Interaction, 캠프: app_commands.Choice[str],
@@ -794,7 +794,7 @@ class ChunsikCamp(commands.Cog):
         async with self.bot.economy_lock:
             economy = economy_cog._load_raw_economy()
 
-            # 📈 나래는 자산 조사에, 여백은 주식 보유세 계산에 주식 평가액이 필요해요.
+            # 📈 B는 자산 조사에, C은 주식 보유세 계산에 주식 평가액이 필요해요.
             needs_stocks = (kind == "flat_bracket" and cfg.get("include_stocks")) or \
                            (kind == "progressive" and cfg.get("stock_tax_rate", 0) > 0)
             stock_data = {}
@@ -815,8 +815,8 @@ class ChunsikCamp(commands.Cog):
 
                 stock_value = portfolio_value(stock_data, uid) if needs_stocks else 0
 
-                # 📐 과세표준: 나래는 지갑+주식을 합쳐 하나로 보고,
-                #    여백은 지갑세와 주식 보유세를 따로 매겨서 더합니다.
+                # 📐 과세표준: B는 지갑+주식을 합쳐 하나로 보고,
+                #    C은 지갑세와 주식 보유세를 따로 매겨서 더합니다.
                 base = balance
                 if kind == "flat_bracket" and cfg.get("include_stocks"):
                     base = balance + stock_value
@@ -837,7 +837,7 @@ class ChunsikCamp(commands.Cog):
                     tax = 0
 
                 # 🪙 지갑에 있는 만큼만 걷어요. 모자란 건 미납으로 남겨 캠프장이 처리하게 합니다.
-                # (악동의 노비 페널티, 나래의 미납자 강제징수가 여기에 걸립니다)
+                # (A의 노비 페널티, B의 미납자 강제징수가 여기에 걸립니다)
                 paid = max(0, min(tax, balance))
                 unpaid = tax - paid
                 tickets = lottery_tickets(cfg, paid) if kind == "progressive" else 0
@@ -863,7 +863,7 @@ class ChunsikCamp(commands.Cog):
         }.get(kind, "기준 없음")
 
         # 🧾 걷은 세금을 원장에 한 묶음으로 남깁니다. (락을 놓은 뒤에)
-        # 유저가 "내 에바 왜 줄었어요?" 하고 /지갑내역을 열었을 때 세금만 안 보이면
+        # 유저가 "내 코인 왜 줄었어요?" 하고 /지갑내역을 열었을 때 세금만 안 보이면
         # 관리자가 로그 채널을 뒤져야 했어요. 이제 다른 입출금과 똑같이 남습니다.
         if ledger_rows:
             record_ledger_many(ledger_rows, "캠프 세금", f"{캠프.name} · {rule_label}",
@@ -874,7 +874,7 @@ class ChunsikCamp(commands.Cog):
         base_label = "총자산" if (kind == "flat_bracket" and cfg.get("include_stocks")) else "잔액"
         lines = []
         for name, base, tax, paid, unpaid, tickets, stock_value, stock_tax in rows:
-            line = f"{name}  |  {base_label} {base:,} → -{paid:,} 에바"
+            line = f"{name}  |  {base_label} {base:,} → -{paid:,} 코인"
             if stock_tax:
                 # 주식에 묻어둔 자산이 얼마고 거기서 얼마가 나왔는지 바로 보이게 합니다.
                 line += f"  📈주식 {stock_value:,}(-{stock_tax:,})"
@@ -898,16 +898,16 @@ class ChunsikCamp(commands.Cog):
             )
             if idx == len(chunks) - 1:
                 embed.add_field(name="대상 인원", value=f"{len(members)}명", inline=True)
-                embed.add_field(name="걷은 세금 합계", value=f"{total_collected:,} 에바", inline=True)
+                embed.add_field(name="걷은 세금 합계", value=f"{total_collected:,} 코인", inline=True)
                 if 실제징수:
-                    embed.add_field(name=f"🏦 {캠프.name} 통장", value=f"{before:,} → **{after:,} 에바**", inline=True)
+                    embed.add_field(name=f"🏦 {캠프.name} 통장", value=f"{before:,} → **{after:,} 코인**", inline=True)
                 if total_stock_tax:
                     embed.add_field(name="📈 그중 주식 보유세",
-                                    value=f"{total_stock_tax:,} 에바 ({cfg.get('stock_tax_rate', 0):g}%)", inline=True)
+                                    value=f"{total_stock_tax:,} 코인 ({cfg.get('stock_tax_rate', 0):g}%)", inline=True)
                 if total_unpaid:
                     unpaid_names = ", ".join(f"{r[0]}({r[4]:,})" for r in rows if r[4])
                     embed.add_field(
-                        name=f"⚠️ 잔액 부족 미납 ({total_unpaid:,} 에바)",
+                        name=f"⚠️ 잔액 부족 미납 ({total_unpaid:,} 코인)",
                         value=((unpaid_names[:950] + "...") if len(unpaid_names) > 950 else unpaid_names)
                               + ("\n└ 주식은 많은데 지갑이 빈 경우예요. 주식 국유화는 아직 도입 전이라 수동 처리가 필요해요."
                                  if kind == "progressive" and total_stock_tax else ""),
@@ -935,18 +935,18 @@ class ChunsikCamp(commands.Cog):
                 description=f"**집행자:** {interaction.user.mention}\n"
                             f"**대상 캠프:** {캠프.name} ({len(members)}명)\n"
                             f"**적용 기준:** {rule_label}\n"
-                            f"**걷은 세금:** {total_collected:,} 에바\n"
-                            f"**미납 합계:** {total_unpaid:,} 에바\n"
-                            f"**{캠프.name} 통장:** {before:,} → {after:,} 에바",
+                            f"**걷은 세금:** {total_collected:,} 코인\n"
+                            f"**미납 합계:** {total_unpaid:,} 코인\n"
+                            f"**{캠프.name} 통장:** {before:,} → {after:,} 코인",
                 color=0xe67e22
             )
 
     @camp_treasury_group.command(name="조회", description="[관리자] 캠프별 세금 통장 잔액을 확인합니다.")
     @app_commands.describe(캠프="조회할 캠프 (비우면 전체 캠프)")
     @app_commands.choices(캠프=[
-        app_commands.Choice(name="악동캠프", value="악동"),
-        app_commands.Choice(name="나래캠프", value="나래"),
-        app_commands.Choice(name="여백캠프", value="여백"),
+        app_commands.Choice(name="A캠프", value="A"),
+        app_commands.Choice(name="B캠프", value="B"),
+        app_commands.Choice(name="C캠프", value="C"),
     ])
     async def camp_treasury(self, interaction: discord.Interaction, 캠프: Optional[app_commands.Choice[str]] = None):
         if not self._is_camp_leader(interaction):
@@ -957,28 +957,28 @@ class ChunsikCamp(commands.Cog):
 
         if 캠프 is not None:
             bal = treasury.get(캠프.value, 0)
-            embed.add_field(name=f"{캠프.name}", value=f"**{bal:,} 에바**", inline=False)
+            embed.add_field(name=f"{캠프.name}", value=f"**{bal:,} 코인**", inline=False)
         else:
             for value in CAMP_ROLE_IDS.keys():
                 bal = treasury.get(value, 0)
-                embed.add_field(name=f"{value}캠프", value=f"{bal:,} 에바", inline=False)
+                embed.add_field(name=f"{value}캠프", value=f"{bal:,} 코인", inline=False)
 
         embed.set_footer(text=f"조회자: {interaction.user.display_name}")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    @camp_treasury_group.command(name="인출", description="[관리자] 캠프 세금 통장에서 에바를 인출해 본인 지갑으로 받아요.")
-    @app_commands.describe(캠프="인출할 캠프 통장", 금액="인출할 에바 금액")
+    @camp_treasury_group.command(name="인출", description="[관리자] 캠프 세금 통장에서 코인를 인출해 본인 지갑으로 받아요.")
+    @app_commands.describe(캠프="인출할 캠프 통장", 금액="인출할 코인 금액")
     @app_commands.choices(캠프=[
-        app_commands.Choice(name="악동캠프", value="악동"),
-        app_commands.Choice(name="나래캠프", value="나래"),
-        app_commands.Choice(name="여백캠프", value="여백"),
+        app_commands.Choice(name="A캠프", value="A"),
+        app_commands.Choice(name="B캠프", value="B"),
+        app_commands.Choice(name="C캠프", value="C"),
     ])
     async def withdraw_camp_treasury(self, interaction: discord.Interaction, 캠프: app_commands.Choice[str], 금액: int):
         economy_cog = self._get_economy_cog()
         if not economy_cog:
             return await interaction.response.send_message("❌ 경제 시스템 코그를 찾을 수 없어요.", ephemeral=True)
 
-        # 🔐 권한: 관리자/전율(캠프 관리 기구)는 모든 캠프 / 캠프장은 '본인이 속한 캠프'만 인출 가능
+        # 🔐 권한: 관리자/캠프 관리 기구는 모든 캠프 / 캠프장은 '본인이 속한 캠프'만 인출 가능
         is_jeonyul = any(r.id == JEONYUL_ROLE_ID for r in interaction.user.roles)
         if not (interaction.user.guild_permissions.administrator or is_jeonyul):
             is_leader = any(r.id == CAMP_LEADER_ROLE_ID for r in interaction.user.roles)
@@ -993,7 +993,7 @@ class ChunsikCamp(commands.Cog):
                 )
 
         if 금액 <= 0:
-            return await interaction.response.send_message("❌ 인출 금액은 1 에바 이상이어야 합니다.", ephemeral=True)
+            return await interaction.response.send_message("❌ 인출 금액은 1 코인 이상이어야 합니다.", ephemeral=True)
 
         await interaction.response.defer()
 
@@ -1005,7 +1005,7 @@ class ChunsikCamp(commands.Cog):
 
             if before < 금액:
                 return await interaction.followup.send(
-                    f"❌ {캠프.name} 통장 잔액이 부족합니다! (현재 잔액: {before:,} 에바 / 요청: {금액:,} 에바)"
+                    f"❌ {캠프.name} 통장 잔액이 부족합니다! (현재 잔액: {before:,} 코인 / 요청: {금액:,} 코인)"
                 )
 
             after = before - 금액
@@ -1029,7 +1029,7 @@ class ChunsikCamp(commands.Cog):
         if broken:
             return await report_broken_transaction(
                 interaction, action="캠프통장 인출", user_id=user_id,
-                lost=f"{캠프.name} 통장에서 에바 {금액:,}", not_received=f"에바 {금액:,}",
+                lost=f"{캠프.name} 통장에서 코인 {금액:,}", not_received=f"코인 {금액:,}",
                 error=broken,
             )
 
@@ -1043,10 +1043,10 @@ class ChunsikCamp(commands.Cog):
             timestamp=dt.datetime.now(KST)
         )
         embed.add_field(name="대상 캠프", value=f"{캠프.name}", inline=True)
-        embed.add_field(name="인출 금액", value=f"{금액:,} 에바", inline=True)
+        embed.add_field(name="인출 금액", value=f"{금액:,} 코인", inline=True)
         embed.add_field(name="수령자", value=interaction.user.mention, inline=True)
-        embed.add_field(name=f"🏦 {캠프.name} 통장", value=f"{before:,} → **{after:,} 에바**", inline=False)
-        embed.add_field(name="수령자 지갑 잔액", value=f"{user_after:,} 에바", inline=False)
+        embed.add_field(name=f"🏦 {캠프.name} 통장", value=f"{before:,} → **{after:,} 코인**", inline=False)
+        embed.add_field(name="수령자 지갑 잔액", value=f"{user_after:,} 코인", inline=False)
         embed.set_footer(text=f"집행자: {interaction.user.display_name}")
         await interaction.followup.send(embed=embed)
 
@@ -1054,9 +1054,9 @@ class ChunsikCamp(commands.Cog):
             title="🏦 [캠프통장 인출]",
             description=f"**집행자:** {interaction.user.mention}\n"
                         f"**대상 캠프:** {캠프.name}\n"
-                        f"**인출 금액:** {금액:,} 에바\n"
-                        f"**{캠프.name} 통장:** {before:,} → {after:,} 에바\n"
-                        f"**수령자 지갑 잔액:** {user_after:,} 에바",
+                        f"**인출 금액:** {금액:,} 코인\n"
+                        f"**{캠프.name} 통장:** {before:,} → {after:,} 코인\n"
+                        f"**수령자 지갑 잔액:** {user_after:,} 코인",
             color=0x5CE6B4
         )
 
@@ -1064,12 +1064,12 @@ class ChunsikCamp(commands.Cog):
     # 위쪽(세금 섹션)에 완전히 같은 판정을 하는 정의가 이미 있었고, 이게 그걸 덮어쓰고
     # 있었습니다. 자세한 내용은 그쪽 docstring을 봐주세요.
 
-    @camp_treasury_group.command(name="송금", description="[관리자] 캠프 통장에서 특정 유저에게 에바를 보내요. (진짜 지갑처럼 누구에게나 송금 가능)")
-    @app_commands.describe(캠프="보낼 캠프 통장", 유저="에바를 받을 유저", 금액="보낼 에바 금액")
+    @camp_treasury_group.command(name="송금", description="[관리자] 캠프 통장에서 특정 유저에게 코인를 보내요. (진짜 지갑처럼 누구에게나 송금 가능)")
+    @app_commands.describe(캠프="보낼 캠프 통장", 유저="코인를 받을 유저", 금액="보낼 코인 금액")
     @app_commands.choices(캠프=[
-        app_commands.Choice(name="악동캠프", value="악동"),
-        app_commands.Choice(name="나래캠프", value="나래"),
-        app_commands.Choice(name="여백캠프", value="여백"),
+        app_commands.Choice(name="A캠프", value="A"),
+        app_commands.Choice(name="B캠프", value="B"),
+        app_commands.Choice(name="C캠프", value="C"),
     ])
     async def camp_treasury_send(self, interaction: discord.Interaction, 캠프: app_commands.Choice[str], 유저: discord.Member, 금액: int):
         economy_cog = self._get_economy_cog()
@@ -1081,7 +1081,7 @@ class ChunsikCamp(commands.Cog):
             return await interaction.response.send_message(err, ephemeral=True)
 
         if 금액 <= 0:
-            return await interaction.response.send_message("❌ 송금 금액은 1 에바 이상이어야 합니다.", ephemeral=True)
+            return await interaction.response.send_message("❌ 송금 금액은 1 코인 이상이어야 합니다.", ephemeral=True)
 
         await interaction.response.defer()
 
@@ -1093,7 +1093,7 @@ class ChunsikCamp(commands.Cog):
 
             if before < 금액:
                 return await interaction.followup.send(
-                    f"❌ {캠프.name} 통장 잔액이 부족합니다! (현재 잔액: {before:,} 에바 / 요청: {금액:,} 에바)"
+                    f"❌ {캠프.name} 통장 잔액이 부족합니다! (현재 잔액: {before:,} 코인 / 요청: {금액:,} 코인)"
                 )
 
             after = before - 금액
@@ -1115,7 +1115,7 @@ class ChunsikCamp(commands.Cog):
         if broken:
             return await report_broken_transaction(
                 interaction, action="캠프통장 송금", user_id=user_id,
-                lost=f"{캠프.name} 통장에서 에바 {금액:,}", not_received=f"에바 {금액:,}",
+                lost=f"{캠프.name} 통장에서 코인 {금액:,}", not_received=f"코인 {금액:,}",
                 error=broken,
             )
 
@@ -1125,10 +1125,10 @@ class ChunsikCamp(commands.Cog):
 
         embed = discord.Embed(title="🏦 [캠프통장 송금]", color=0x5CE6B4, timestamp=dt.datetime.now(KST))
         embed.add_field(name="대상 캠프", value=f"{캠프.name}", inline=True)
-        embed.add_field(name="송금 금액", value=f"{금액:,} 에바", inline=True)
+        embed.add_field(name="송금 금액", value=f"{금액:,} 코인", inline=True)
         embed.add_field(name="수령자", value=유저.mention, inline=True)
-        embed.add_field(name=f"🏦 {캠프.name} 통장", value=f"{before:,} → **{after:,} 에바**", inline=False)
-        embed.add_field(name="수령자 지갑 잔액", value=f"{user_after:,} 에바", inline=False)
+        embed.add_field(name=f"🏦 {캠프.name} 통장", value=f"{before:,} → **{after:,} 코인**", inline=False)
+        embed.add_field(name="수령자 지갑 잔액", value=f"{user_after:,} 코인", inline=False)
         embed.set_footer(text=f"집행자: {interaction.user.display_name}")
         await interaction.followup.send(embed=embed)
 
@@ -1137,17 +1137,17 @@ class ChunsikCamp(commands.Cog):
             description=f"**집행자:** {interaction.user.mention}\n"
                         f"**대상 캠프:** {캠프.name}\n"
                         f"**수령자:** {유저.mention}\n"
-                        f"**송금 금액:** {금액:,} 에바\n"
-                        f"**{캠프.name} 통장:** {before:,} → {after:,} 에바",
+                        f"**송금 금액:** {금액:,} 코인\n"
+                        f"**{캠프.name} 통장:** {before:,} → {after:,} 코인",
             color=0x5CE6B4
         )
 
-    @camp_treasury_group.command(name="회수", description="[관리자] 특정 유저의 지갑에서 캠프 통장으로 에바를 회수해요. (진짜 지갑처럼 누구한테서나 회수 가능)")
-    @app_commands.describe(캠프="회수해서 넣을 캠프 통장", 유저="에바를 회수할 유저", 금액="회수할 에바 금액")
+    @camp_treasury_group.command(name="회수", description="[관리자] 특정 유저의 지갑에서 캠프 통장으로 코인를 회수해요. (진짜 지갑처럼 누구한테서나 회수 가능)")
+    @app_commands.describe(캠프="회수해서 넣을 캠프 통장", 유저="코인를 회수할 유저", 금액="회수할 코인 금액")
     @app_commands.choices(캠프=[
-        app_commands.Choice(name="악동캠프", value="악동"),
-        app_commands.Choice(name="나래캠프", value="나래"),
-        app_commands.Choice(name="여백캠프", value="여백"),
+        app_commands.Choice(name="A캠프", value="A"),
+        app_commands.Choice(name="B캠프", value="B"),
+        app_commands.Choice(name="C캠프", value="C"),
     ])
     async def camp_treasury_collect(self, interaction: discord.Interaction, 캠프: app_commands.Choice[str], 유저: discord.Member, 금액: int):
         economy_cog = self._get_economy_cog()
@@ -1159,7 +1159,7 @@ class ChunsikCamp(commands.Cog):
             return await interaction.response.send_message(err, ephemeral=True)
 
         if 금액 <= 0:
-            return await interaction.response.send_message("❌ 회수 금액은 1 에바 이상이어야 합니다.", ephemeral=True)
+            return await interaction.response.send_message("❌ 회수 금액은 1 코인 이상이어야 합니다.", ephemeral=True)
 
         await interaction.response.defer()
 
@@ -1172,7 +1172,7 @@ class ChunsikCamp(commands.Cog):
 
             if user_before < 금액:
                 return await interaction.followup.send(
-                    f"❌ {유저.mention}님의 잔액이 부족해요! (현재 잔액: {user_before:,} 에바 / 요청: {금액:,} 에바)"
+                    f"❌ {유저.mention}님의 잔액이 부족해요! (현재 잔액: {user_before:,} 코인 / 요청: {금액:,} 코인)"
                 )
 
             user_after = user_before - 금액
@@ -1195,7 +1195,7 @@ class ChunsikCamp(commands.Cog):
         if broken:
             return await report_broken_transaction(
                 interaction, action="캠프통장 회수", user_id=user_id,
-                lost=f"에바 {금액:,}", not_received=f"{캠프.name} 통장 입금 {금액:,}",
+                lost=f"코인 {금액:,}", not_received=f"{캠프.name} 통장 입금 {금액:,}",
                 error=broken, ledger_delta=-금액, ledger_balance=user_after,
             )
 
@@ -1205,10 +1205,10 @@ class ChunsikCamp(commands.Cog):
 
         embed = discord.Embed(title="🏦 [캠프통장 회수]", color=0xe67e22, timestamp=dt.datetime.now(KST))
         embed.add_field(name="대상 캠프", value=f"{캠프.name}", inline=True)
-        embed.add_field(name="회수 금액", value=f"{금액:,} 에바", inline=True)
+        embed.add_field(name="회수 금액", value=f"{금액:,} 코인", inline=True)
         embed.add_field(name="회수 대상자", value=유저.mention, inline=True)
-        embed.add_field(name="대상자 지갑 잔액", value=f"{user_before:,} → **{user_after:,} 에바**", inline=False)
-        embed.add_field(name=f"🏦 {캠프.name} 통장", value=f"{before:,} → **{after:,} 에바**", inline=False)
+        embed.add_field(name="대상자 지갑 잔액", value=f"{user_before:,} → **{user_after:,} 코인**", inline=False)
+        embed.add_field(name=f"🏦 {캠프.name} 통장", value=f"{before:,} → **{after:,} 코인**", inline=False)
         embed.set_footer(text=f"집행자: {interaction.user.display_name}")
         await interaction.followup.send(embed=embed)
 
@@ -1217,7 +1217,7 @@ class ChunsikCamp(commands.Cog):
             description=f"**집행자:** {interaction.user.mention}\n"
                         f"**대상 캠프:** {캠프.name}\n"
                         f"**회수 대상자:** {유저.mention}\n"
-                        f"**회수 금액:** {금액:,} 에바\n"
-                        f"**{캠프.name} 통장:** {before:,} → {after:,} 에바",
+                        f"**회수 금액:** {금액:,} 코인\n"
+                        f"**{캠프.name} 통장:** {before:,} → {after:,} 코인",
             color=0xe67e22
         )

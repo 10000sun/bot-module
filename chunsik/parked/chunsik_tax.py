@@ -18,19 +18,19 @@ from chunsik_storage import atomic_json_save_or_raise, safe_json_load
 
 # 캠프별 과세 방식. 이건 캠프의 정체성이라 명령어로는 못 바꾸고, 숫자만 조정할 수 있어요.
 CAMP_TAX_TYPE = {
-    "여백": "progressive",    # 초과 누진세 — 구간을 넘는 만큼에만 그 구간 세율이 붙어요
-    "나래": "flat_bracket",   # 구간별 단일세율 — 총자산이 속한 구간의 세율을 전액에 적용
-    "악동": "roulette",       # 세금 룰렛 — 참여자는 뽑기, 미참여자는 최고액 고정
+    "C": "progressive",    # 초과 누진세 — 구간을 넘는 만큼에만 그 구간 세율이 붙어요
+    "B": "flat_bracket",   # 구간별 단일세율 — 총자산이 속한 구간의 세율을 전액에 적용
+    "A": "roulette",       # 세금 룰렛 — 참여자는 뽑기, 미참여자는 최고액 고정
 }
 
 # ─────────────────────────────────────────────────────────────
 # 기본값 (파일이 없거나 항목이 빠졌을 때 쓰는 값)
 # ─────────────────────────────────────────────────────────────
 DEFAULT_TAX_CONFIG = {
-    # 🕊️ 여백 — 지갑에 고인 에바에는 초과 누진세를,
+    # 🕊️ C — 지갑에 고인 코인에는 초과 누진세를,
     #    주식에 묻어둔 자산에는 낮은 세율의 '주식 보유세'를 따로 매깁니다.
     #    (지갑세만 걷으니 자산을 전부 주식에 넣어 세금을 피하는 현상이 생겨서 추가됐어요)
-    "여백": {
+    "C": {
         "exempt": 10_000,                       # 이 금액까지는 비과세
         "brackets": [[100_000, 3.0],            # (구간 상한, 세율%) — 상한 None은 무제한
                      [500_000, 5.0],
@@ -43,8 +43,8 @@ DEFAULT_TAX_CONFIG = {
                          [30, 5_000]],
         "ticket_cap": 50,                       # 고래의 확률 독점을 막는 1인당 상한
     },
-    # 🌈 나래 — 주식 평가액까지 합쳐서 자산을 보고, 구간 세율을 전액에 적용합니다.
-    "나래": {
+    # 🌈 B — 주식 평가액까지 합쳐서 자산을 보고, 구간 세율을 전액에 적용합니다.
+    "B": {
         "include_stocks": True,
         "brackets": [[100_000, 5.0],
                      [300_000, 7.0],
@@ -52,8 +52,8 @@ DEFAULT_TAX_CONFIG = {
                      [None,    10.0]],
         "late_rate": 15.0,                      # 납부 기간을 넘긴 미납자에게 강제 징수할 세율
     },
-    # 😈 악동 — 월 1회 룰렛. "많이 걸리면 확률을 조정"할 수 있게 가중치를 그대로 노출했어요.
-    "악동": {
+    # 😈 A — 월 1회 룰렛. "많이 걸리면 확률을 조정"할 수 있게 가중치를 그대로 노출했어요.
+    "A": {
         "absent_tax": 30_000,                   # 룰렛에 참여하지 않은 사람이 무는 고정액
         "roulette": [[30_000, 1],               # (세액, 가중치)
                      [20_000, 3],
@@ -90,11 +90,11 @@ def _bracket_rate(brackets: list, amount: int) -> float:
 
 
 def progressive_tax(cfg: dict, balance: int) -> int:
-    """초과 누진세. (여백)
+    """초과 누진세. (C)
 
-    ⚠️ 10만 에바를 가졌다고 전액에 3%가 아니라, 면세점(1만)을 넘는 9만에만 3%가 붙어요.
+    ⚠️ 10만 코인를 가졌다고 전액에 3%가 아니라, 면세점(1만)을 넘는 9만에만 3%가 붙어요.
 
-    >>> progressive_tax(DEFAULT_TAX_CONFIG["여백"], 1_790_000)   # 캠프 공지의 산출 예시
+    >>> progressive_tax(DEFAULT_TAX_CONFIG["C"], 1_790_000)   # 캠프 공지의 산출 예시
     151700
     """
     exempt = cfg.get("exempt", 0)
@@ -113,7 +113,7 @@ def progressive_tax(cfg: dict, balance: int) -> int:
 
 
 def stock_holding_tax(cfg: dict, stock_value: int) -> int:
-    """주식 보유세. (여백)
+    """주식 보유세. (C)
 
     지갑세와 별개로, 주식 평가액에 낮은 세율을 매겨요.
     자산을 전부 주식에 묻어두면 세금이 0이 되던 구멍을 막는 세목입니다.
@@ -125,14 +125,14 @@ def stock_holding_tax(cfg: dict, stock_value: int) -> int:
 
 
 def flat_bracket_tax(cfg: dict, total_assets: int) -> int:
-    """구간별 단일세율. (나래)"""
+    """구간별 단일세율. (B)"""
     if total_assets <= 0:
         return 0
     return int(total_assets * _bracket_rate(cfg["brackets"], total_assets))
 
 
 def roulette_tax(cfg: dict, participated: bool, rng: random.Random = None) -> int:
-    """세금 룰렛. (악동) 참여하지 않았으면 최고액 고정."""
+    """세금 룰렛. (A) 참여하지 않았으면 최고액 고정."""
     if not participated:
         return int(cfg.get("absent_tax", 0))
     rng = rng or random
@@ -142,7 +142,7 @@ def roulette_tax(cfg: dict, participated: bool, rng: random.Random = None) -> in
 
 
 def lottery_tickets(cfg: dict, tax: int) -> int:
-    """낸 세금으로 받을 로또 티켓 수. (여백)
+    """낸 세금으로 받을 로또 티켓 수. (C)
 
     세금을 많이 낼수록 티켓 얻는 효율이 계단식으로 떨어져요.
     """
@@ -313,7 +313,7 @@ def rule_summary(camp: str, cfg: dict) -> str:
 
     if kind == "progressive":
         lines = ["💰 **지갑세 — 초과 누진세**",
-                 f"└ {cfg['exempt']:,} 에바까지 비과세"]
+                 f"└ {cfg['exempt']:,} 코인까지 비과세"]
         lower = cfg["exempt"]
         for upper, rate in cfg["brackets"]:
             span = f"{lower:,} ~ {upper:,}" if upper is not None else f"{lower:,} 초과"
@@ -328,7 +328,7 @@ def rule_summary(camp: str, cfg: dict) -> str:
         else:
             lines.append("\n📈 주식 보유세: **없음** (주식에는 세금을 안 걷는 중)")
 
-        tiers = " / ".join(f"{int(n)}장까지 {int(c):,}에바당 1장" for n, c in cfg["ticket_tiers"])
+        tiers = " / ".join(f"{int(n)}장까지 {int(c):,}코인당 1장" for n, c in cfg["ticket_tiers"])
         lines.append(f"\n🎲 로또: 세금 {cfg['ticket_min_tax']:,} 이상부터 · {tiers} · 1인 최대 {cfg['ticket_cap']}장")
         return "\n".join(lines)
 
@@ -347,10 +347,10 @@ def rule_summary(camp: str, cfg: dict) -> str:
         total = sum(w for _, w in cfg["roulette"]) or 1
         lines = ["**세금 룰렛** · 참여자는 뽑기, 미참여자는 최고액 고정", ""]
         for amount, weight in cfg["roulette"]:
-            lines.append(f"└ {int(amount):,} 에바 — {weight}/{total} ({weight / total * 100:.1f}%)")
+            lines.append(f"└ {int(amount):,} 코인 — {weight}/{total} ({weight / total * 100:.1f}%)")
         expected = sum(a * w for a, w in cfg["roulette"]) / total
-        lines.append(f"\n📊 참여 시 평균 예상 세액: 약 **{int(expected):,} 에바**")
-        lines.append(f"🚫 미참여 시: **{cfg['absent_tax']:,} 에바** 고정")
+        lines.append(f"\n📊 참여 시 평균 예상 세액: 약 **{int(expected):,} 코인**")
+        lines.append(f"🚫 미참여 시: **{cfg['absent_tax']:,} 코인** 고정")
         return "\n".join(lines)
 
     return "규칙이 지정되지 않은 캠프예요."

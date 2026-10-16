@@ -32,7 +32,7 @@ CAMP_TAX_FILE = os.path.join(DATA_DIR, "chunsik_camp_tax.json") # 🧾 [신규] 
         if any(r.id == CAMP_LEADER_ROLE_ID for r in target.roles):
             has.append("🏕️ 캠프장")
         if any(r.id == JEONYUL_ROLE_ID for r in target.roles):
-            has.append("🏛️ 전율(캠프 전체 관리)")
+            has.append("🏛️ 캠프 관리 기구(캠프 전체 관리)")
 
 # ========================================================================
 # 【진단 · 캠프 역할 중복 소속 검사】
@@ -83,10 +83,10 @@ CAMP_TAX_FILE = os.path.join(DATA_DIR, "chunsik_camp_tax.json") # 🧾 [신규] 
                 balance = economy_data.get(uid, 0)
                 balance = int(balance) if isinstance(balance, (int, float)) else 0
 
-                # 📈 [버그 수정] 예전엔 주식 평가액을 나래(flat_bracket)에서만 봤어요. 그런데 여백에
+                # 📈 [버그 수정] 예전엔 주식 평가액을 B(flat_bracket)에서만 봤어요. 그런데 C에
                 # **주식 보유세**(stock_holding_tax)가 나중에 추가되면서, 실제 /캠프 세금환수는
                 # `지갑 누진세 + 주식 보유세`를 걷는데 이 미리보기는 지갑 몫만 계산하고 있었습니다.
-                # 여백 예상액이 실제보다 적게 나와서, 미리 보는 의미가 없었어요.
+                # C 예상액이 실제보다 적게 나와서, 미리 보는 의미가 없었어요.
                 stock_value = portfolio_value(stock_data, uid) if stock_data else 0
 
                 base = balance
@@ -113,7 +113,7 @@ CAMP_TAX_FILE = os.path.join(DATA_DIR, "chunsik_camp_tax.json") # 🧾 [신규] 
                 "roulette": "세금 룰렛(평균 기준)",
             }.get(kind, "기준 없음")
             lines.append(f"🏕️ **{camp_name}캠프** · {rule}\n"
-                         f"└ {len(members)}명 대상 · 총 **{total:,} 에바** 예상")
+                         f"└ {len(members)}명 대상 · 총 **{total:,} 코인** 예상")
 
         embed = discord.Embed(
             title="🧪 세금환수 미리보기 (실제로 걷지 않았어요)",
@@ -127,9 +127,9 @@ CAMP_TAX_FILE = os.path.join(DATA_DIR, "chunsik_camp_tax.json") # 🧾 [신규] 
 # 【지갑 · 캠프 선택지와 분기】
 # ========================================================================
     @app_commands.choices(캠프=[
-        app_commands.Choice(name="악동캠프", value="악동"),
-        app_commands.Choice(name="나래캠프", value="나래"),
-        app_commands.Choice(name="여백캠프", value="여백"),
+        app_commands.Choice(name="A캠프", value="A"),
+        app_commands.Choice(name="B캠프", value="B"),
+        app_commands.Choice(name="C캠프", value="C"),
         app_commands.Choice(name="전체 (서버 인원 전원)", value="전체"),
     ])
     async def check_balance_slash(self, interaction: discord.Interaction, member: discord.Member = None, 캠프: Optional[app_commands.Choice[str]] = None):
@@ -145,8 +145,8 @@ CAMP_TAX_FILE = os.path.join(DATA_DIR, "chunsik_camp_tax.json") # 🧾 [신규] 
         is_admin = interaction.user.guild_permissions.administrator
 
         # 🔐 권한
-        #  • 캠프별: 캠프장 / 전율(캠프 관리 기구) / 서버 관리자
-        #  • 전체  : 서버 관리자 / 상점주인 / 전율 — 없어진 `/랭킹`과 같은 기준이라
+        #  • 캠프별: 캠프장 / 캠프 관리 기구 / 서버 관리자
+        #  • 전체  : 서버 관리자 / 상점주인 / 캠프 관리 기구 — 없어진 `/랭킹`과 같은 기준이라
         #            이번 통합으로 새로 열리거나 막히는 사람이 없어요.
         if is_all:
             if not (is_admin or is_jeonyul or self._is_shop_owner(interaction)):
